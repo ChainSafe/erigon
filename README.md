@@ -1,3 +1,5 @@
+**Note** This is a StreamingFast Firehose fork for `Erigon` client, see [README.fh.md](./README.fh.md) for instructions on how to manage this repository.
+
 # Erigon
 
 Erigon is an implementation of Ethereum (execution client), on the efficiency frontier, written in Go.
