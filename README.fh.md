@@ -11,7 +11,7 @@ structure, it's easier to work with the Firehose fork when you use
 the same names and settings.
 ```
 cd ~/work
-git clone --branch="firehose-v2" git@github.com:ChainSafe/go-erigon.git
+git clone --branch="firehose-v2" git@github.com:ChainSafe/erigon.git
 cd go-erigon
 
 git remote rename origin sf
@@ -25,5 +25,5 @@ git fetch origin
 
 For the best result when working with this repository and the scripts it contains:
 
-- The remote `sf` exists on main module and points to `git@github.com:ChainSafe/go-erigon.git`
+- The remote `sf` exists on main module and points to `git@github.com:ChainSafe/erigon.git`
 - The remote `origin` exists on main module and points to https://github.com/ledgerwatch/erigon.git
