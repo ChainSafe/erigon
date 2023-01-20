@@ -31,6 +31,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/turbo/trie"
 )
 
@@ -144,12 +145,17 @@ func (sdb *IntraBlockState) Reset() {
 	//sdb.balanceInc = make(map[libcommon.Address]*BalanceIncrease)
 }
 
-func (sdb *IntraBlockState) AddLog(log2 *types.Log) {
+func (sdb *IntraBlockState) AddLog(log2 *types.Log, firehoseContext *firehose.Context) {
 	sdb.journal.append(addLogChange{txhash: sdb.thash})
 	log2.TxHash = sdb.thash
 	log2.BlockHash = sdb.bhash
 	log2.TxIndex = uint(sdb.txIndex)
 	log2.Index = sdb.logSize
+
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordLog(log2)
+	}
+
 	sdb.logs[sdb.thash] = append(sdb.logs[sdb.thash], log2)
 	sdb.logSize++
 }
@@ -303,7 +309,7 @@ func (sdb *IntraBlockState) HasSelfdestructed(addr libcommon.Address) bool {
 
 // AddBalance adds amount to the account associated with addr.
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.Int) {
+func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.Int, isPrecompiledAddr bool, firehoseContext *firehose.Context, reason firehose.BalanceChangeReason) {
 	if sdb.trace {
 		fmt.Printf("AddBalance %x, %d\n", addr, amount)
 	}
@@ -327,68 +333,68 @@ func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.I
 		return
 	}
 
-	stateObject := sdb.GetOrNewStateObject(addr)
-	stateObject.AddBalance(amount)
+	stateObject := sdb.GetOrNewStateObject(addr, isPrecompiledAddr, firehoseContext)
+	stateObject.AddBalance(amount, firehoseContext, reason)
 }
 
 // SubBalance subtracts amount from the account associated with addr.
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) SubBalance(addr libcommon.Address, amount *uint256.Int) {
+func (sdb *IntraBlockState) SubBalance(addr libcommon.Address, amount *uint256.Int, firehoseContext *firehose.Context, reason firehose.BalanceChangeReason) {
 	if sdb.trace {
 		fmt.Printf("SubBalance %x, %d\n", addr, amount)
 	}
 
-	stateObject := sdb.GetOrNewStateObject(addr)
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
-		stateObject.SubBalance(amount)
+		stateObject.SubBalance(amount, firehoseContext, reason)
 	}
 }
 
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) SetBalance(addr libcommon.Address, amount *uint256.Int) {
-	stateObject := sdb.GetOrNewStateObject(addr)
+func (sdb *IntraBlockState) SetBalance(addr libcommon.Address, amount *uint256.Int, firehoseContext *firehose.Context, reason firehose.BalanceChangeReason) {
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
-		stateObject.SetBalance(amount)
+		stateObject.SetBalance(amount, firehoseContext, reason)
 	}
 }
 
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) SetNonce(addr libcommon.Address, nonce uint64) {
-	stateObject := sdb.GetOrNewStateObject(addr)
+func (sdb *IntraBlockState) SetNonce(addr libcommon.Address, nonce uint64, firehoseContext *firehose.Context) {
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
-		stateObject.SetNonce(nonce)
+		stateObject.SetNonce(nonce, firehoseContext)
 	}
 }
 
 // DESCRIBED: docs/programmers_guide/guide.md#code-hash
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) SetCode(addr libcommon.Address, code []byte) {
-	stateObject := sdb.GetOrNewStateObject(addr)
+func (sdb *IntraBlockState) SetCode(addr libcommon.Address, code []byte, firehoseContext *firehose.Context) {
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
-		stateObject.SetCode(crypto.Keccak256Hash(code), code)
+		stateObject.SetCode(crypto.Keccak256Hash(code), code, firehoseContext)
 	}
 }
 
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) SetState(addr libcommon.Address, key *libcommon.Hash, value uint256.Int) {
-	stateObject := sdb.GetOrNewStateObject(addr)
+func (sdb *IntraBlockState) SetState(addr libcommon.Address, key *libcommon.Hash, value uint256.Int, firehoseContext *firehose.Context) {
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
-		stateObject.SetState(key, value)
+		stateObject.SetState(key, value, firehoseContext)
 	}
 }
 
 // SetStorage replaces the entire storage for the specified account with given
 // storage. This function should only be used for debugging.
-func (sdb *IntraBlockState) SetStorage(addr libcommon.Address, storage Storage) {
-	stateObject := sdb.GetOrNewStateObject(addr)
+func (sdb *IntraBlockState) SetStorage(addr libcommon.Address, storage Storage, firehoseContext *firehose.Context) {
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
 		stateObject.SetStorage(storage)
 	}
 }
 
 // SetIncarnation sets incarnation for account if account exists
-func (sdb *IntraBlockState) SetIncarnation(addr libcommon.Address, incarnation uint64) {
-	stateObject := sdb.GetOrNewStateObject(addr)
+func (sdb *IntraBlockState) SetIncarnation(addr libcommon.Address, incarnation uint64, firehoseContext *firehose.Context) {
+	stateObject := sdb.GetOrNewStateObject(addr, false, firehoseContext)
 	if stateObject != nil {
 		stateObject.setIncarnation(incarnation)
 	}
@@ -407,7 +413,7 @@ func (sdb *IntraBlockState) GetIncarnation(addr libcommon.Address) uint64 {
 //
 // The account's state object is still available until the state is committed,
 // getStateObject will return a non-nil account after Suicide.
-func (sdb *IntraBlockState) Selfdestruct(addr libcommon.Address) bool {
+func (sdb *IntraBlockState) Selfdestruct(addr libcommon.Address, firehoseContext *firehose.Context) bool {
 	stateObject := sdb.getStateObject(addr)
 	if stateObject == nil || stateObject.deleted {
 		return false
@@ -417,6 +423,11 @@ func (sdb *IntraBlockState) Selfdestruct(addr libcommon.Address) bool {
 		prev:        stateObject.selfdestructed,
 		prevbalance: *stateObject.Balance(),
 	})
+
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordSuicide(stateObject.address, stateObject.selfdestructed, stateObject.Balance())
+	}
+
 	stateObject.markSelfdestructed()
 	stateObject.created = false
 	stateObject.data.Balance.Clear()
@@ -433,7 +444,10 @@ func (sdb *IntraBlockState) getStateObject(addr libcommon.Address) (stateObject 
 	// Load the object from the database.
 	if _, ok := sdb.nilAccounts[addr]; ok {
 		if bi, ok := sdb.balanceInc[addr]; ok && !bi.transferred {
-			return sdb.createObject(addr, nil)
+			// CS TODO: check if we need to provide actual firehose context
+			// this means that the account is being created through this logic
+			// and we need to capture this
+			return sdb.createObject(addr, nil, false, firehose.NoOpContext)
 		}
 		return nil
 	}
@@ -445,7 +459,10 @@ func (sdb *IntraBlockState) getStateObject(addr libcommon.Address) (stateObject 
 	if account == nil {
 		sdb.nilAccounts[addr] = struct{}{}
 		if bi, ok := sdb.balanceInc[addr]; ok && !bi.transferred {
-			return sdb.createObject(addr, nil)
+			// CS TODO: check if we need to provide actual firehose context
+			// this means that the account is being created through this logic
+			// and we need to capture this
+			return sdb.createObject(addr, nil, false, firehose.NoOpContext)
 		}
 		return nil
 	}
@@ -466,17 +483,17 @@ func (sdb *IntraBlockState) setStateObject(addr libcommon.Address, object *state
 }
 
 // Retrieve a state object or create a new state object if nil.
-func (sdb *IntraBlockState) GetOrNewStateObject(addr libcommon.Address) *stateObject {
+func (sdb *IntraBlockState) GetOrNewStateObject(addr libcommon.Address, isPrecompiledAddr bool, firehoseContext *firehose.Context) *stateObject {
 	stateObject := sdb.getStateObject(addr)
 	if stateObject == nil || stateObject.deleted {
-		stateObject = sdb.createObject(addr, stateObject /* previous */)
+		stateObject = sdb.createObject(addr, stateObject /* previous */, isPrecompiledAddr, firehoseContext)
 	}
 	return stateObject
 }
 
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten.
-func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *stateObject) (newobj *stateObject) {
+func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *stateObject, isPrecompiledAddr bool, firehoseContext *firehose.Context) (newobj *stateObject) {
 	account := new(accounts.Account)
 	var original *accounts.Account
 	if previous == nil {
@@ -492,6 +509,11 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 	} else {
 		sdb.journal.append(resetObjectChange{account: &addr, prev: previous})
 	}
+
+	if firehoseContext.Enabled() && !isPrecompiledAddr {
+		firehoseContext.RecordNewAccount(addr)
+	}
+
 	sdb.setStateObject(addr, newobj)
 	return newobj
 }
@@ -506,7 +528,7 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 //  2. tx_create(sha(account ++ nonce)) (note that this gets the address of 1)
 //
 // Carrying over the balance ensures that Ether doesn't disappear.
-func (sdb *IntraBlockState) CreateAccount(addr libcommon.Address, contractCreation bool) {
+func (sdb *IntraBlockState) CreateAccount(addr libcommon.Address, contractCreation bool, firehoseContext *firehose.Context) {
 	var prevInc uint64
 	previous := sdb.getStateObject(addr)
 	if contractCreation {
@@ -523,7 +545,7 @@ func (sdb *IntraBlockState) CreateAccount(addr libcommon.Address, contractCreati
 		}
 	}
 
-	newObj := sdb.createObject(addr, previous)
+	newObj := sdb.createObject(addr, previous, false, firehoseContext)
 	if previous != nil {
 		newObj.data.Balance.Set(&previous.data.Balance)
 		newObj.data.Initialised = true

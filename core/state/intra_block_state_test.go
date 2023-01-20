@@ -80,21 +80,21 @@ func newTestAction(addr libcommon.Address, r *rand.Rand) testAction {
 		{
 			name: "SetBalance",
 			fn: func(a testAction, s *IntraBlockState) {
-				s.SetBalance(addr, uint256.NewInt(uint64(a.args[0])))
+				s.SetBalance(addr, uint256.NewInt(uint64(a.args[0])), firehose.NoOpContext, "test")
 			},
 			args: make([]int64, 1),
 		},
 		{
 			name: "AddBalance",
 			fn: func(a testAction, s *IntraBlockState) {
-				s.AddBalance(addr, uint256.NewInt(uint64(a.args[0])))
+				s.AddBalance(addr, uint256.NewInt(uint64(a.args[0])), false, firehose.NoOpContext, "test")
 			},
 			args: make([]int64, 1),
 		},
 		{
 			name: "SetNonce",
 			fn: func(a testAction, s *IntraBlockState) {
-				s.SetNonce(addr, uint64(a.args[0]))
+				s.SetNonce(addr, uint64(a.args[0]), firehose.NoOpContext)
 			},
 			args: make([]int64, 1),
 		},
@@ -104,7 +104,7 @@ func newTestAction(addr libcommon.Address, r *rand.Rand) testAction {
 				var key libcommon.Hash
 				binary.BigEndian.PutUint16(key[:], uint16(a.args[0]))
 				val := uint256.NewInt(uint64(a.args[1]))
-				s.SetState(addr, &key, *val)
+				s.SetState(addr, &key, *val, firehose.NoOpContext)
 			},
 			args: make([]int64, 2),
 		},
@@ -114,20 +114,20 @@ func newTestAction(addr libcommon.Address, r *rand.Rand) testAction {
 				code := make([]byte, 16)
 				binary.BigEndian.PutUint64(code, uint64(a.args[0]))
 				binary.BigEndian.PutUint64(code[8:], uint64(a.args[1]))
-				s.SetCode(addr, code)
+				s.SetCode(addr, code, firehose.NoOpContext)
 			},
 			args: make([]int64, 2),
 		},
 		{
 			name: "CreateAccount",
 			fn: func(a testAction, s *IntraBlockState) {
-				s.CreateAccount(addr, true)
+				s.CreateAccount(addr, true, firehose.NoOpContext)
 			},
 		},
 		{
 			name: "Selfdestruct",
 			fn: func(a testAction, s *IntraBlockState) {
-				s.Selfdestruct(addr)
+				s.Selfdestruct(addr, firehose.NoOpContext)
 			},
 		},
 		{
@@ -143,7 +143,7 @@ func newTestAction(addr libcommon.Address, r *rand.Rand) testAction {
 			fn: func(a testAction, s *IntraBlockState) {
 				data := make([]byte, 2)
 				binary.BigEndian.PutUint16(data, uint16(a.args[0]))
-				s.AddLog(&types.Log{Address: addr, Data: data})
+				s.AddLog(&types.Log{Address: addr, Data: data}, firehose.NoOpContext)
 			},
 			args: make([]int64, 1),
 		},

@@ -27,6 +27,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/turbo/trie"
 )
@@ -200,7 +201,7 @@ func (so *stateObject) GetCommittedState(key *libcommon.Hash, out *uint256.Int) 
 }
 
 // SetState updates a value in account storage.
-func (so *stateObject) SetState(key *libcommon.Hash, value uint256.Int) {
+func (so *stateObject) SetState(key *libcommon.Hash, value uint256.Int, firehoseContext *firehose.Context) {
 	// If the fake storage is set, put the temporary state update here.
 	if so.fakeStorage != nil {
 		so.db.journal.append(fakeStorageChange{
@@ -217,6 +218,11 @@ func (so *stateObject) SetState(key *libcommon.Hash, value uint256.Int) {
 	if prev == value {
 		return
 	}
+
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordStorageChange(so.address, key, &prev, &value)
+	}
+
 	// New value is different, update and journal the change
 	so.db.journal.append(storageChange{
 		account:  &so.address,
@@ -268,7 +274,7 @@ func (so *stateObject) printTrie() {
 
 // AddBalance adds amount to so's balance.
 // It is used to add funds to the destination account of a transfer.
-func (so *stateObject) AddBalance(amount *uint256.Int) {
+func (so *stateObject) AddBalance(amount *uint256.Int, firehoseContext *firehose.Context, reason firehose.BalanceChangeReason) {
 	// EIP161: We must check emptiness for the objects such that the account
 	// clearing (0,0,0 objects) can take effect.
 	if amount.IsZero() {
@@ -279,19 +285,23 @@ func (so *stateObject) AddBalance(amount *uint256.Int) {
 		return
 	}
 
-	so.SetBalance(new(uint256.Int).Add(so.Balance(), amount))
+	so.SetBalance(new(uint256.Int).Add(so.Balance(), amount), firehoseContext, reason)
 }
 
 // SubBalance removes amount from so's balance.
 // It is used to remove funds from the origin account of a transfer.
-func (so *stateObject) SubBalance(amount *uint256.Int) {
+func (so *stateObject) SubBalance(amount *uint256.Int, firehoseContext *firehose.Context, reason firehose.BalanceChangeReason) {
 	if amount.IsZero() {
 		return
 	}
-	so.SetBalance(new(uint256.Int).Sub(so.Balance(), amount))
+	so.SetBalance(new(uint256.Int).Sub(so.Balance(), amount), firehoseContext, reason)
 }
 
-func (so *stateObject) SetBalance(amount *uint256.Int) {
+func (so *stateObject) SetBalance(amount *uint256.Int, firehoseContext *firehose.Context, reason firehose.BalanceChangeReason) {
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordBalanceChange(so.address, &so.data.Balance, amount, reason)
+	}
+
 	so.db.journal.append(balanceChange{
 		account: &so.address,
 		prev:    so.data.Balance,
@@ -336,8 +346,13 @@ func (so *stateObject) Code() []byte {
 	return code
 }
 
-func (so *stateObject) SetCode(codeHash libcommon.Hash, code []byte) {
+func (so *stateObject) SetCode(codeHash libcommon.Hash, code []byte, firehoseContext *firehose.Context) {
 	prevcode := so.Code()
+
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordCodeChange(so.address, so.CodeHash(), prevcode, codeHash, code)
+	}
+
 	so.db.journal.append(codeChange{
 		account:  &so.address,
 		prevhash: so.data.CodeHash,
@@ -352,7 +367,11 @@ func (so *stateObject) setCode(codeHash libcommon.Hash, code []byte) {
 	so.dirtyCode = true
 }
 
-func (so *stateObject) SetNonce(nonce uint64) {
+func (so *stateObject) SetNonce(nonce uint64, firehoseContext *firehose.Context) {
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordNonceChange(so.address, so.data.Nonce, nonce)
+	}
+
 	so.db.journal.append(nonceChange{
 		account: &so.address,
 		prev:    so.data.Nonce,
