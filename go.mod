@@ -37,6 +37,7 @@ require (
 	github.com/gballet/go-verkle v0.0.0-20221121182333-31427a1f2d35
 	github.com/goccy/go-json v0.9.7
 	github.com/gofrs/flock v0.8.1
+	github.com/golang-collections/collections v0.0.0-20130729185459-604e922904d3
 	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/golang/snappy v0.0.4
 	github.com/google/btree v1.1.2
