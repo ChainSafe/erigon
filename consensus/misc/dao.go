@@ -84,7 +84,7 @@ func ApplyDAOHardFork(statedb *state.IntraBlockState, firehoseContext *firehose.
 
 	// Move every DAO account and extra-balance account funds into the refund contract
 	for _, addr := range params.DAODrainList() {
-		statedb.AddBalance(params.DAORefundContract, statedb.GetBalance(addr), false, firehoseContext, "dao_refund_contract")
-		statedb.SetBalance(addr, new(uint256.Int), firehoseContext, "dao_adjust_balance")
+		statedb.AddBalance(params.DAORefundContract, statedb.GetBalance(addr), false, firehoseContext, firehose.BalanceChangeReason("dao_refund_contract"))
+		statedb.SetBalance(addr, new(uint256.Int), firehoseContext, firehose.BalanceChangeReason("dao_adjust_balance"))
 	}
 }

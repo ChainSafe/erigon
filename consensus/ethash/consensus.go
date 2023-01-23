@@ -650,8 +650,8 @@ func accumulateRewards(config *chain.Config, state *state.IntraBlockState, heade
 	minerReward, uncleRewards := AccumulateRewards(config, header, uncles)
 	for i, uncle := range uncles {
 		if i < len(uncleRewards) {
-			state.AddBalance(uncle.Coinbase, &uncleRewards[i], false, firehoseContext, "reward_mine_uncle")
+			state.AddBalance(uncle.Coinbase, &uncleRewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_uncle"))
 		}
 	}
-	state.AddBalance(header.Coinbase, &minerReward, false, firehoseContext, "reward_mine_block")
+	state.AddBalance(header.Coinbase, &minerReward, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
 }
