@@ -30,6 +30,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 var toAddr = libcommon.BytesToAddress
@@ -46,12 +47,12 @@ var _ = checker.Suite(&StateSuite{})
 
 func (s *StateSuite) TestDump(c *checker.C) {
 	// generate a few entries
-	obj1 := s.state.GetOrNewStateObject(toAddr([]byte{0x01}))
-	obj1.AddBalance(uint256.NewInt(22))
-	obj2 := s.state.GetOrNewStateObject(toAddr([]byte{0x01, 0x02}))
-	obj2.SetCode(crypto.Keccak256Hash([]byte{3, 3, 3, 3, 3, 3, 3}), []byte{3, 3, 3, 3, 3, 3, 3})
-	obj3 := s.state.GetOrNewStateObject(toAddr([]byte{0x02}))
-	obj3.SetBalance(uint256.NewInt(44))
+	obj1 := s.state.GetOrNewStateObject(toAddr([]byte{0x01}), false, firehose.NoOpContext)
+	obj1.AddBalance(uint256.NewInt(22), firehose.NoOpContext, "test")
+	obj2 := s.state.GetOrNewStateObject(toAddr([]byte{0x01, 0x02}), false, firehose.NoOpContext)
+	obj2.SetCode(crypto.Keccak256Hash([]byte{3, 3, 3, 3, 3, 3, 3}), []byte{3, 3, 3, 3, 3, 3, 3}, firehose.NoOpContext)
+	obj3 := s.state.GetOrNewStateObject(toAddr([]byte{0x02}), false, firehose.NoOpContext)
+	obj3.SetBalance(uint256.NewInt(44), firehose.NoOpContext, "test")
 
 	// write some of them to the trie
 	err := s.w.UpdateAccountData(obj1.address, &obj1.data, new(accounts.Account))
@@ -120,11 +121,11 @@ func (s *StateSuite) TearDownTest(c *checker.C) {
 
 func (s *StateSuite) TestNull(c *checker.C) {
 	address := libcommon.HexToAddress("0x823140710bf13990e4500136726d8b55")
-	s.state.CreateAccount(address, true)
+	s.state.CreateAccount(address, true, firehose.NoOpContext)
 	//value := common.FromHex("0x823140710bf13990e4500136726d8b55")
 	var value uint256.Int
 
-	s.state.SetState(address, &libcommon.Hash{}, value)
+	s.state.SetState(address, &libcommon.Hash{}, value, firehose.NoOpContext)
 
 	err := s.state.FinalizeTx(&chain.Rules{}, s.w)
 	c.Check(err, checker.IsNil)
@@ -139,7 +140,7 @@ func (s *StateSuite) TestNull(c *checker.C) {
 }
 
 func (s *StateSuite) TestTouchDelete(c *checker.C) {
-	s.state.GetOrNewStateObject(libcommon.Address{})
+	s.state.GetOrNewStateObject(libcommon.Address{}, false, firehose.NoOpContext)
 
 	err := s.state.FinalizeTx(&chain.Rules{}, s.w)
 	if err != nil {
@@ -154,7 +155,7 @@ func (s *StateSuite) TestTouchDelete(c *checker.C) {
 	s.state.Reset()
 
 	snapshot := s.state.Snapshot()
-	s.state.AddBalance(libcommon.Address{}, new(uint256.Int))
+	s.state.AddBalance(libcommon.Address{}, new(uint256.Int), false, firehose.NoOpContext, "test")
 
 	if len(s.state.journal.dirties) != 1 {
 		c.Fatal("expected one dirty state object")
@@ -175,11 +176,11 @@ func (s *StateSuite) TestSnapshot(c *checker.C) {
 	genesis := s.state.Snapshot()
 
 	// set initial state object value
-	s.state.SetState(stateobjaddr, &storageaddr, *data1)
+	s.state.SetState(stateobjaddr, &storageaddr, *data1, firehose.NoOpContext)
 	snapshot := s.state.Snapshot()
 
 	// set a new state object value, revert it and ensure correct content
-	s.state.SetState(stateobjaddr, &storageaddr, *data2)
+	s.state.SetState(stateobjaddr, &storageaddr, *data2, firehose.NoOpContext)
 	s.state.RevertToSnapshot(snapshot)
 
 	var value uint256.Int
@@ -214,14 +215,14 @@ func TestSnapshot2(t *testing.T) {
 	data0 := uint256.NewInt(17)
 	data1 := uint256.NewInt(18)
 
-	state.SetState(stateobjaddr0, &storageaddr, *data0)
-	state.SetState(stateobjaddr1, &storageaddr, *data1)
+	state.SetState(stateobjaddr0, &storageaddr, *data0, firehose.NoOpContext)
+	state.SetState(stateobjaddr1, &storageaddr, *data1, firehose.NoOpContext)
 
 	// db, trie are already non-empty values
 	so0 := state.getStateObject(stateobjaddr0)
-	so0.SetBalance(uint256.NewInt(42))
-	so0.SetNonce(43)
-	so0.SetCode(crypto.Keccak256Hash([]byte{'c', 'a', 'f', 'e'}), []byte{'c', 'a', 'f', 'e'})
+	so0.SetBalance(uint256.NewInt(42), firehose.NoOpContext, "test")
+	so0.SetNonce(43, firehose.NoOpContext)
+	so0.SetCode(crypto.Keccak256Hash([]byte{'c', 'a', 'f', 'e'}), []byte{'c', 'a', 'f', 'e'}, firehose.NoOpContext)
 	so0.selfdestructed = false
 	so0.deleted = false
 	state.setStateObject(stateobjaddr0, so0)
@@ -239,9 +240,9 @@ func TestSnapshot2(t *testing.T) {
 
 	// and one with deleted == true
 	so1 := state.getStateObject(stateobjaddr1)
-	so1.SetBalance(uint256.NewInt(52))
-	so1.SetNonce(53)
-	so1.SetCode(crypto.Keccak256Hash([]byte{'c', 'a', 'f', 'e', '2'}), []byte{'c', 'a', 'f', 'e', '2'})
+	so1.SetBalance(uint256.NewInt(52), firehose.NoOpContext, "test")
+	so1.SetNonce(53, firehose.NoOpContext)
+	so1.SetCode(crypto.Keccak256Hash([]byte{'c', 'a', 'f', 'e', '2'}), []byte{'c', 'a', 'f', 'e', '2'}, firehose.NoOpContext)
 	so1.selfdestructed = true
 	so1.deleted = true
 	state.setStateObject(stateobjaddr1, so1)
@@ -323,13 +324,13 @@ func TestDump(t *testing.T) {
 	state := New(NewPlainStateReader(tx))
 
 	// generate a few entries
-	obj1 := state.GetOrNewStateObject(toAddr([]byte{0x01}))
-	obj1.AddBalance(uint256.NewInt(22))
-	obj2 := state.GetOrNewStateObject(toAddr([]byte{0x01, 0x02}))
-	obj2.SetCode(crypto.Keccak256Hash([]byte{3, 3, 3, 3, 3, 3, 3}), []byte{3, 3, 3, 3, 3, 3, 3})
+	obj1 := state.GetOrNewStateObject(toAddr([]byte{0x01}), false, firehose.NoOpContext)
+	obj1.AddBalance(uint256.NewInt(22), firehose.NoOpContext, "test")
+	obj2 := state.GetOrNewStateObject(toAddr([]byte{0x01, 0x02}), false, firehose.NoOpContext)
+	obj2.SetCode(crypto.Keccak256Hash([]byte{3, 3, 3, 3, 3, 3, 3}), []byte{3, 3, 3, 3, 3, 3, 3}, firehose.NoOpContext)
 	obj2.setIncarnation(1)
-	obj3 := state.GetOrNewStateObject(toAddr([]byte{0x02}))
-	obj3.SetBalance(uint256.NewInt(44))
+	obj3 := state.GetOrNewStateObject(toAddr([]byte{0x02}), false, firehose.NoOpContext)
+	obj3.SetBalance(uint256.NewInt(44), firehose.NoOpContext, "test")
 
 	// write some of them to the trie
 	err := w.UpdateAccountData(obj1.address, &obj1.data, new(accounts.Account))

@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/turbo/stages"
 	"github.com/ledgerwatch/erigon/turbo/trie"
 
@@ -846,25 +847,25 @@ func TestReproduceCrash(t *testing.T) {
 	tsw := state.NewPlainStateWriter(tx, nil, 1)
 	intraBlockState := state.New(state.NewPlainState(tx, 1, nil))
 	// Start the 1st transaction
-	intraBlockState.CreateAccount(contract, true)
+	intraBlockState.CreateAccount(contract, true, firehose.NoOpContext)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
 	// Start the 2nd transaction
-	intraBlockState.SetState(contract, &storageKey1, *value1)
+	intraBlockState.SetState(contract, &storageKey1, *value1, firehose.NoOpContext)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
 	// Start the 3rd transaction
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000))
-	intraBlockState.SetState(contract, &storageKey2, *value2)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, firehose.NoOpContext, "test")
+	intraBlockState.SetState(contract, &storageKey2, *value2, firehose.NoOpContext)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
 	// Start the 4th transaction - clearing both storage cells
-	intraBlockState.SubBalance(contract, uint256.NewInt(1000000000))
-	intraBlockState.SetState(contract, &storageKey1, *value0)
-	intraBlockState.SetState(contract, &storageKey2, *value0)
+	intraBlockState.SubBalance(contract, uint256.NewInt(1000000000), firehose.NoOpContext, "test")
+	intraBlockState.SetState(contract, &storageKey1, *value0, firehose.NoOpContext)
+	intraBlockState.SetState(contract, &storageKey2, *value0, firehose.NoOpContext)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
@@ -1235,12 +1236,12 @@ func TestChangeAccountCodeBetweenBlocks(t *testing.T) {
 	r, tsw := state.NewPlainStateReader(tx), state.NewPlainStateWriter(tx, nil, 0)
 	intraBlockState := state.New(r)
 	// Start the 1st transaction
-	intraBlockState.CreateAccount(contract, true)
+	intraBlockState.CreateAccount(contract, true, firehose.NoOpContext)
 
 	oldCode := []byte{0x01, 0x02, 0x03, 0x04}
 
-	intraBlockState.SetCode(contract, oldCode)
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000))
+	intraBlockState.SetCode(contract, oldCode, firehose.NoOpContext)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, firehose.NoOpContext, "test")
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
@@ -1252,7 +1253,7 @@ func TestChangeAccountCodeBetweenBlocks(t *testing.T) {
 	assert.Equal(t, oldCode, trieCode, "new code should be received")
 
 	newCode := []byte{0x04, 0x04, 0x04, 0x04}
-	intraBlockState.SetCode(contract, newCode)
+	intraBlockState.SetCode(contract, newCode, firehose.NoOpContext)
 
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
@@ -1273,12 +1274,12 @@ func TestCacheCodeSizeSeparately(t *testing.T) {
 	r, w := state.NewPlainState(tx, 0, nil), state.NewPlainStateWriter(tx, nil, 0)
 	intraBlockState := state.New(r)
 	// Start the 1st transaction
-	intraBlockState.CreateAccount(contract, true)
+	intraBlockState.CreateAccount(contract, true, firehose.NoOpContext)
 
 	code := []byte{0x01, 0x02, 0x03, 0x04}
 
-	intraBlockState.SetCode(contract, code)
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000))
+	intraBlockState.SetCode(contract, code, firehose.NoOpContext)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, firehose.NoOpContext, "test")
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, w); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
@@ -1306,12 +1307,12 @@ func TestCacheCodeSizeInTrie(t *testing.T) {
 	r, w := state.NewPlainState(tx, 0, nil), state.NewPlainStateWriter(tx, nil, 0)
 	intraBlockState := state.New(r)
 	// Start the 1st transaction
-	intraBlockState.CreateAccount(contract, true)
+	intraBlockState.CreateAccount(contract, true, firehose.NoOpContext)
 
 	code := []byte{0x01, 0x02, 0x03, 0x04}
 
-	intraBlockState.SetCode(contract, code)
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000))
+	intraBlockState.SetCode(contract, code, firehose.NoOpContext)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, firehose.NoOpContext, "test")
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, w); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
