@@ -189,7 +189,7 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 	if evm.config.NoRecursion && evm.depth > 0 {
 		return nil, gas, nil
 	}
-	// TODO: CS start call should start here. If NoRecursion is enabled(call is disabled), that means call will return without any execution
+	// CS TODO: need to check whether we should start call here.
 	if evm.firehoseContext.Enabled() {
 		typStr := typ.String()
 		callerAddress := caller.Address()
@@ -483,7 +483,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
-	// TODO: CS decide what to do with the with this condition. Should we bring it top or add firehose operation on this
+	// CS TODO: decide what to do with this condition. Should we bring it top or add firehose operation on this
 	if evm.config.NoRecursion && evm.depth > 0 {
 		return nil, address, gas, nil
 	}

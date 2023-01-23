@@ -25,7 +25,7 @@ type CVM struct {
 
 func (cvm *CVM) Create(caller ContractRef, code []byte) ([]byte, libcommon.Address, error) {
 	address := crypto.CreateAddress(caller.Address(), cvm.intraBlockState.GetNonce(caller.Address()))
-	// TODO: CS not sure whether we should get real firehose context here.
+	// CS TODO: check if we need to provide actual firehose context here
 	cvm.intraBlockState.SetCode(address, code, firehose.NoOpContext)
 	fmt.Println(">>>> Create Starknet Contract", address.Hex())
 	return code, libcommon.Address{}, nil
