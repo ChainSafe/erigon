@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 
 	"github.com/holiman/uint256"
@@ -13,7 +14,7 @@ import (
 
 func TestInterpreterReadonly(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		env := NewEVM(evmtypes.BlockContext{}, evmtypes.TxContext{}, &dummyStatedb{}, params.TestChainConfig, Config{})
+		env := NewEVM(evmtypes.BlockContext{}, evmtypes.TxContext{}, &dummyStatedb{}, params.TestChainConfig, Config{}, firehose.NoOpContext)
 
 		isEVMSliceTest := rapid.SliceOfN(rapid.Bool(), 1, -1).Draw(t, "tevm")
 		readOnlySliceTest := rapid.SliceOfN(rapid.Bool(), len(isEVMSliceTest), len(isEVMSliceTest)).Draw(t, "readonly")
@@ -43,6 +44,7 @@ func TestInterpreterReadonly(t *testing.T) {
 			new(uint256.Int),
 			0,
 			false,
+			firehose.NoOpContext,
 		)
 
 		newTestSequential(env, currentIdx, readOnlySliceTest, isEVMSliceTest).Run(dummyContract, nil, false)
@@ -268,7 +270,7 @@ func TestReadonlyBasicCases(t *testing.T) {
 			t.Run(testcase.testName+evmsTestcase.suffix, func(t *testing.T) {
 				readonlySliceTest := testcase.readonlySliceTest
 
-				env := NewEVM(evmtypes.BlockContext{}, evmtypes.TxContext{}, &dummyStatedb{}, params.TestChainConfig, Config{})
+				env := NewEVM(evmtypes.BlockContext{}, evmtypes.TxContext{}, &dummyStatedb{}, params.TestChainConfig, Config{}, firehose.NoOpContext)
 
 				readonliesGot := make([]*readOnlyState, len(testcase.readonlySliceTest))
 				isEVMGot := make([]bool, len(evmsTestcase.emvs))
@@ -296,6 +298,7 @@ func TestReadonlyBasicCases(t *testing.T) {
 					new(uint256.Int),
 					0,
 					false,
+					firehose.NoOpContext,
 				)
 
 				newTestSequential(env, currentIdx, readonlySliceTest, evmsTestcase.emvs).Run(dummyContract, nil, false)
@@ -388,6 +391,7 @@ func (st *testSequential) Run(_ *Contract, _ []byte, _ bool) ([]byte, error) {
 		new(uint256.Int),
 		0,
 		false,
+		firehose.NoOpContext,
 	)
 
 	return run(st.env, nextContract, nil, st.readOnlys[*st.currentIdx])

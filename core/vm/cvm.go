@@ -7,6 +7,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 func NewCVM(state evmtypes.IntraBlockState) *CVM {
@@ -24,7 +25,8 @@ type CVM struct {
 
 func (cvm *CVM) Create(caller ContractRef, code []byte) ([]byte, libcommon.Address, error) {
 	address := crypto.CreateAddress(caller.Address(), cvm.intraBlockState.GetNonce(caller.Address()))
-	cvm.intraBlockState.SetCode(address, code)
+	// TODO: CS not sure whether we should get real firehose context here.
+	cvm.intraBlockState.SetCode(address, code, firehose.NoOpContext)
 	fmt.Println(">>>> Create Starknet Contract", address.Hex())
 	return code, libcommon.Address{}, nil
 

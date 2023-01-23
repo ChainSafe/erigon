@@ -32,6 +32,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 // Config is a basic type specifying certain configuration flags for running
@@ -134,9 +135,9 @@ func Execute(code, input []byte, cfg *Config, blockNr uint64) ([]byte, *state.In
 	if rules := cfg.ChainConfig.Rules(vmenv.Context().BlockNumber, vmenv.Context().Time); rules.IsBerlin {
 		cfg.State.PrepareAccessList(cfg.Origin, &address, vm.ActivePrecompiles(rules), nil)
 	}
-	cfg.State.CreateAccount(address, true)
+	cfg.State.CreateAccount(address, true, firehose.NoOpContext)
 	// set the receiver's (the executing contract) code for execution.
-	cfg.State.SetCode(address, code)
+	cfg.State.SetCode(address, code, firehose.NoOpContext)
 	// Call the code with the given configuration.
 	ret, _, err := vmenv.Call(
 		sender,
@@ -193,7 +194,7 @@ func Call(address libcommon.Address, input []byte, cfg *Config) ([]byte, uint64,
 
 	vmenv := NewEnv(cfg)
 
-	sender := cfg.State.GetOrNewStateObject(cfg.Origin)
+	sender := cfg.State.GetOrNewStateObject(cfg.Origin, false, firehose.NoOpContext)
 	statedb := cfg.State
 	if rules := cfg.ChainConfig.Rules(vmenv.Context().BlockNumber, vmenv.Context().Time); rules.IsBerlin {
 		statedb.PrepareAccessList(cfg.Origin, &address, vm.ActivePrecompiles(rules), nil)
