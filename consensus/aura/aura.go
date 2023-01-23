@@ -827,14 +827,21 @@ func (c *AuRa) Initialize(config *chain.Config, chain consensus.ChainHeaderReade
 }
 
 func (c *AuRa) ApplyRewards(header *types.Header, state *state.IntraBlockState, syscall consensus.SystemCall, firehoseContext *firehose.Context) error {
-	beneficiaries, _, rewards, err := calculateRewards(c, header, syscall)
+	beneficiaries, kinds, rewards, err := calculateRewards(c, header, syscall)
 	if err != nil {
 		return err
 	}
 	for i := range beneficiaries {
 		//fmt.Printf("beneficiary: n=%d, %x,%d\n", header.Number.Uint64(), beneficiaries[i], rewards[i])
 		// CS TODO: what message should be here?
-		state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, "")
+		switch kinds[i] {
+		case aurainterfaces.RewardAuthor:
+			state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
+		case aurainterfaces.RewardUncle:
+			state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_uncle"))
+		default:
+			state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_unknown"))
+		}
 	}
 	return nil
 }

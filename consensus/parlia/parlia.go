@@ -16,6 +16,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/length"
+	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/crypto/cryptopool"
@@ -615,7 +616,7 @@ func (p *Parlia) VerifyUncles(chain consensus.ChainReader, header *types.Header,
 
 // Prepare initializes the consensus fields of a block header according to the
 // rules of a particular engine. The changes are executed inline.
-func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header, ibs *state.IntraBlockState) error {
+func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header, ibs *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	header.Coinbase = p.val
 	header.Nonce = types.BlockNonce{}
 
@@ -648,7 +649,7 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	header.Extra = append(header.Extra, nextForkHash[:]...)
 
 	if number%p.config.Epoch == 0 {
-		newValidators, err := p.getCurrentValidators(parent, ibs)
+		newValidators, err := p.getCurrentValidators(parent, ibs, firehoseContext)
 		if err != nil {
 			return err
 		}
@@ -698,13 +699,13 @@ func (p *Parlia) splitTxs(txs types.Transactions, header *types.Header) (userTxs
 // consensus rules that happen at finalization (e.g. block rewards).
 func (p *Parlia) Finalize(_ *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, _ []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Receipts, error) {
-	return p.finalize(header, state, txs, receipts, chain, false)
+	return p.finalize(header, state, txs, receipts, chain, false, firehoseContext)
 }
 
 func (p *Parlia) finalize(header *types.Header, state *state.IntraBlockState, txs types.Transactions,
-	receipts types.Receipts, chain consensus.ChainHeaderReader, mining bool,
+	receipts types.Receipts, chain consensus.ChainHeaderReader, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Receipts, error) {
 	userTxs, systemTxs, err := p.splitTxs(txs, header)
 	if err != nil {
@@ -728,7 +729,7 @@ func (p *Parlia) finalize(header *types.Header, state *state.IntraBlockState, tx
 	// The verification can only be done when the state is ready, it can't be done in VerifyHeader.
 	if number%p.config.Epoch == 0 {
 		parentHeader := chain.GetHeader(header.ParentHash, number-1)
-		newValidators, err := p.getCurrentValidators(parentHeader, state)
+		newValidators, err := p.getCurrentValidators(parentHeader, state, firehoseContext)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -747,7 +748,7 @@ func (p *Parlia) finalize(header *types.Header, state *state.IntraBlockState, tx
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	if number == 1 {
 		var err error
-		if txs, systemTxs, receipts, err = p.initContract(state, header, txs, receipts, systemTxs, &header.GasUsed, mining); err != nil {
+		if txs, systemTxs, receipts, err = p.initContract(state, header, txs, receipts, systemTxs, &header.GasUsed, mining, firehoseContext); err != nil {
 			log.Error("[parlia] init contract failed", "err", err)
 			return nil, nil, fmt.Errorf("init contract failed: %v", err)
 		}
@@ -765,7 +766,7 @@ func (p *Parlia) finalize(header *types.Header, state *state.IntraBlockState, tx
 			//log.Trace("slash validator", "block hash", header.Hash(), "address", spoiledVal)
 			var tx types.Transaction
 			var receipt *types.Receipt
-			if systemTxs, tx, receipt, err = p.slash(spoiledVal, state, header, len(txs), systemTxs, &header.GasUsed, mining); err != nil {
+			if systemTxs, tx, receipt, err = p.slash(spoiledVal, state, header, len(txs), systemTxs, &header.GasUsed, mining, firehoseContext); err != nil {
 				// it is possible that slash validator failed because of the slash channel is disabled.
 				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal, "error", err)
 			} else {
@@ -775,7 +776,7 @@ func (p *Parlia) finalize(header *types.Header, state *state.IntraBlockState, tx
 			}
 		}
 	}
-	if txs, systemTxs, receipts, err = p.distributeIncoming(header.Coinbase, state, header, txs, receipts, systemTxs, &header.GasUsed, mining); err != nil {
+	if txs, systemTxs, receipts, err = p.distributeIncoming(header.Coinbase, state, header, txs, receipts, systemTxs, &header.GasUsed, mining, firehoseContext); err != nil {
 		//log.Error("distributeIncoming", "block hash", header.Hash(), "error", err, "systemTxs", len(systemTxs))
 		return nil, nil, err
 	}
@@ -795,9 +796,9 @@ func (p *Parlia) finalize(header *types.Header, state *state.IntraBlockState, tx
 // consensus rules that happen at finalization (e.g. block rewards).
 func (p *Parlia) FinalizeAndAssemble(_ *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, _ []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call, firehoseContext *firehose.Context,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
-	outTxs, outReceipts, err := p.finalize(header, state, txs, receipts, chain, true)
+	outTxs, outReceipts, err := p.finalize(header, state, txs, receipts, chain, true, firehoseContext)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1024,7 +1025,7 @@ func (p *Parlia) Close() error {
 // ==========================  interaction with contract/account =========
 
 // getCurrentValidators get current validators
-func (p *Parlia) getCurrentValidators(header *types.Header, ibs *state.IntraBlockState) ([]libcommon.Address, error) {
+func (p *Parlia) getCurrentValidators(header *types.Header, ibs *state.IntraBlockState, firehoseContext *firehose.Context) ([]libcommon.Address, error) {
 	// method
 	var method string
 	if p.chainConfig.IsEuler(header.Number) {
@@ -1039,7 +1040,7 @@ func (p *Parlia) getCurrentValidators(header *types.Header, ibs *state.IntraBloc
 	}
 	// call
 	msgData := hexutil.Bytes(data)
-	_, returnData, err := p.systemCall(header.Coinbase, systemcontracts.ValidatorContract, msgData[:], ibs, header, u256.Num0)
+	_, returnData, err := p.systemCall(header.Coinbase, systemcontracts.ValidatorContract, msgData[:], ibs, header, u256.Num0, firehoseContext)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,15 +1060,17 @@ func (p *Parlia) getCurrentValidators(header *types.Header, ibs *state.IntraBloc
 // slash spoiled validators
 func (p *Parlia) distributeIncoming(val libcommon.Address, state *state.IntraBlockState, header *types.Header,
 	txs types.Transactions, receipts types.Receipts, systemTxs types.Transactions,
-	usedGas *uint64, mining bool,
+	usedGas *uint64, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Transactions, types.Receipts, error) {
 	coinbase := header.Coinbase
 	balance := state.GetBalance(consensus.SystemAddress).Clone()
 	if balance.Cmp(u256.Num0) <= 0 {
 		return txs, systemTxs, receipts, nil
 	}
-	state.SetBalance(consensus.SystemAddress, u256.Num0)
-	state.AddBalance(coinbase, balance)
+
+	// CS TODO: confirm the message
+	state.SetBalance(consensus.SystemAddress, u256.Num0, firehoseContext, firehose.BalanceChangeReason("ignored"))
+	state.AddBalance(coinbase, balance, false, firehoseContext, firehose.BalanceChangeReason("ignored"))
 
 	doDistributeSysReward := state.GetBalance(systemcontracts.SystemRewardContract).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
@@ -1077,7 +1080,7 @@ func (p *Parlia) distributeIncoming(val libcommon.Address, state *state.IntraBlo
 			var err error
 			var tx types.Transaction
 			var receipt *types.Receipt
-			if systemTxs, tx, receipt, err = p.distributeToSystem(rewards, state, header, len(txs), systemTxs, usedGas, mining); err != nil {
+			if systemTxs, tx, receipt, err = p.distributeToSystem(rewards, state, header, len(txs), systemTxs, usedGas, mining, firehoseContext); err != nil {
 				return nil, nil, nil, err
 			}
 			txs = append(txs, tx)
@@ -1090,7 +1093,7 @@ func (p *Parlia) distributeIncoming(val libcommon.Address, state *state.IntraBlo
 	var err error
 	var tx types.Transaction
 	var receipt *types.Receipt
-	if systemTxs, tx, receipt, err = p.distributeToValidator(balance, val, state, header, len(txs), systemTxs, usedGas, mining); err != nil {
+	if systemTxs, tx, receipt, err = p.distributeToValidator(balance, val, state, header, len(txs), systemTxs, usedGas, mining, firehoseContext); err != nil {
 		return nil, nil, nil, err
 	}
 	txs = append(txs, tx)
@@ -1100,7 +1103,7 @@ func (p *Parlia) distributeIncoming(val libcommon.Address, state *state.IntraBlo
 
 // slash spoiled validators
 func (p *Parlia) slash(spoiledVal libcommon.Address, state *state.IntraBlockState, header *types.Header,
-	txIndex int, systemTxs types.Transactions, usedGas *uint64, mining bool,
+	txIndex int, systemTxs types.Transactions, usedGas *uint64, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Transaction, *types.Receipt, error) {
 	// method
 	method := "slash"
@@ -1114,13 +1117,13 @@ func (p *Parlia) slash(spoiledVal libcommon.Address, state *state.IntraBlockStat
 		return nil, nil, nil, err
 	}
 	// apply message
-	return p.applyTransaction(header.Coinbase, systemcontracts.SlashContract, u256.Num0, data, state, header, txIndex, systemTxs, usedGas, mining)
+	return p.applyTransaction(header.Coinbase, systemcontracts.SlashContract, u256.Num0, data, state, header, txIndex, systemTxs, usedGas, mining, firehoseContext)
 }
 
 // init contract
 func (p *Parlia) initContract(state *state.IntraBlockState, header *types.Header,
 	txs types.Transactions, receipts types.Receipts, systemTxs types.Transactions,
-	usedGas *uint64, mining bool,
+	usedGas *uint64, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Transactions, types.Receipts, error) {
 	// method
 	method := "init"
@@ -1144,7 +1147,7 @@ func (p *Parlia) initContract(state *state.IntraBlockState, header *types.Header
 		log.Info("[parlia] init contract", "block hash", header.Hash(), "contract", c)
 		var tx types.Transaction
 		var receipt *types.Receipt
-		if systemTxs, tx, receipt, err = p.applyTransaction(header.Coinbase, c, u256.Num0, data, state, header, len(txs), systemTxs, usedGas, mining); err != nil {
+		if systemTxs, tx, receipt, err = p.applyTransaction(header.Coinbase, c, u256.Num0, data, state, header, len(txs), systemTxs, usedGas, mining, firehoseContext); err != nil {
 			return nil, nil, nil, err
 		}
 		txs = append(txs, tx)
@@ -1155,16 +1158,16 @@ func (p *Parlia) initContract(state *state.IntraBlockState, header *types.Header
 
 func (p *Parlia) distributeToSystem(amount *uint256.Int, state *state.IntraBlockState, header *types.Header,
 	txIndex int, systemTxs types.Transactions,
-	usedGas *uint64, mining bool,
+	usedGas *uint64, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Transaction, *types.Receipt, error) {
 	return p.applyTransaction(header.Coinbase, systemcontracts.SystemRewardContract, amount, nil, state, header,
-		txIndex, systemTxs, usedGas, mining)
+		txIndex, systemTxs, usedGas, mining, firehoseContext)
 }
 
 // slash spoiled validators
 func (p *Parlia) distributeToValidator(amount *uint256.Int, validator libcommon.Address, state *state.IntraBlockState, header *types.Header,
 	txIndex int, systemTxs types.Transactions,
-	usedGas *uint64, mining bool,
+	usedGas *uint64, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Transaction, *types.Receipt, error) {
 	// method
 	method := "deposit"
@@ -1178,11 +1181,11 @@ func (p *Parlia) distributeToValidator(amount *uint256.Int, validator libcommon.
 		return nil, nil, nil, err
 	}
 	// apply message
-	return p.applyTransaction(header.Coinbase, systemcontracts.ValidatorContract, amount, data, state, header, txIndex, systemTxs, usedGas, mining)
+	return p.applyTransaction(header.Coinbase, systemcontracts.ValidatorContract, amount, data, state, header, txIndex, systemTxs, usedGas, mining, firehoseContext)
 }
 
 func (p *Parlia) applyTransaction(from libcommon.Address, to libcommon.Address, value *uint256.Int, data []byte, ibs *state.IntraBlockState, header *types.Header,
-	txIndex int, systemTxs types.Transactions, usedGas *uint64, mining bool,
+	txIndex int, systemTxs types.Transactions, usedGas *uint64, mining bool, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Transaction, *types.Receipt, error) {
 	nonce := ibs.GetNonce(from)
 	expectedTx := types.Transaction(types.NewTransaction(nonce, to, value, math.MaxUint64/2, u256.Num0, data))
@@ -1229,7 +1232,7 @@ func (p *Parlia) applyTransaction(from libcommon.Address, to libcommon.Address, 
 		systemTxs = systemTxs[1:]
 	}
 	ibs.Prepare(expectedTx.Hash(), libcommon.Hash{}, txIndex)
-	gasUsed, _, err := p.systemCall(from, to, data, ibs, header, value)
+	gasUsed, _, err := p.systemCall(from, to, data, ibs, header, value, firehoseContext)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1246,14 +1249,14 @@ func (p *Parlia) applyTransaction(from libcommon.Address, to libcommon.Address, 
 	receipt.BlockHash = header.Hash()
 	receipt.BlockNumber = header.Number
 	receipt.TransactionIndex = uint(txIndex)
-	ibs.SetNonce(from, nonce+1)
+	ibs.SetNonce(from, nonce+1, firehoseContext)
 	return systemTxs, expectedTx, receipt, nil
 }
 
-func (p *Parlia) systemCall(from, contract libcommon.Address, data []byte, ibs *state.IntraBlockState, header *types.Header, value *uint256.Int) (gasUsed uint64, returnData []byte, err error) {
+func (p *Parlia) systemCall(from, contract libcommon.Address, data []byte, ibs *state.IntraBlockState, header *types.Header, value *uint256.Int, firehoseContext *firehose.Context) (gasUsed uint64, returnData []byte, err error) {
 	chainConfig := p.chainConfig
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 	msg := types.NewMessage(
 		from,
@@ -1275,6 +1278,7 @@ func (p *Parlia) systemCall(from, contract libcommon.Address, data []byte, ibs *
 		msg.Gas(),
 		msg.Value(),
 		false,
+		firehoseContext,
 	)
 	if err != nil {
 		return 0, nil, err
