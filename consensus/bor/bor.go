@@ -657,7 +657,7 @@ func (c *Bor) verifySeal(chain consensus.ChainHeaderReader, header *types.Header
 
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
-func (c *Bor) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error {
+func (c *Bor) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 
 	// If the block isn't a checkpoint, cast a random vote (good enough for now)
 	header.Coinbase = libcommon.Address{}

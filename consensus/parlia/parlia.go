@@ -1278,7 +1278,6 @@ func (p *Parlia) systemCall(from, contract libcommon.Address, data []byte, ibs *
 		msg.Gas(),
 		msg.Value(),
 		false,
-		firehoseContext,
 	)
 	if err != nil {
 		return 0, nil, err

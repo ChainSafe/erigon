@@ -107,7 +107,7 @@ type EngineWriter interface {
 
 	// Prepare initializes the consensus fields of a block header according to the
 	// rules of a particular engine. The changes are executed inline.
-	Prepare(chain ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error
+	Prepare(chain ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error
 
 	// Initialize runs any pre-transaction state modifications (e.g. epoch start)
 	Initialize(config *chain.Config, chain ChainHeaderReader, e EpochReader, header *types.Header,
