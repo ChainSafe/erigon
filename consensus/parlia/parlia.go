@@ -1069,8 +1069,8 @@ func (p *Parlia) distributeIncoming(val libcommon.Address, state *state.IntraBlo
 	}
 
 	// CS TODO: confirm the message
-	state.SetBalance(consensus.SystemAddress, u256.Num0, firehoseContext, firehose.BalanceChangeReason("ignored"))
-	state.AddBalance(coinbase, balance, false, firehoseContext, firehose.BalanceChangeReason("ignored"))
+	state.SetBalance(consensus.SystemAddress, u256.Num0, firehoseContext, firehose.IgnoredBalanceChangeReason)
+	state.AddBalance(coinbase, balance, false, firehoseContext, firehose.IgnoredBalanceChangeReason)
 
 	doDistributeSysReward := state.GetBalance(systemcontracts.SystemRewardContract).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
