@@ -37,6 +37,10 @@ const (
 	VersionModifier    = "stable" // Modifier component of the current release
 	VersionKeyCreated  = "ErigonVersionCreated"
 	VersionKeyFinished = "ErigonVersionFinished"
+
+	FirehoseVersionMajor = 2
+	FirehoseVersionMinor = 1
+	Variant              = "erigon"
 )
 
 func withModifier(vsn string) string {
@@ -67,6 +71,10 @@ var VersionWithMeta = func() string {
 	}
 	return v
 }()
+
+func FirehoseVersion() string {
+	return fmt.Sprintf("%d.%d", FirehoseVersionMajor, FirehoseVersionMinor)
+}
 
 // ArchiveVersion holds the textual version string used for Geth archives.
 // e.g. "1.8.11-dea1ce05" for stable releases, or

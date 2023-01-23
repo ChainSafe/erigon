@@ -8,6 +8,8 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ledgerwatch/erigon/cmd/utils"
+	"github.com/ledgerwatch/erigon/core"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/node"
 	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
@@ -24,8 +26,19 @@ func MakeApp(action cli.ActionFunc, cliFlags []cli.Flag) *cli.App {
 	app := cli2.NewApp(params.GitCommit, "", "erigon experimental cli")
 	app.Action = action
 	app.Flags = append(cliFlags, debug.Flags...) // debug flags are required
+	app.Flags = append(app.Flags, debug.FirehoseFlags...)
 	app.Before = func(ctx *cli.Context) error {
-		return debug.Setup(ctx)
+		chain := ctx.String(utils.ChainFlag.Name)
+		if err := debug.Setup(ctx, core.DefaultGenesisBlockByChainName(chain)); err != nil {
+			return err
+		}
+
+		firehose.MaybeSyncContext().InitVersion(
+			params.VersionWithCommit(params.GitCommit, ""),
+			params.FirehoseVersion(),
+			params.Variant,
+		)
+		return nil
 	}
 	app.After = func(ctx *cli.Context) error {
 		debug.Exit()
