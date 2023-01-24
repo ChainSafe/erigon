@@ -7,6 +7,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 // BlockContext provides the EVM with auxiliary information. Once provided
@@ -44,7 +45,7 @@ type (
 	// CanTransferFunc is the signature of a transfer guard function
 	CanTransferFunc func(IntraBlockState, libcommon.Address, *uint256.Int) bool
 	// TransferFunc is the signature of a transfer function
-	TransferFunc func(IntraBlockState, libcommon.Address, libcommon.Address, *uint256.Int, bool)
+	TransferFunc func(IntraBlockState, libcommon.Address, libcommon.Address, *uint256.Int, bool, *firehose.Context)
 	// GetHashFunc returns the nth block hash in the blockchain
 	// and is used by the BLOCKHASH EVM op code.
 	GetHashFunc func(uint64) libcommon.Hash
@@ -52,18 +53,18 @@ type (
 
 // IntraBlockState is an EVM database for full state querying.
 type IntraBlockState interface {
-	CreateAccount(libcommon.Address, bool)
+	CreateAccount(libcommon.Address, bool, *firehose.Context)
 
-	SubBalance(libcommon.Address, *uint256.Int)
-	AddBalance(libcommon.Address, *uint256.Int)
+	SubBalance(libcommon.Address, *uint256.Int, *firehose.Context, firehose.BalanceChangeReason)
+	AddBalance(libcommon.Address, *uint256.Int, bool, *firehose.Context, firehose.BalanceChangeReason)
 	GetBalance(libcommon.Address) *uint256.Int
 
 	GetNonce(libcommon.Address) uint64
-	SetNonce(libcommon.Address, uint64)
+	SetNonce(libcommon.Address, uint64, *firehose.Context)
 
 	GetCodeHash(libcommon.Address) libcommon.Hash
 	GetCode(libcommon.Address) []byte
-	SetCode(libcommon.Address, []byte)
+	SetCode(libcommon.Address, []byte, *firehose.Context)
 	GetCodeSize(libcommon.Address) int
 
 	AddRefund(uint64)
@@ -72,9 +73,9 @@ type IntraBlockState interface {
 
 	GetCommittedState(libcommon.Address, *libcommon.Hash, *uint256.Int)
 	GetState(address libcommon.Address, slot *libcommon.Hash, outValue *uint256.Int)
-	SetState(libcommon.Address, *libcommon.Hash, uint256.Int)
+	SetState(libcommon.Address, *libcommon.Hash, uint256.Int, *firehose.Context)
 
-	Selfdestruct(libcommon.Address) bool
+	Selfdestruct(libcommon.Address, *firehose.Context) bool
 	HasSelfdestructed(libcommon.Address) bool
 
 	// Exist reports whether the given account exists in state.
@@ -97,5 +98,5 @@ type IntraBlockState interface {
 	RevertToSnapshot(int)
 	Snapshot() int
 
-	AddLog(*types.Log)
+	AddLog(*types.Log, *firehose.Context)
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/ledgerwatch/erigon/common/u256"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 )
 
@@ -97,11 +98,14 @@ type EVM struct {
 	// available gas is calculated in gasCall* according to the 63/64 rule and later
 	// applied in opCall*.
 	callGasTemp uint64
+
+	firehoseContext *firehose.Context
 }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
 // only ever be used *once*.
-func NewEVM(blockCtx evmtypes.BlockContext, txCtx evmtypes.TxContext, state evmtypes.IntraBlockState, chainConfig *chain.Config, vmConfig Config) *EVM {
+func NewEVM(blockCtx evmtypes.BlockContext, txCtx evmtypes.TxContext, state evmtypes.IntraBlockState,
+	chainConfig *chain.Config, vmConfig Config, firehoseContext *firehose.Context) *EVM {
 	evm := &EVM{
 		context:         blockCtx,
 		txContext:       txCtx,
@@ -109,6 +113,7 @@ func NewEVM(blockCtx evmtypes.BlockContext, txCtx evmtypes.TxContext, state evmt
 		config:          vmConfig,
 		chainConfig:     chainConfig,
 		chainRules:      chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Time),
+		firehoseContext: firehoseContext,
 	}
 
 	evm.interpreter = NewEVMInterpreter(evm, vmConfig)
@@ -184,14 +189,44 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 	if evm.config.NoRecursion && evm.depth > 0 {
 		return nil, gas, nil
 	}
+	// CS TODO: need to check whether we should start call here.
+	if evm.firehoseContext.Enabled() {
+		typStr := typ.String()
+		callerAddress := caller.Address()
+
+		switch typ {
+		case STATICCALL:
+			typStr = "STATIC"
+		case DELEGATECALL:
+			typStr = "DELEGATE"
+			// Firehose a Delegate Call is quite different then a standard Call or event Call Code
+			// because it executes using the state of the parent call. Assumuming a contract that
+			// receives a method `execute`, let's say this contract is A. When in the `execute`
+			// method a `delegatecall` is performed to contract B, the net effect is that code of
+			// B is loaded and executed against the current state and value of contract A. As such,
+			// the real caller is the one that called contract A.
+			// It's a sure thing that caller is a Contract, it cannot be anything else, so we are safe
+			parent := caller.(*Contract)
+			callerAddress = parent.Address()
+		}
+		evm.firehoseContext.StartCall(typStr)
+		evm.firehoseContext.RecordCallParams(typStr, callerAddress, addr, value, gas, input)
+	}
+
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
+		if evm.firehoseContext.Enabled() {
+			evm.firehoseContext.EndFailedCall(gas, true, ErrDepth.Error())
+		}
 		return nil, gas, ErrDepth
 	}
 	if typ == CALL || typ == CALLCODE {
 		// Fail if we're trying to transfer more than the available balance
 		if !value.IsZero() && !evm.context.CanTransfer(evm.intraBlockState, caller.Address(), value) {
 			if !bailout {
+				if evm.firehoseContext.Enabled() {
+					evm.firehoseContext.EndFailedCall(gas, true, ErrInsufficientBalance.Error())
+				}
 				return nil, gas, ErrInsufficientBalance
 			}
 		}
@@ -225,17 +260,20 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 						}(gas)
 					}
 				}
+				if evm.firehoseContext.Enabled() {
+					evm.firehoseContext.EndCall(gas, nil)
+				}
 				return nil, gas, nil
 			}
-			evm.intraBlockState.CreateAccount(addr, false)
+			evm.intraBlockState.CreateAccount(addr, false, evm.firehoseContext)
 		}
-		evm.context.Transfer(evm.intraBlockState, caller.Address(), addr, value, bailout)
+		evm.context.Transfer(evm.intraBlockState, caller.Address(), addr, value, bailout, evm.firehoseContext)
 	} else if typ == STATICCALL {
 		// We do an AddBalance of zero here, just in order to trigger a touch.
 		// This doesn't matter on Mainnet, where all empties are gone at the time of Byzantium,
 		// but is the correct thing to do and matters on other networks, in tests, and potential
 		// future scenarios
-		evm.intraBlockState.AddBalance(addr, u256.Num0)
+		evm.intraBlockState.AddBalance(addr, u256.Num0, isPrecompile, evm.firehoseContext, firehose.IgnoredBalanceChangeReason)
 	}
 	if evm.config.Debug {
 		v := value
@@ -257,10 +295,13 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 
 	// It is allowed to call precompiles, even via delegatecall
 	if isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.firehoseContext)
 	} else if len(code) == 0 {
 		// If the account has no code, we can abort here
 		// The depth-check is already done, and precompiles handled above
+		if evm.firehoseContext.Enabled() {
+			evm.firehoseContext.RecordCallWithoutCode()
+		}
 		ret, err = nil, nil // gas is unchanged
 	} else {
 		// At this point, we use a copy of address. If we don't, the go compiler will
@@ -272,11 +313,11 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 		codeHash := evm.intraBlockState.GetCodeHash(addrCopy)
 		var contract *Contract
 		if typ == CALLCODE {
-			contract = NewContract(caller, AccountRef(caller.Address()), value, gas, evm.config.SkipAnalysis)
+			contract = NewContract(caller, AccountRef(caller.Address()), value, gas, evm.config.SkipAnalysis, evm.firehoseContext)
 		} else if typ == DELEGATECALL {
-			contract = NewContract(caller, AccountRef(caller.Address()), value, gas, evm.config.SkipAnalysis).AsDelegate()
+			contract = NewContract(caller, AccountRef(caller.Address()), value, gas, evm.config.SkipAnalysis, evm.firehoseContext).AsDelegate()
 		} else {
-			contract = NewContract(caller, AccountRef(addrCopy), value, gas, evm.config.SkipAnalysis)
+			contract = NewContract(caller, AccountRef(addrCopy), value, gas, evm.config.SkipAnalysis, evm.firehoseContext)
 		}
 		contract.SetCallCode(&addrCopy, codeHash, code)
 		readOnly := false
@@ -290,14 +331,29 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 	// above we revert to the snapshot and consume any gas remaining. Additionally
 	// when we're in Homestead this also counts for code storage gas errors.
 	if err != nil || evm.config.RestoreState {
+		if evm.firehoseContext.Enabled() {
+			evm.firehoseContext.RecordCallFailed(gas, err.Error())
+		}
+
 		evm.intraBlockState.RevertToSnapshot(snapshot)
 		if err != ErrExecutionReverted {
+			if evm.firehoseContext.Enabled() {
+				evm.firehoseContext.RecordGasConsume(gas, gas, firehose.FailedExecutionGasChangeReason)
+			}
 			gas = 0
+		} else {
+			if evm.firehoseContext.Enabled() {
+				evm.firehoseContext.RecordCallReverted()
+			}
 		}
 		// TODO: consider clearing up unused snapshots:
 		//} else {
 		//	evm.StateDB.DiscardSnapshot(snapshot)
 	}
+	if evm.firehoseContext.Enabled() {
+		evm.firehoseContext.EndCall(gas, ret)
+	}
+
 	return ret, gas, err
 }
 
@@ -353,20 +409,38 @@ func (c *codeAndHash) Hash() libcommon.Hash {
 func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64, value *uint256.Int, address libcommon.Address, typ OpCode, incrementNonce bool) ([]byte, libcommon.Address, uint64, error) {
 	var ret []byte
 	var err error
+
+	if evm.firehoseContext.Enabled() {
+		evm.firehoseContext.StartCall("CREATE")
+		evm.firehoseContext.RecordCallParams("CREATE", caller.Address(), address, value, gas, nil)
+	}
+
 	// Depth check execution. Fail if we're trying to execute above the
 	// limit.
 	if evm.depth > int(params.CallCreateDepth) {
+		if evm.firehoseContext.Enabled() {
+			evm.firehoseContext.EndFailedCall(gas, true, ErrDepth.Error())
+		}
+
 		return nil, libcommon.Address{}, gas, ErrDepth
 	}
 	if !evm.context.CanTransfer(evm.intraBlockState, caller.Address(), value) {
+		if evm.firehoseContext.Enabled() {
+			evm.firehoseContext.EndFailedCall(gas, true, ErrInsufficientBalance.Error())
+		}
+
 		return nil, libcommon.Address{}, gas, ErrInsufficientBalance
 	}
 	if incrementNonce {
 		nonce := evm.intraBlockState.GetNonce(caller.Address())
 		if nonce+1 < nonce {
+			if evm.firehoseContext.Enabled() {
+				evm.firehoseContext.EndFailedCall(gas, true, ErrNonceUintOverflow.Error())
+			}
+
 			return nil, libcommon.Address{}, gas, ErrNonceUintOverflow
 		}
-		evm.intraBlockState.SetNonce(caller.Address(), nonce+1)
+		evm.intraBlockState.SetNonce(caller.Address(), nonce+1, evm.firehoseContext)
 	}
 	// We add this to the access list _before_ taking a snapshot. Even if the creation fails,
 	// the access-list change should not be rolled back
@@ -376,20 +450,29 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// Ensure there's no existing contract already at the designated address
 	contractHash := evm.intraBlockState.GetCodeHash(address)
 	if evm.intraBlockState.GetNonce(address) != 0 || (contractHash != (libcommon.Hash{}) && contractHash != emptyCodeHash) {
+		if evm.firehoseContext.Enabled() {
+			// In the case of a contract collision, the gas is fully consume since the retured gas value in the
+			// return a little below is 0. This means we are facing not a revertion like other early failure
+			// reasons we usually see but with an actual assertion failure which burns the remaining gas that
+			// was allowed to the creation. Hence why we have an `EndFailedCall` and using `false` to show
+			// the call is **not** reverted.
+			evm.firehoseContext.EndFailedCall(gas, false, ErrContractAddressCollision.Error())
+		}
+
 		err = ErrContractAddressCollision
 		return nil, libcommon.Address{}, 0, err
 	}
 	// Create a new account on the state
 	snapshot := evm.intraBlockState.Snapshot()
-	evm.intraBlockState.CreateAccount(address, true)
+	evm.intraBlockState.CreateAccount(address, true, evm.firehoseContext)
 	if evm.chainRules.IsSpuriousDragon {
-		evm.intraBlockState.SetNonce(address, 1)
+		evm.intraBlockState.SetNonce(address, 1, evm.firehoseContext)
 	}
-	evm.context.Transfer(evm.intraBlockState, caller.Address(), address, value, false /* bailout */)
+	evm.context.Transfer(evm.intraBlockState, caller.Address(), address, value, false /* bailout */, evm.firehoseContext)
 
 	// Initialise a new contract and set the code that is to be used by the EVM.
 	// The contract is a scoped environment for this execution context only.
-	contract := NewContract(caller, AccountRef(address), value, gas, evm.config.SkipAnalysis)
+	contract := NewContract(caller, AccountRef(address), value, gas, evm.config.SkipAnalysis, evm.firehoseContext)
 	contract.SetCodeOptionalHash(&address, codeAndHash)
 
 	if evm.config.Debug {
@@ -400,6 +483,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
+	// CS TODO: decide what to do with this condition. Should we bring it top or add firehose operation on this
 	if evm.config.NoRecursion && evm.depth > 0 {
 		return nil, address, gas, nil
 	}
@@ -421,8 +505,8 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// by the error checking condition below.
 	if err == nil {
 		createDataGas := uint64(len(ret)) * params.CreateDataGas
-		if contract.UseGas(createDataGas) {
-			evm.intraBlockState.SetCode(address, ret)
+		if contract.UseGas(createDataGas, firehose.GasChangeReason("code_storage")) {
+			evm.intraBlockState.SetCode(address, ret, evm.firehoseContext)
 		} else if evm.chainRules.IsHomestead {
 			err = ErrCodeStoreOutOfGas
 		}
@@ -433,8 +517,15 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// when we're in homestead this also counts for code storage gas errors.
 	if err != nil && (evm.chainRules.IsHomestead || err != ErrCodeStoreOutOfGas) {
 		evm.intraBlockState.RevertToSnapshot(snapshot)
+		if evm.firehoseContext.Enabled() {
+			evm.firehoseContext.RecordCallFailed(contract.Gas, err.Error())
+		}
 		if err != ErrExecutionReverted {
-			contract.UseGas(contract.Gas)
+			contract.UseGas(contract.Gas, firehose.FailedExecutionGasChangeReason)
+		} else {
+			if evm.firehoseContext.Enabled() {
+				evm.firehoseContext.RecordCallReverted()
+			}
 		}
 	}
 
@@ -444,6 +535,10 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		} else {
 			evm.config.Tracer.CaptureExit(ret, gas-contract.Gas, err)
 		}
+	}
+
+	if evm.firehoseContext.Enabled() {
+		evm.firehoseContext.EndCall(contract.Gas, nil)
 	}
 
 	return ret, address, contract.Gas, err
@@ -502,4 +597,8 @@ func (evm *EVM) TxContext() evmtypes.TxContext {
 // IntraBlockState returns the EVM's IntraBlockState
 func (evm *EVM) IntraBlockState() evmtypes.IntraBlockState {
 	return evm.intraBlockState
+}
+
+func (evm *EVM) FirehoseContext() *firehose.Context {
+	return evm.firehoseContext
 }

@@ -36,6 +36,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/tracers/logger"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 func TestDefaults(t *testing.T) {
@@ -116,7 +117,7 @@ func TestCall(t *testing.T) {
 		byte(vm.PUSH1), 32,
 		byte(vm.PUSH1), 0,
 		byte(vm.RETURN),
-	})
+	}, firehose.NoOpContext)
 
 	ret, _, err := Call(address, nil, &Config{State: state, kv: tx})
 	if err != nil {
@@ -169,8 +170,8 @@ func benchmarkEVM_Create(bench *testing.B, code string) {
 		receiver = libcommon.BytesToAddress([]byte("receiver"))
 	)
 
-	statedb.CreateAccount(sender, true)
-	statedb.SetCode(receiver, common.FromHex(code))
+	statedb.CreateAccount(sender, true, firehose.NoOpContext)
+	statedb.SetCode(receiver, common.FromHex(code), firehose.NoOpContext)
 	runtimeConfig := Config{
 		Origin:      sender,
 		State:       statedb,
@@ -339,25 +340,25 @@ func benchmarkNonModifyingCode(gas uint64, code []byte, name string, b *testing.
 		vmenv       = NewEnv(cfg)
 		sender      = vm.AccountRef(cfg.Origin)
 	)
-	cfg.State.CreateAccount(destination, true)
+	cfg.State.CreateAccount(destination, true, firehose.NoOpContext)
 	eoa := libcommon.HexToAddress("E0")
 	{
-		cfg.State.CreateAccount(eoa, true)
-		cfg.State.SetNonce(eoa, 100)
+		cfg.State.CreateAccount(eoa, true, firehose.NoOpContext)
+		cfg.State.SetNonce(eoa, 100, firehose.NoOpContext)
 	}
 	reverting := libcommon.HexToAddress("EE")
 	{
-		cfg.State.CreateAccount(reverting, true)
+		cfg.State.CreateAccount(reverting, true, firehose.NoOpContext)
 		cfg.State.SetCode(reverting, []byte{
 			byte(vm.PUSH1), 0x00,
 			byte(vm.PUSH1), 0x00,
 			byte(vm.REVERT),
-		})
+		}, firehose.NoOpContext)
 	}
 
 	//cfg.State.CreateAccount(cfg.Origin)
 	// set the receiver's (the executing contract) code for execution.
-	cfg.State.SetCode(destination, code)
+	cfg.State.SetCode(destination, code, firehose.NoOpContext)
 	vmenv.Call(sender, destination, nil, gas, cfg.Value, false /* bailout */) // nolint:errcheck
 
 	b.Run(name, func(b *testing.B) {
