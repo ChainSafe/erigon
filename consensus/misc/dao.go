@@ -23,6 +23,7 @@ import (
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/chain"
+	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -75,15 +76,15 @@ func VerifyDAOHeaderExtraData(config *chain.Config, header *types.Header) error 
 // ApplyDAOHardFork modifies the state database according to the DAO hard-fork
 // rules, transferring all balances of a set of DAO accounts to a single refund
 // contract.
-func ApplyDAOHardFork(statedb *state.IntraBlockState) {
+func ApplyDAOHardFork(statedb *state.IntraBlockState, firehoseContext *firehose.Context) {
 	// Retrieve the contract to refund balances into
 	if !statedb.Exist(params.DAORefundContract) {
-		statedb.CreateAccount(params.DAORefundContract, false)
+		statedb.CreateAccount(params.DAORefundContract, false, firehoseContext)
 	}
 
 	// Move every DAO account and extra-balance account funds into the refund contract
 	for _, addr := range params.DAODrainList() {
-		statedb.AddBalance(params.DAORefundContract, statedb.GetBalance(addr))
-		statedb.SetBalance(addr, new(uint256.Int))
+		statedb.AddBalance(params.DAORefundContract, statedb.GetBalance(addr), false, firehoseContext, firehose.BalanceChangeReason("dao_refund_contract"))
+		statedb.SetBalance(addr, new(uint256.Int), firehoseContext, firehose.BalanceChangeReason("dao_adjust_balance"))
 	}
 }

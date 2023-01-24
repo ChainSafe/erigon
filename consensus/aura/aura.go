@@ -31,6 +31,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/ledgerwatch/secp256k1"
 	"go.uber.org/atomic"
@@ -704,7 +705,7 @@ func (c *AuRa) VerifySeal(chain consensus.ChainHeaderReader, header *types.Heade
 
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
-func (c *AuRa) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error {
+func (c *AuRa) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	return nil
 	/// If the block isn't a checkpoint, cast a random vote (good enough for now)
 	//header.Coinbase = libcommon.Address{}
@@ -772,11 +773,11 @@ func (c *AuRa) Prepare(chain consensus.ChainHeaderReader, header *types.Header, 
 }
 
 func (c *AuRa) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, e consensus.EpochReader, header *types.Header,
-	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall,
+	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall, firehoseContext *firehose.Context,
 ) {
 	blockNum := header.Number.Uint64()
 	for address, rewrittenCode := range c.cfg.RewriteBytecode[blockNum] {
-		state.SetCode(address, rewrittenCode)
+		state.SetCode(address, rewrittenCode, firehoseContext)
 	}
 
 	c.certifierLock.Lock()
@@ -825,14 +826,22 @@ func (c *AuRa) Initialize(config *chain.Config, chain consensus.ChainHeaderReade
 
 }
 
-func (c *AuRa) ApplyRewards(header *types.Header, state *state.IntraBlockState, syscall consensus.SystemCall) error {
-	beneficiaries, _, rewards, err := calculateRewards(c, header, syscall)
+func (c *AuRa) ApplyRewards(header *types.Header, state *state.IntraBlockState, syscall consensus.SystemCall, firehoseContext *firehose.Context) error {
+	beneficiaries, kinds, rewards, err := calculateRewards(c, header, syscall)
 	if err != nil {
 		return err
 	}
 	for i := range beneficiaries {
 		//fmt.Printf("beneficiary: n=%d, %x,%d\n", header.Number.Uint64(), beneficiaries[i], rewards[i])
-		state.AddBalance(beneficiaries[i], rewards[i])
+		// CS TODO: what message should be here?
+		switch kinds[i] {
+		case aurainterfaces.RewardAuthor:
+			state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
+		case aurainterfaces.RewardUncle:
+			state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_uncle"))
+		default:
+			state.AddBalance(beneficiaries[i], rewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_unknown"))
+		}
 	}
 	return nil
 }
@@ -840,9 +849,9 @@ func (c *AuRa) ApplyRewards(header *types.Header, state *state.IntraBlockState, 
 // word `signal epoch` == word `pending epoch`
 func (c *AuRa) Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Receipts, error) {
-	if err := c.ApplyRewards(header, state, syscall); err != nil {
+	if err := c.ApplyRewards(header, state, syscall, firehoseContext); err != nil {
 		return nil, nil, err
 	}
 
@@ -980,9 +989,9 @@ func allHeadersUntil(chain consensus.ChainHeaderReader, from *types.Header, to l
 // FinalizeAndAssemble implements consensus.Engine
 func (c *AuRa) FinalizeAndAssemble(chainConfig *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call, firehoseContext *firehose.Context,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
-	outTxs, outReceipts, err := c.Finalize(chainConfig, header, state, txs, uncles, receipts, withdrawals, e, chain, syscall)
+	outTxs, outReceipts, err := c.Finalize(chainConfig, header, state, txs, uncles, receipts, withdrawals, e, chain, syscall, firehoseContext)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/log/v3"
 	"golang.org/x/crypto/sha3"
 
@@ -542,7 +543,7 @@ func (ethash *Ethash) verifySeal(header *types.Header, fulldag bool) error { //n
 
 // Prepare implements consensus.Engine, initializing the difficulty field of a
 // header to conform to the ethash protocol. The changes are done inline.
-func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error {
+func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
@@ -552,17 +553,17 @@ func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.H
 }
 
 func (ethash *Ethash) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, e consensus.EpochReader, header *types.Header,
-	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall) {
+	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall, firehoseContext *firehose.Context) {
 }
 
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards,
 // setting the final state on the header
 func (ethash *Ethash) Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Receipts, error) {
 	// Accumulate any block and uncle rewards and commit the final state root
-	accumulateRewards(config, state, header, uncles)
+	accumulateRewards(config, state, header, uncles, firehoseContext)
 	return txs, r, nil
 }
 
@@ -570,11 +571,11 @@ func (ethash *Ethash) Finalize(config *chain.Config, header *types.Header, state
 // uncle rewards, setting the final state and assembling the block.
 func (ethash *Ethash) FinalizeAndAssemble(chainConfig *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call, firehoseContext *firehose.Context,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
 
 	// Finalize block
-	outTxs, outR, err := ethash.Finalize(chainConfig, header, state, txs, uncles, r, withdrawals, e, chain, syscall)
+	outTxs, outR, err := ethash.Finalize(chainConfig, header, state, txs, uncles, r, withdrawals, e, chain, syscall, firehoseContext)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -645,12 +646,12 @@ func AccumulateRewards(config *chain.Config, header *types.Header, uncles []*typ
 }
 
 // accumulateRewards retrieves rewards for a block and applies them to the coinbase accounts for miner and uncle miners
-func accumulateRewards(config *chain.Config, state *state.IntraBlockState, header *types.Header, uncles []*types.Header) {
+func accumulateRewards(config *chain.Config, state *state.IntraBlockState, header *types.Header, uncles []*types.Header, firehoseContext *firehose.Context) {
 	minerReward, uncleRewards := AccumulateRewards(config, header, uncles)
 	for i, uncle := range uncles {
 		if i < len(uncleRewards) {
-			state.AddBalance(uncle.Coinbase, &uncleRewards[i])
+			state.AddBalance(uncle.Coinbase, &uncleRewards[i], false, firehoseContext, firehose.BalanceChangeReason("reward_mine_uncle"))
 		}
 	}
-	state.AddBalance(header.Coinbase, &minerReward)
+	state.AddBalance(header.Coinbase, &minerReward, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
 }

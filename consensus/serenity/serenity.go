@@ -9,6 +9,7 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/consensus"
@@ -111,13 +112,13 @@ func (s *Serenity) VerifyUncles(chain consensus.ChainReader, header *types.Heade
 }
 
 // Prepare makes sure difficulty and nonce are correct
-func (s *Serenity) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error {
+func (s *Serenity) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	reached, err := IsTTDReached(chain, header.ParentHash, header.Number.Uint64()-1)
 	if err != nil {
 		return err
 	}
 	if !reached {
-		return s.eth1Engine.Prepare(chain, header, state)
+		return s.eth1Engine.Prepare(chain, header, state, firehoseContext)
 	}
 	header.Difficulty = SerenityDifficulty
 	header.Nonce = SerenityNonce
@@ -126,31 +127,32 @@ func (s *Serenity) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 
 func (s *Serenity) Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Receipts, error) {
 	if !IsPoSHeader(header) {
-		return s.eth1Engine.Finalize(config, header, state, txs, uncles, r, withdrawals, e, chain, syscall)
+		return s.eth1Engine.Finalize(config, header, state, txs, uncles, r, withdrawals, e, chain, syscall, firehoseContext)
 	}
 	if auraEngine, ok := s.eth1Engine.(*aura.AuRa); ok {
-		if err := auraEngine.ApplyRewards(header, state, syscall); err != nil {
+		if err := auraEngine.ApplyRewards(header, state, syscall, firehoseContext); err != nil {
 			return nil, nil, err
 		}
 	}
 	for _, w := range withdrawals {
 		amountInWei := new(uint256.Int).Mul(uint256.NewInt(w.Amount), uint256.NewInt(params.GWei))
-		state.AddBalance(w.Address, amountInWei)
+		// CS TODO: confirm the addBalance reason
+		state.AddBalance(w.Address, amountInWei, false, firehoseContext, firehose.IgnoredBalanceChangeReason)
 	}
 	return txs, r, nil
 }
 
 func (s *Serenity) FinalizeAndAssemble(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call, firehoseContext *firehose.Context,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
 	if !IsPoSHeader(header) {
-		return s.eth1Engine.FinalizeAndAssemble(config, header, state, txs, uncles, receipts, withdrawals, e, chain, syscall, call)
+		return s.eth1Engine.FinalizeAndAssemble(config, header, state, txs, uncles, receipts, withdrawals, e, chain, syscall, call, firehoseContext)
 	}
-	outTxs, outReceipts, err := s.Finalize(config, header, state, txs, uncles, receipts, withdrawals, e, chain, syscall)
+	outTxs, outReceipts, err := s.Finalize(config, header, state, txs, uncles, receipts, withdrawals, e, chain, syscall, firehoseContext)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -240,8 +242,8 @@ func (s *Serenity) IsServiceTransaction(sender libcommon.Address, syscall consen
 	return s.eth1Engine.IsServiceTransaction(sender, syscall)
 }
 
-func (s *Serenity) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, e consensus.EpochReader, header *types.Header, state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall) {
-	s.eth1Engine.Initialize(config, chain, e, header, state, txs, uncles, syscall)
+func (s *Serenity) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, e consensus.EpochReader, header *types.Header, state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall, firehoseContext *firehose.Context) {
+	s.eth1Engine.Initialize(config, chain, e, header, state, txs, uncles, syscall, firehoseContext)
 }
 
 func (s *Serenity) APIs(chain consensus.ChainHeaderReader) []rpc.API {

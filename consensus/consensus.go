@@ -23,9 +23,9 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
-
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rpc"
 )
 
@@ -107,11 +107,11 @@ type EngineWriter interface {
 
 	// Prepare initializes the consensus fields of a block header according to the
 	// rules of a particular engine. The changes are executed inline.
-	Prepare(chain ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error
+	Prepare(chain ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error
 
 	// Initialize runs any pre-transaction state modifications (e.g. epoch start)
 	Initialize(config *chain.Config, chain ChainHeaderReader, e EpochReader, header *types.Header,
-		state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall SystemCall)
+		state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall SystemCall, firehoseContext *firehose.Context)
 
 	// Finalize runs any post-transaction state modifications (e.g. block rewards)
 	// but does not assemble the block.
@@ -120,7 +120,7 @@ type EngineWriter interface {
 	// consensus rules that happen at finalization (e.g. block rewards).
 	Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 		txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-		e EpochReader, chain ChainHeaderReader, syscall SystemCall,
+		e EpochReader, chain ChainHeaderReader, syscall SystemCall, firehoseContext *firehose.Context,
 	) (types.Transactions, types.Receipts, error)
 
 	// FinalizeAndAssemble runs any post-transaction state modifications (e.g. block
@@ -130,7 +130,7 @@ type EngineWriter interface {
 	// consensus rules that happen at finalization (e.g. block rewards).
 	FinalizeAndAssemble(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 		txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-		e EpochReader, chain ChainHeaderReader, syscall SystemCall, call Call,
+		e EpochReader, chain ChainHeaderReader, syscall SystemCall, call Call, firehoseContext *firehose.Context,
 	) (*types.Block, types.Transactions, types.Receipts, error)
 
 	// Seal generates a new sealing request for the given input block and pushes

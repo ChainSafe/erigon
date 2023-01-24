@@ -21,6 +21,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/length"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/accounts/abi"
@@ -656,7 +657,7 @@ func (c *Bor) verifySeal(chain consensus.ChainHeaderReader, header *types.Header
 
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
-func (c *Bor) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error {
+func (c *Bor) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 
 	// If the block isn't a checkpoint, cast a random vote (good enough for now)
 	header.Coinbase = libcommon.Address{}
@@ -724,7 +725,7 @@ func (c *Bor) Prepare(chain consensus.ChainHeaderReader, header *types.Header, s
 // rewards given.
 func (c *Bor) Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, firehoseContext *firehose.Context,
 ) (types.Transactions, types.Receipts, error) {
 	var err error
 	headerNumber := header.Number.Uint64()
@@ -746,7 +747,7 @@ func (c *Bor) Finalize(config *chain.Config, header *types.Header, state *state.
 		}
 	}
 
-	if err = c.changeContractCodeIfNeeded(headerNumber, state); err != nil {
+	if err = c.changeContractCodeIfNeeded(headerNumber, state, firehoseContext); err != nil {
 		log.Error("Error changing contract code", "err", err)
 		return nil, types.Receipts{}, err
 	}
@@ -773,7 +774,7 @@ func decodeGenesisAlloc(i interface{}) (core.GenesisAlloc, error) {
 	return alloc, nil
 }
 
-func (c *Bor) changeContractCodeIfNeeded(headerNumber uint64, state *state.IntraBlockState) error {
+func (c *Bor) changeContractCodeIfNeeded(headerNumber uint64, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	for blockNumber, genesisAlloc := range c.config.BlockAlloc {
 		if blockNumber == strconv.FormatUint(headerNumber, 10) {
 			allocs, err := decodeGenesisAlloc(genesisAlloc)
@@ -782,7 +783,7 @@ func (c *Bor) changeContractCodeIfNeeded(headerNumber uint64, state *state.Intra
 			}
 			for addr, account := range allocs {
 				log.Trace("change contract code", "address", addr)
-				state.SetCode(addr, account.Code)
+				state.SetCode(addr, account.Code, firehoseContext)
 			}
 		}
 	}
@@ -793,7 +794,7 @@ func (c *Bor) changeContractCodeIfNeeded(headerNumber uint64, state *state.Intra
 // nor block rewards given, and returns the final block.
 func (c *Bor) FinalizeAndAssemble(chainConfig *chain.Config, header *types.Header, state *state.IntraBlockState,
 	txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
-	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call,
+	e consensus.EpochReader, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call, firehoseContext *firehose.Context,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
 	// stateSyncData := []*types.StateSyncData{}
 
@@ -818,7 +819,7 @@ func (c *Bor) FinalizeAndAssemble(chainConfig *chain.Config, header *types.Heade
 		}
 	}
 
-	if err := c.changeContractCodeIfNeeded(headerNumber, state); err != nil {
+	if err := c.changeContractCodeIfNeeded(headerNumber, state, firehoseContext); err != nil {
 		log.Error("Error changing contract code", "err", err)
 		return nil, nil, types.Receipts{}, err
 	}
@@ -843,7 +844,7 @@ func (c *Bor) GenerateSeal(chain consensus.ChainHeaderReader, currnt, parent *ty
 }
 
 func (c *Bor) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, e consensus.EpochReader, header *types.Header,
-	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall) {
+	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall, firehoseContext *firehose.Context) {
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks
