@@ -139,7 +139,8 @@ func (s *Serenity) Finalize(config *chain.Config, header *types.Header, state *s
 	}
 	for _, w := range withdrawals {
 		amountInWei := new(uint256.Int).Mul(uint256.NewInt(w.Amount), uint256.NewInt(params.GWei))
-		state.AddBalance(w.Address, amountInWei, false, firehoseContext, firehose.BalanceChangeReason("serenity_withdrawal"))
+		// CS TODO: confirm the addBalance reason
+		state.AddBalance(w.Address, amountInWei, false, firehoseContext, firehose.IgnoredBalanceChangeReason)
 	}
 	return txs, r, nil
 }
