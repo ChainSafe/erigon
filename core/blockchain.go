@@ -28,6 +28,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/core/systemcontracts"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rlp"
 
 	metrics2 "github.com/VictoriaMetrics/metrics"
@@ -92,19 +93,31 @@ func ExecuteBlockEphemerallyForBSC(
 	gp.AddGas(block.GasLimit())
 
 	var (
-		rejectedTxs []*RejectedTx
-		includedTxs types.Transactions
-		receipts    types.Receipts
+		rejectedTxs     []*RejectedTx
+		includedTxs     types.Transactions
+		receipts        types.Receipts
+		firehoseContext = firehose.NoOpContext
 	)
 
 	if !vmConfig.ReadOnly {
-		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs); err != nil {
+		firehoseContext = firehose.MaybeSyncContext()
+	}
+
+	if firehoseContext.Enabled() {
+		firehoseContext.StartBlock(block)
+	}
+
+	if !vmConfig.ReadOnly {
+		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, err
 		}
 	}
 
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 	systemcontracts.UpgradeBuildInSystemContract(chainConfig, header.Number, ibs)
 	noop := state.NewNoopWriter()
@@ -113,23 +126,36 @@ func ExecuteBlockEphemerallyForBSC(
 	for i, tx := range block.Transactions() {
 		if isPoSA {
 			if isSystemTx, err := posa.IsSystemTransaction(tx, block.Header()); err != nil {
+				if firehoseContext.Enabled() {
+					firehoseContext.ExitBlock()
+				}
 				return nil, err
 			} else if isSystemTx {
 				continue
 			}
 		}
+
+		// CS TODO: check if we need to include system transctions
+		if firehoseContext.Enabled() {
+			firehoseContext.StartTransaction(tx, header.BaseFee)
+		}
+
 		ibs.Prepare(tx.Hash(), block.Hash(), i)
 		writeTrace := false
 		if vmConfig.Debug && vmConfig.Tracer == nil {
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
+				if firehoseContext.Enabled() {
+					firehoseContext.RecordFailedTransaction(err)
+					firehoseContext.ExitBlock()
+				}
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
 			vmConfig.Tracer = tracer
 			writeTrace = true
 		}
 
-		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, *vmConfig)
+		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, *vmConfig, firehoseContext)
 		if writeTrace {
 			if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
 				ftracer.Flush(tx)
@@ -139,10 +165,20 @@ func ExecuteBlockEphemerallyForBSC(
 		}
 		if err != nil {
 			if !vmConfig.StatelessExec {
+				if firehoseContext.Enabled() {
+					firehoseContext.RecordFailedTransaction(err)
+					firehoseContext.ExitBlock()
+				}
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
+			}
+			if firehoseContext.Enabled() {
+				firehoseContext.RecordFailedTransaction(err)
 			}
 			rejectedTxs = append(rejectedTxs, &RejectedTx{i, err.Error()})
 		} else {
+			if firehoseContext.Enabled() {
+				firehoseContext.EndTransaction(receipt)
+			}
 			includedTxs = append(includedTxs, tx)
 			if !vmConfig.NoReceipts {
 				receipts = append(receipts, receipt)
@@ -161,10 +197,23 @@ func ExecuteBlockEphemerallyForBSC(
 		// otherwise it causes block verification error.
 		header.GasUsed = *usedGas
 		syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-			return SysCallContract(contract, data, *chainConfig, ibs, header, engine, false /* constCall */)
+			return SysCallContract(contract, data, *chainConfig, ibs, header, engine, false /* constCall */, firehoseContext)
 		}
-		outTxs, outReceipts, err := engine.Finalize(chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), epochReader, chainReader, syscall)
+
+		// Finalize block is a bit special since it can be enabled without the full firehose sync.
+		// As such, if firehose is enabled, we log it and us the firehose context. Otherwise if
+		// block progress is enabled.
+		if firehoseContext.Enabled() {
+			firehoseContext.FinalizeBlock(block)
+		} else if firehose.BlockProgressEnabled {
+			firehose.SyncContext().FinalizeBlock(block)
+		}
+
+		outTxs, outReceipts, err := engine.Finalize(chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), epochReader, chainReader, syscall, firehoseContext)
 		if err != nil {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, err
 		}
 		*usedGas = header.GasUsed
@@ -184,10 +233,16 @@ func ExecuteBlockEphemerallyForBSC(
 
 	if chainConfig.IsByzantium(header.Number.Uint64()) && !vmConfig.NoReceipts {
 		if !vmConfig.StatelessExec && receiptSha != block.ReceiptHash() {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
 		}
 	}
 	if !vmConfig.StatelessExec && newBlock.GasUsed() != header.GasUsed {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("gas used by execution: %d, in header: %d, in new Block: %v", *usedGas, header.GasUsed, newBlock.GasUsed())
 	}
 
@@ -195,14 +250,36 @@ func ExecuteBlockEphemerallyForBSC(
 	if !vmConfig.NoReceipts {
 		bloom = newBlock.Bloom()
 		if !vmConfig.StatelessExec && bloom != header.Bloom {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
 		}
 	}
 
 	if err := ibs.CommitBlock(chainConfig.Rules(header.Number.Uint64(), header.Time), stateWriter); err != nil {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("committing block %d failed: %w", header.Number.Uint64(), err)
 	} else if err := stateWriter.WriteChangeSets(); err != nil {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("writing changesets for block %d failed: %w", header.Number.Uint64(), err)
+	}
+
+	if firehoseContext.Enabled() {
+		finalizedBlock := newBlock
+		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
+			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
+			// we don't want to advertise a super old finalizedBlock when reprocessing.
+			finalizedBlock = nil
+		}
+
+		// CS TODO: check if difficulty is being set correctly
+		// go-eth have a different logic to find the difficulty
+		firehoseContext.EndBlock(block, finalizedBlock, block.Header().Difficulty)
 	}
 
 	execRs := &EphemeralExecResult{
@@ -243,35 +320,55 @@ func ExecuteBlockEphemerally(
 	gp.AddGas(block.GasLimit())
 
 	var (
-		rejectedTxs []*RejectedTx
-		includedTxs types.Transactions
-		receipts    types.Receipts
+		rejectedTxs     []*RejectedTx
+		includedTxs     types.Transactions
+		receipts        types.Receipts
+		firehoseContext = firehose.NoOpContext
 	)
 
 	if !vmConfig.ReadOnly {
-		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs); err != nil {
+		firehoseContext = firehose.MaybeSyncContext()
+	}
+
+	if firehoseContext.Enabled() {
+		firehoseContext.StartBlock(block)
+	}
+
+	if !vmConfig.ReadOnly {
+		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, err
 		}
 	}
 
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 	noop := state.NewNoopWriter()
 	//fmt.Printf("====txs processing start: %d====\n", block.NumberU64())
 	for i, tx := range block.Transactions() {
+		if firehoseContext.Enabled() {
+			firehoseContext.StartTransaction(tx, header.BaseFee)
+		}
+
 		ibs.Prepare(tx.Hash(), block.Hash(), i)
 		writeTrace := false
 		if vmConfig.Debug && vmConfig.Tracer == nil {
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
+				if firehoseContext.Enabled() {
+					firehoseContext.RecordFailedTransaction(err)
+					firehoseContext.ExitBlock()
+				}
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
 			vmConfig.Tracer = tracer
 			writeTrace = true
 		}
 
-		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, *vmConfig)
+		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, *vmConfig, firehoseContext)
 		if writeTrace {
 			if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
 				ftracer.Flush(tx)
@@ -281,10 +378,20 @@ func ExecuteBlockEphemerally(
 		}
 		if err != nil {
 			if !vmConfig.StatelessExec {
+				if firehoseContext.Enabled() {
+					firehoseContext.RecordFailedTransaction(err)
+					firehoseContext.ExitBlock()
+				}
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
+			}
+			if firehoseContext.Enabled() {
+				firehoseContext.RecordFailedTransaction(err)
 			}
 			rejectedTxs = append(rejectedTxs, &RejectedTx{i, err.Error()})
 		} else {
+			if firehoseContext.Enabled() {
+				firehoseContext.EndTransaction(receipt)
+			}
 			includedTxs = append(includedTxs, tx)
 			if !vmConfig.NoReceipts {
 				receipts = append(receipts, receipt)
@@ -294,10 +401,16 @@ func ExecuteBlockEphemerally(
 
 	receiptSha := types.DeriveSha(receipts)
 	if !vmConfig.StatelessExec && chainConfig.IsByzantium(header.Number.Uint64()) && !vmConfig.NoReceipts && receiptSha != block.ReceiptHash() {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
 	}
 
 	if !vmConfig.StatelessExec && *usedGas != header.GasUsed {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("gas used by execution: %d, in header: %d", *usedGas, header.GasUsed)
 	}
 
@@ -305,15 +418,48 @@ func ExecuteBlockEphemerally(
 	if !vmConfig.NoReceipts {
 		bloom = types.CreateBloom(receipts)
 		if !vmConfig.StatelessExec && bloom != header.Bloom {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
 		}
 	}
+
+	var newBlock *types.Block
+	var err error
 	if !vmConfig.ReadOnly {
+		// Finalize block is a bit special since it can be enabled without the full firehose sync.
+		// As such, if firehose is enabled, we log it and us the firehose context. Otherwise if
+		// block progress is enabled.
+		if firehoseContext.Enabled() {
+			firehoseContext.FinalizeBlock(block)
+		} else if firehose.BlockProgressEnabled {
+			firehose.SyncContext().FinalizeBlock(block)
+		}
+
 		txs := block.Transactions()
-		if _, _, _, err := FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false); err != nil {
+		newBlock, _, _, err = FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false, firehoseContext)
+		if err != nil {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, err
 		}
 	}
+
+	if firehoseContext.Enabled() {
+		finalizedBlock := newBlock
+		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
+			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
+			// we don't want to advertise a super old finalizedBlock when reprocessing.
+			finalizedBlock = nil
+		}
+
+		// CS TODO: check if difficulty is being set correctly
+		// go-eth have a different logic to find the difficulty
+		firehoseContext.EndBlock(block, finalizedBlock, block.Header().Difficulty)
+	}
+
 	blockLogs := ibs.Logs()
 	execRs := &EphemeralExecResult{
 		TxRoot:      types.DeriveSha(includedTxs),
@@ -354,35 +500,55 @@ func ExecuteBlockEphemerallyBor(
 	gp.AddGas(block.GasLimit())
 
 	var (
-		rejectedTxs []*RejectedTx
-		includedTxs types.Transactions
-		receipts    types.Receipts
+		rejectedTxs     []*RejectedTx
+		includedTxs     types.Transactions
+		receipts        types.Receipts
+		firehoseContext = firehose.NoOpContext
 	)
 
 	if !vmConfig.ReadOnly {
-		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs); err != nil {
+		firehoseContext = firehose.MaybeSyncContext()
+	}
+
+	if firehoseContext.Enabled() {
+		firehoseContext.StartBlock(block)
+	}
+
+	if !vmConfig.ReadOnly {
+		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, err
 		}
 	}
 
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 	noop := state.NewNoopWriter()
 	//fmt.Printf("====txs processing start: %d====\n", block.NumberU64())
 	for i, tx := range block.Transactions() {
+		if firehoseContext.Enabled() {
+			firehoseContext.StartTransaction(tx, header.BaseFee)
+		}
+
 		ibs.Prepare(tx.Hash(), block.Hash(), i)
 		writeTrace := false
 		if vmConfig.Debug && vmConfig.Tracer == nil {
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
+				if firehoseContext.Enabled() {
+					firehoseContext.RecordFailedTransaction(err)
+					firehoseContext.ExitBlock()
+				}
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
 			vmConfig.Tracer = tracer
 			writeTrace = true
 		}
 
-		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, *vmConfig)
+		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, *vmConfig, firehoseContext)
 		if writeTrace {
 			if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
 				ftracer.Flush(tx)
@@ -392,10 +558,20 @@ func ExecuteBlockEphemerallyBor(
 		}
 		if err != nil {
 			if !vmConfig.StatelessExec {
+				if firehoseContext.Enabled() {
+					firehoseContext.RecordFailedTransaction(err)
+					firehoseContext.ExitBlock()
+				}
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
+			}
+			if firehoseContext.Enabled() {
+				firehoseContext.RecordFailedTransaction(err)
 			}
 			rejectedTxs = append(rejectedTxs, &RejectedTx{i, err.Error()})
 		} else {
+			if firehoseContext.Enabled() {
+				firehoseContext.EndTransaction(receipt)
+			}
 			includedTxs = append(includedTxs, tx)
 			if !vmConfig.NoReceipts {
 				receipts = append(receipts, receipt)
@@ -405,10 +581,16 @@ func ExecuteBlockEphemerallyBor(
 
 	receiptSha := types.DeriveSha(receipts)
 	if !vmConfig.StatelessExec && chainConfig.IsByzantium(header.Number.Uint64()) && !vmConfig.NoReceipts && receiptSha != block.ReceiptHash() {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
 	}
 
 	if !vmConfig.StatelessExec && *usedGas != header.GasUsed {
+		if firehoseContext.Enabled() {
+			firehoseContext.ExitBlock()
+		}
 		return nil, fmt.Errorf("gas used by execution: %d, in header: %d", *usedGas, header.GasUsed)
 	}
 
@@ -416,12 +598,31 @@ func ExecuteBlockEphemerallyBor(
 	if !vmConfig.NoReceipts {
 		bloom = types.CreateBloom(receipts)
 		if !vmConfig.StatelessExec && bloom != header.Bloom {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
 		}
 	}
+
+	var newBlock *types.Block
+	var err error
 	if !vmConfig.ReadOnly {
+		// Finalize block is a bit special since it can be enabled without the full firehose sync.
+		// As such, if firehose is enabled, we log it and us the firehose context. Otherwise if
+		// block progress is enabled.
+		if firehoseContext.Enabled() {
+			firehoseContext.FinalizeBlock(block)
+		} else if firehose.BlockProgressEnabled {
+			firehose.SyncContext().FinalizeBlock(block)
+		}
+
 		txs := block.Transactions()
-		if _, _, _, err := FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false); err != nil {
+		newBlock, _, _, err = FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false, firehoseContext)
+		if err != nil {
+			if firehoseContext.Enabled() {
+				firehoseContext.ExitBlock()
+			}
 			return nil, err
 		}
 	}
@@ -429,6 +630,19 @@ func ExecuteBlockEphemerallyBor(
 	var logs []*types.Log
 	for _, receipt := range receipts {
 		logs = append(logs, receipt.Logs...)
+	}
+
+	if firehoseContext.Enabled() {
+		finalizedBlock := newBlock
+		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
+			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
+			// we don't want to advertise a super old finalizedBlock when reprocessing.
+			finalizedBlock = nil
+		}
+
+		// CS TODO: check if difficulty is being set correctly
+		// go-eth have a different logic to find the difficulty
+		firehoseContext.EndBlock(block, finalizedBlock, block.Header().Difficulty)
 	}
 
 	blockLogs := ibs.Logs()
@@ -467,9 +681,9 @@ func rlpHash(x interface{}) (h libcommon.Hash) {
 	return h
 }
 
-func SysCallContract(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool) (result []byte, err error) {
+func SysCallContract(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool, firehoseContext *firehose.Context) (result []byte, err error) {
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 
 	msg := types.NewMessage(
@@ -494,7 +708,7 @@ func SysCallContract(contract libcommon.Address, data []byte, chainConfig chain.
 		txContext = NewEVMTxContext(msg)
 	}
 	blockContext := NewEVMBlockContext(header, GetHashFn(header, nil), engine, author)
-	evm := vm.NewEVM(blockContext, txContext, ibs, &chainConfig, vmConfig)
+	evm := vm.NewEVM(blockContext, txContext, ibs, &chainConfig, vmConfig, firehoseContext)
 
 	ret, _, err := evm.Call(
 		vm.AccountRef(msg.From()),
@@ -511,9 +725,9 @@ func SysCallContract(contract libcommon.Address, data []byte, chainConfig chain.
 }
 
 // SysCreate is a special (system) contract creation methods for genesis constructors.
-func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header) (result []byte, err error) {
+func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, firehoseContext *firehose.Context) (result []byte, err error) {
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 
 	msg := types.NewMessage(
@@ -530,7 +744,7 @@ func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config
 	author := &contract
 	txContext := NewEVMTxContext(msg)
 	blockContext := NewEVMBlockContext(header, GetHashFn(header, nil), nil, author)
-	evm := vm.NewEVM(blockContext, txContext, ibs, &chainConfig, vmConfig)
+	evm := vm.NewEVM(blockContext, txContext, ibs, &chainConfig, vmConfig, firehoseContext)
 
 	ret, _, err := evm.SysCreate(
 		vm.AccountRef(msg.From()),
@@ -542,13 +756,13 @@ func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config
 	return ret, err
 }
 
-func CallContract(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.Engine) (result []byte, err error) {
+func CallContract(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.Engine, firehoseContext *firehose.Context) (result []byte, err error) {
 	gp := new(GasPool)
 	gp.AddGas(50_000_000)
 	var gasUsed uint64
 
 	if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(ibs)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 	noop := state.NewNoopWriter()
 	tx, err := CallContractTx(contract, data, ibs)
@@ -556,7 +770,7 @@ func CallContract(contract libcommon.Address, data []byte, chainConfig chain.Con
 		return nil, fmt.Errorf("SysCallContract: %w ", err)
 	}
 	vmConfig := vm.Config{NoReceipts: true}
-	_, result, err = ApplyTransaction(&chainConfig, GetHashFn(header, nil), engine, &state.SystemAddress, gp, ibs, noop, header, tx, &gasUsed, vmConfig)
+	_, result, err = ApplyTransaction(&chainConfig, GetHashFn(header, nil), engine, &state.SystemAddress, gp, ibs, noop, header, tx, &gasUsed, vmConfig, firehoseContext)
 	if err != nil {
 		return result, fmt.Errorf("SysCallContract: %w ", err)
 	}
@@ -574,14 +788,15 @@ func CallContractTx(contract libcommon.Address, data []byte, ibs *state.IntraBlo
 func FinalizeBlockExecution(engine consensus.Engine, stateReader state.StateReader, header *types.Header,
 	txs types.Transactions, uncles []*types.Header, stateWriter state.WriterWithChangeSets, cc *chain.Config, ibs *state.IntraBlockState,
 	receipts types.Receipts, withdrawals []*types.Withdrawal, e consensus.EpochReader, headerReader consensus.ChainHeaderReader, isMining bool,
+	firehoseContext *firehose.Context,
 ) (newBlock *types.Block, newTxs types.Transactions, newReceipt types.Receipts, err error) {
 	syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-		return SysCallContract(contract, data, *cc, ibs, header, engine, false /* constCall */)
+		return SysCallContract(contract, data, *cc, ibs, header, engine, false /* constCall */, firehoseContext)
 	}
 	if isMining {
-		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, e, headerReader, syscall, nil)
+		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, e, headerReader, syscall, nil, firehoseContext)
 	} else {
-		_, _, err = engine.Finalize(cc, header, ibs, txs, uncles, receipts, withdrawals, e, headerReader, syscall)
+		_, _, err = engine.Finalize(cc, header, ibs, txs, uncles, receipts, withdrawals, e, headerReader, syscall, firehoseContext)
 	}
 	if err != nil {
 		return nil, nil, nil, err
@@ -597,10 +812,10 @@ func FinalizeBlockExecution(engine consensus.Engine, stateReader state.StateRead
 	return newBlock, newTxs, newReceipt, nil
 }
 
-func InitializeBlockExecution(engine consensus.Engine, chain consensus.ChainHeaderReader, epochReader consensus.EpochReader, header *types.Header, txs types.Transactions, uncles []*types.Header, cc *chain.Config, ibs *state.IntraBlockState) error {
+func InitializeBlockExecution(engine consensus.Engine, chain consensus.ChainHeaderReader, epochReader consensus.EpochReader, header *types.Header, txs types.Transactions, uncles []*types.Header, cc *chain.Config, ibs *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	engine.Initialize(cc, chain, epochReader, header, ibs, txs, uncles, func(contract libcommon.Address, data []byte) ([]byte, error) {
-		return SysCallContract(contract, data, *cc, ibs, header, engine, false /* constCall */)
-	})
+		return SysCallContract(contract, data, *cc, ibs, header, engine, false /* constCall */, firehoseContext)
+	}, firehoseContext)
 	noop := state.NewNoopWriter()
 	ibs.FinalizeTx(cc.Rules(header.Number.Uint64(), header.Time), noop)
 	return nil

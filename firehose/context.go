@@ -184,7 +184,7 @@ func (ctx *Context) EndBlock(block *types.Block, finalizedBlock *types.Block, to
 
 // Transaction methods
 
-func (ctx *Context) StartTransaction(tx types.Transaction, baseFee *uint256.Int) {
+func (ctx *Context) StartTransaction(tx types.Transaction, baseFee *big.Int) {
 	if ctx == nil {
 		return
 	}
@@ -237,7 +237,12 @@ func maxPriorityFeePerGas(tx types.Transaction) *big.Int {
 	panic(errUnhandledTransactionType("maxPriorityFeePerGas", tx.Type()))
 }
 
-func gasPrice(tx types.Transaction, baseFee *uint256.Int) *uint256.Int {
+func gasPrice(tx types.Transaction, baseFee *big.Int) *uint256.Int {
+	baseFeeI, overflow := uint256.FromBig(baseFee)
+	if overflow {
+		panic("overflow on big int conversion")
+	}
+
 	switch tx.Type() {
 	case types.LegacyTxType, types.AccessListTxType:
 		return tx.GetPrice()
@@ -247,7 +252,7 @@ func gasPrice(tx types.Transaction, baseFee *uint256.Int) *uint256.Int {
 			return tx.GetPrice()
 		}
 
-		return erigonmath.Min256(new(uint256.Int).Add(tx.GetTip(), baseFee), tx.GetFeeCap())
+		return erigonmath.Min256(new(uint256.Int).Add(tx.GetTip(), baseFeeI), tx.GetFeeCap())
 	}
 
 	panic(errUnhandledTransactionType("gasPrice", tx.Type()))

@@ -33,7 +33,7 @@ import (
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *GasPool, ibs *state.IntraBlockState, stateWriter state.StateWriter, header *types.Header, tx types.Transaction, usedGas *uint64, evm vm.VMInterface, cfg vm.Config) (*types.Receipt, []byte, error) {
+func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *GasPool, ibs *state.IntraBlockState, stateWriter state.StateWriter, header *types.Header, tx types.Transaction, usedGas *uint64, evm vm.VMInterface, cfg vm.Config, firehoseContext *firehose.Context) (*types.Receipt, []byte, error) {
 	rules := evm.ChainRules()
 	msg, err := tx.AsMessage(*types.MakeSigner(config, header.Number.Uint64()), header.BaseFee, rules)
 	if err != nil {
@@ -41,10 +41,14 @@ func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *G
 	}
 	msg.SetCheckNonce(!cfg.StatelessExec)
 
+	if firehoseContext.Enabled() {
+		firehoseContext.RecordTrxFrom(msg.From())
+	}
+
 	if msg.FeeCap().IsZero() && engine != nil {
 		// Only zero-gas transactions may be service ones
 		syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-			return SysCallContract(contract, data, *config, ibs, header, engine, true /* constCall */)
+			return SysCallContract(contract, data, *config, ibs, header, engine, true /* constCall */, firehoseContext)
 		}
 		msg.SetIsFree(engine.IsServiceTransaction(msg.From(), syscall))
 	}
@@ -114,5 +118,5 @@ func ApplyTransaction(config *chain.Config, blockHashFunc func(n uint64) libcomm
 		vmenv = vm.NewEVM(blockContext, evmtypes.TxContext{}, ibs, config, cfg, firehoseContext)
 	}
 
-	return applyTransaction(config, engine, gp, ibs, stateWriter, header, tx, usedGas, vmenv, cfg)
+	return applyTransaction(config, engine, gp, ibs, stateWriter, header, tx, usedGas, vmenv, cfg, firehoseContext)
 }
