@@ -252,8 +252,6 @@ func WriteGenesisBlock(db kv.RwTx, genesis *Genesis, overrideShanghaiTime *big.I
 
 	// Check whether the genesis block is already written.
 	if genesis != nil {
-		// disable firehose logging here
-		// since the ToBlock is being called just for hash validation
 		block, _, err1 := genesis.ToBlock()
 		if err1 != nil {
 			return genesis.Config, nil, err1
@@ -445,7 +443,6 @@ func (g *Genesis) ToBlock() (*types.Block, *state.IntraBlockState, error) {
 }
 
 func (g *Genesis) WriteGenesisState(tx kv.RwTx) (*types.Block, *state.IntraBlockState, error) {
-	// CS TODO: check the correctness of the firehose context
 	block, statedb, err := g.ToBlock()
 	if err != nil {
 		return nil, nil, err

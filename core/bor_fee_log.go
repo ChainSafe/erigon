@@ -102,6 +102,7 @@ func addTransferLog(
 	output1.WriteToSlice(data[96:])
 	output2.WriteToSlice(data[128:])
 
+	// CS TODO: check if this needs to be logged
 	// add transfer log
 	state.AddLog(&types.Log{
 		Address: feeAddress,
