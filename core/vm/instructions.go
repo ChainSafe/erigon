@@ -671,6 +671,11 @@ func opCreate(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 	} else {
 		stackvalue.SetBytes(addr.Bytes())
 	}
+
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
+	}
+
 	scope.Contract.Gas += returnGas
 
 	if suberr == ErrExecutionReverted {
