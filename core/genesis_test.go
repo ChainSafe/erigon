@@ -15,7 +15,6 @@ import (
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
-	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/params/networkname"
 	"github.com/ledgerwatch/erigon/rlp"
@@ -45,12 +44,12 @@ func TestDefaultGenesisBlockRoots(t *testing.T) {
 	require := require.New(t)
 	var err error
 
-	block, _, _ := DefaultGenesisBlock().ToBlock(firehose.NoOpContext)
+	block, _, _ := DefaultGenesisBlock().ToBlock()
 	if block.Hash() != params.MainnetGenesisHash {
 		t.Errorf("wrong mainnet genesis hash, got %v, want %v", block.Hash(), params.MainnetGenesisHash)
 	}
 
-	block, _, err = DefaultSokolGenesisBlock().ToBlock(firehose.NoOpContext)
+	block, _, err = DefaultSokolGenesisBlock().ToBlock()
 	require.NoError(err)
 	if block.Root() != params.SokolGenesisStateRoot {
 		t.Errorf("wrong Sokol genesis state root, got %v, want %v", block.Root(), params.SokolGenesisStateRoot)
@@ -59,7 +58,7 @@ func TestDefaultGenesisBlockRoots(t *testing.T) {
 		t.Errorf("wrong Sokol genesis hash, got %v, want %v", block.Hash(), params.SokolGenesisHash)
 	}
 
-	block, _, err = DefaultGnosisGenesisBlock().ToBlock(firehose.NoOpContext)
+	block, _, err = DefaultGnosisGenesisBlock().ToBlock()
 	require.NoError(err)
 	if block.Root() != params.GnosisGenesisStateRoot {
 		t.Errorf("wrong Gnosis Chain genesis state root, got %v, want %v", block.Root(), params.GnosisGenesisStateRoot)
@@ -68,7 +67,7 @@ func TestDefaultGenesisBlockRoots(t *testing.T) {
 		t.Errorf("wrong Gnosis Chain genesis hash, got %v, want %v", block.Hash(), params.GnosisGenesisHash)
 	}
 
-	block, _, err = DefaultChiadoGenesisBlock().ToBlock(firehose.NoOpContext)
+	block, _, err = DefaultChiadoGenesisBlock().ToBlock()
 	require.NoError(err)
 	if block.Root() != params.ChiadoGenesisStateRoot {
 		t.Errorf("wrong Chiado genesis state root, got %v, want %v", block.Root(), params.ChiadoGenesisStateRoot)
@@ -98,7 +97,7 @@ func TestSokolHeaderRLP(t *testing.T) {
 	require := require.New(t)
 	{ //sokol
 		expect := common.FromHex("f9020da00000000000000000000000000000000000000000000000000000000000000000a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347940000000000000000000000000000000000000000a0fad4af258fd11939fae0c6c6eec9d340b1caac0b0196fd9a1bc3f489c5bf00b3a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000830200008083663be080808080b8410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
-		block, _, err := DefaultSokolGenesisBlock().ToBlock(firehose.NoOpContext)
+		block, _, err := DefaultSokolGenesisBlock().ToBlock()
 		require.NoError(err)
 		b, err := rlp.EncodeToBytes(block.Header())
 		require.NoError(err)
