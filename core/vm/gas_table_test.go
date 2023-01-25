@@ -29,6 +29,7 @@ import (
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 )
 
@@ -92,16 +93,17 @@ func TestEIP2200(t *testing.T) {
 			_, tx := memdb.NewTestTx(t)
 
 			s := state.New(state.NewPlainStateReader(tx))
-			s.CreateAccount(address, true)
-			s.SetCode(address, hexutil.MustDecode(tt.input))
-			s.SetState(address, &libcommon.Hash{}, *uint256.NewInt(uint64(tt.original)))
+			s.CreateAccount(address, true, firehose.NoOpContext)
+			s.SetCode(address, hexutil.MustDecode(tt.input), firehose.NoOpContext)
+			s.SetState(address, &libcommon.Hash{}, *uint256.NewInt(uint64(tt.original)), firehose.NoOpContext)
 
 			_ = s.CommitBlock(params.AllProtocolChanges.Rules(0, 0), state.NewPlainStateWriter(tx, tx, 0))
 			vmctx := evmtypes.BlockContext{
 				CanTransfer: func(evmtypes.IntraBlockState, libcommon.Address, *uint256.Int) bool { return true },
-				Transfer:    func(evmtypes.IntraBlockState, libcommon.Address, libcommon.Address, *uint256.Int, bool) {},
+				Transfer: func(evmtypes.IntraBlockState, libcommon.Address, libcommon.Address, *uint256.Int, bool, *firehose.Context) {
+				},
 			}
-			vmenv := NewEVM(vmctx, evmtypes.TxContext{}, s, params.AllProtocolChanges, Config{ExtraEips: []int{2200}})
+			vmenv := NewEVM(vmctx, evmtypes.TxContext{}, s, params.AllProtocolChanges, Config{ExtraEips: []int{2200}}, firehose.NoOpContext)
 
 			_, gas, err := vmenv.Call(AccountRef(libcommon.Address{}), address, nil, tt.gaspool, new(uint256.Int), false /* bailout */)
 			if !errors.Is(err, tt.failure) {
@@ -138,20 +140,21 @@ func TestCreateGas(t *testing.T) {
 		_, tx := memdb.NewTestTx(t)
 
 		s := state.New(state.NewPlainStateReader(tx))
-		s.CreateAccount(address, true)
-		s.SetCode(address, hexutil.MustDecode(tt.code))
+		s.CreateAccount(address, true, firehose.NoOpContext)
+		s.SetCode(address, hexutil.MustDecode(tt.code), firehose.NoOpContext)
 		_ = s.CommitBlock(params.TestChainConfig.Rules(0, 0), state.NewPlainStateWriter(tx, tx, 0))
 
 		vmctx := evmtypes.BlockContext{
 			CanTransfer: func(evmtypes.IntraBlockState, libcommon.Address, *uint256.Int) bool { return true },
-			Transfer:    func(evmtypes.IntraBlockState, libcommon.Address, libcommon.Address, *uint256.Int, bool) {},
+			Transfer: func(evmtypes.IntraBlockState, libcommon.Address, libcommon.Address, *uint256.Int, bool, *firehose.Context) {
+			},
 		}
 		config := Config{}
 		if tt.eip3860 {
 			config.ExtraEips = []int{3860}
 		}
 
-		vmenv := NewEVM(vmctx, evmtypes.TxContext{}, s, params.TestChainConfig, config)
+		vmenv := NewEVM(vmctx, evmtypes.TxContext{}, s, params.TestChainConfig, config, firehose.NoOpContext)
 
 		var startGas uint64 = math.MaxUint64
 		_, gas, err := vmenv.Call(AccountRef(libcommon.Address{}), address, nil, startGas, new(uint256.Int), false /* bailout */)

@@ -24,6 +24,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 // CallContext provides a basic interface for the EVM calling conventions. The EVM
@@ -51,6 +52,7 @@ type VMInterface interface {
 	Context() evmtypes.BlockContext
 	IntraBlockState() evmtypes.IntraBlockState
 	TxContext() evmtypes.TxContext
+	FirehoseContext() *firehose.Context
 }
 
 // VMInterpreter exposes additional EVM methods for use in the interpreter.

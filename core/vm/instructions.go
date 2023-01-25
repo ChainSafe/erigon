@@ -27,6 +27,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 )
 
@@ -276,6 +277,10 @@ func opKeccak256(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) (
 	interpreter.hasher.Write(data)
 	if _, err := interpreter.hasher.Read(interpreter.hasherBuf[:]); err != nil {
 		panic(err)
+	}
+
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordKeccak(interpreter.hasherBuf, data)
 	}
 
 	size.SetBytes(interpreter.hasherBuf[:])
@@ -565,7 +570,7 @@ func opSstore(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 	loc := scope.Stack.Pop()
 	val := scope.Stack.Pop()
 	interpreter.hasherBuf = loc.Bytes32()
-	interpreter.evm.IntraBlockState().SetState(scope.Contract.Address(), &interpreter.hasherBuf, val)
+	interpreter.evm.IntraBlockState().SetState(scope.Contract.Address(), &interpreter.hasherBuf, val, interpreter.evm.FirehoseContext())
 	return nil, nil
 }
 
@@ -651,7 +656,7 @@ func opCreate(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 	// reuse size int for stackvalue
 	stackvalue := size
 
-	scope.Contract.UseGas(gas)
+	scope.Contract.UseGas(gas, firehose.GasChangeReason("contract_creation"))
 
 	res, addr, returnGas, suberr := interpreter.evm.Create(scope.Contract, input, gas, &value)
 
@@ -666,6 +671,11 @@ func opCreate(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 	} else {
 		stackvalue.SetBytes(addr.Bytes())
 	}
+
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
+	}
+
 	scope.Contract.Gas += returnGas
 
 	if suberr == ErrExecutionReverted {
@@ -690,7 +700,7 @@ func opCreate2(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 
 	// Apply EIP150
 	gas -= gas / 64
-	scope.Contract.UseGas(gas)
+	scope.Contract.UseGas(gas, firehose.GasChangeReason("contract_creation2"))
 	// reuse size int for stackvalue
 	stackValue := size
 	res, addr, returnGas, suberr := interpreter.evm.Create2(scope.Contract, input, gas, &endowment, &salt)
@@ -703,6 +713,11 @@ func opCreate2(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 	}
 
 	scope.Stack.Push(&stackValue)
+
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
+	}
+
 	scope.Contract.Gas += returnGas
 
 	if suberr == ErrExecutionReverted {
@@ -745,6 +760,10 @@ func opCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byt
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
+	}
+
 	scope.Contract.Gas += returnGas
 
 	interpreter.returnData = ret
@@ -779,6 +798,10 @@ func opCallCode(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
+	}
+
 	scope.Contract.Gas += returnGas
 
 	interpreter.returnData = ret
@@ -809,6 +832,10 @@ func opDelegateCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
+	}
+
 	scope.Contract.Gas += returnGas
 
 	interpreter.returnData = ret
@@ -837,6 +864,10 @@ func opStaticCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) 
 	if err == nil || err == ErrExecutionReverted {
 		ret = common.CopyBytes(ret)
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
+	}
+
+	if interpreter.evm.FirehoseContext().Enabled() {
+		interpreter.evm.FirehoseContext().RecordGasRefund(scope.Contract.Gas, returnGas)
 	}
 
 	scope.Contract.Gas += returnGas
@@ -880,8 +911,9 @@ func opSelfdestruct(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext
 			interpreter.cfg.Tracer.CaptureExit([]byte{}, 0, nil)
 		}
 	}
-	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, balance)
-	interpreter.evm.IntraBlockState().Selfdestruct(callerAddr)
+	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, balance, false, interpreter.evm.FirehoseContext(),
+		firehose.BalanceChangeReason("suicide_refund"))
+	interpreter.evm.IntraBlockState().Selfdestruct(callerAddr, interpreter.evm.FirehoseContext())
 	return nil, errStopToken
 }
 
@@ -909,7 +941,7 @@ func makeLog(size int) executionFunc {
 			// This is a non-consensus field, but assigned here because
 			// core/state doesn't know the current block number.
 			BlockNumber: interpreter.evm.Context().BlockNumber,
-		})
+		}, interpreter.evm.FirehoseContext())
 
 		return nil, nil
 	}

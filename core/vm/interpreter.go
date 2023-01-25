@@ -25,6 +25,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/vm/stack"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 // Config are the configuration options for the Interpreter
@@ -244,7 +245,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		} else if sLen > operation.maxStack {
 			return nil, &ErrStackOverflow{stackLen: sLen, limit: operation.maxStack}
 		}
-		if !contract.UseGas(cost) {
+		if !contract.UseGas(cost, firehose.IgnoredGasChangeReason) {
 			return nil, ErrOutOfGas
 		}
 		if operation.dynamicGas != nil {
@@ -269,8 +270,9 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			// cost is explicitly set so that the capture state defer method can get the proper cost
 			var dynamicCost uint64
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, locStack, mem, memorySize)
+			// Firehose we ignore dynamic cost because later below, we perform a single GAS_CHANGE for both constant + dynamic to aggregate the 2 gas change events
 			cost += dynamicCost // for tracing
-			if err != nil || !contract.UseGas(dynamicCost) {
+			if err != nil || !contract.UseGas(dynamicCost, firehose.IgnoredGasChangeReason) {
 				return nil, ErrOutOfGas
 			}
 			if memorySize > 0 {
@@ -281,6 +283,23 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			in.cfg.Tracer.CaptureState(_pc, op, gasCopy, cost, callContext, in.returnData, in.evm.Depth(), err) //nolint:errcheck
 			logged = true
 		}
+
+		if in.evm.FirehoseContext().Enabled() {
+			if cost != 0 {
+				gasChangeReason := OpCodeToGasChangeReason(op)
+				if gasChangeReason != firehose.IgnoredGasChangeReason {
+					// When execution reach this point, `contract.UseGas` has been called once
+					// (for only a static) or twice (for both static + dynamic cost). Since it
+					// has been called, it's mean the `c.Gas` has already been adjusted down
+					// to remaining after cost.
+					//
+					// Hence, to retrieve the `gasOld` value, we need to come back at state when
+					// gas was not consumed, which means doing `contract.Gas + cost`.
+					in.evm.FirehoseContext().RecordGasConsume(contract.Gas+cost, cost, gasChangeReason)
+				}
+			}
+		}
+
 		// execute the operation
 		res, err = operation.execute(pc, in, callContext)
 

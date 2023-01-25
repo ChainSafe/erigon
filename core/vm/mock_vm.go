@@ -8,6 +8,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 type readonlyGetSetter interface {
@@ -55,6 +56,7 @@ func (evm *testVM) Run(_ *Contract, _ []byte, readOnly bool) (ret []byte, err er
 			new(uint256.Int),
 			0,
 			false,
+			firehose.NoOpContext,
 		), nil, evm.readOnlySliceTest[*evm.currentIdx])
 		return res, err
 	}
