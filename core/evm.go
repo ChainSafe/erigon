@@ -28,6 +28,7 @@ import (
 	"github.com/ledgerwatch/erigon/consensus/serenity"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 // NewEVMBlockContext creates a new context for use in the EVM.
@@ -123,28 +124,29 @@ func CanTransfer(db evmtypes.IntraBlockState, addr libcommon.Address, amount *ui
 }
 
 // Transfer subtracts amount from sender and adds amount to recipient using the given Db
-func Transfer(db evmtypes.IntraBlockState, sender, recipient libcommon.Address, amount *uint256.Int, bailout bool) {
+func Transfer(db evmtypes.IntraBlockState, sender, recipient libcommon.Address, amount *uint256.Int, bailout bool, firehoseContext *firehose.Context) {
 	if !bailout {
-		db.SubBalance(sender, amount)
+		db.SubBalance(sender, amount, firehoseContext, firehose.BalanceChangeReason("transfer"))
 	}
-	db.AddBalance(recipient, amount)
+	db.AddBalance(recipient, amount, false, firehoseContext, firehose.BalanceChangeReason("transfer"))
 }
 
 // BorTransfer transfer in Bor
-func BorTransfer(db evmtypes.IntraBlockState, sender, recipient libcommon.Address, amount *uint256.Int, bailout bool) {
+func BorTransfer(db evmtypes.IntraBlockState, sender, recipient libcommon.Address, amount *uint256.Int, bailout bool, firehoseContext *firehose.Context) {
 	// get inputs before
 	input1 := db.GetBalance(sender).Clone()
 	input2 := db.GetBalance(recipient).Clone()
 
 	if !bailout {
-		db.SubBalance(sender, amount)
+		db.SubBalance(sender, amount, firehoseContext, firehose.BalanceChangeReason("transfer"))
 	}
-	db.AddBalance(recipient, amount)
+	db.AddBalance(recipient, amount, false, firehoseContext, firehose.BalanceChangeReason("transfer"))
 
 	// get outputs after
 	output1 := db.GetBalance(sender).Clone()
 	output2 := db.GetBalance(recipient).Clone()
 
 	// add transfer log
-	AddTransferLog(db, sender, recipient, amount, input1, input2, output1, output2)
+	// CS TODO: context logging may not be required
+	AddTransferLog(db, sender, recipient, amount, input1, input2, output1, output2, firehoseContext)
 }

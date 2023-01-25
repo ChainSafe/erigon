@@ -8,6 +8,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 )
 
@@ -59,4 +60,8 @@ func (cvm *CVMAdapter) IntraBlockState() evmtypes.IntraBlockState {
 
 func (cvm *CVMAdapter) TxContext() evmtypes.TxContext {
 	return evmtypes.TxContext{}
+}
+
+func (cvm *CVMAdapter) FirehoseContext() *firehose.Context {
+	return cvm.Cvm.firehoseContext
 }

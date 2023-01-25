@@ -6,6 +6,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 var transferLogSig = libcommon.HexToHash("0xe6497e3ee548a3372136af2fcb0696db31fc6cf20260707645068bd3fe97f3c4")
@@ -25,6 +26,7 @@ func AddTransferLog(
 	input2,
 	output1,
 	output2 *uint256.Int,
+	firehoseContext *firehose.Context,
 ) {
 	addTransferLog(
 		state,
@@ -38,6 +40,7 @@ func AddTransferLog(
 		input2,
 		output1,
 		output2,
+		firehoseContext,
 	)
 }
 
@@ -54,6 +57,7 @@ func AddFeeTransferLog(
 	input2,
 	output1,
 	output2 *uint256.Int,
+	firehoseContext *firehose.Context,
 ) {
 	addTransferLog(
 		state,
@@ -67,6 +71,7 @@ func AddFeeTransferLog(
 		input2,
 		output1,
 		output2,
+		firehoseContext,
 	)
 }
 
@@ -83,6 +88,7 @@ func addTransferLog(
 	input2,
 	output1,
 	output2 *uint256.Int,
+	firehoseContext *firehose.Context,
 ) {
 	// ignore if amount is 0
 	if amount.Cmp(zero) <= 0 {
@@ -106,5 +112,5 @@ func addTransferLog(
 			recipient.Hash(),
 		},
 		Data: data,
-	})
+	}, firehoseContext)
 }

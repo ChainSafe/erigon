@@ -23,6 +23,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/math"
@@ -57,17 +58,18 @@ The state transitioning model does all the necessary work to work out a valid ne
 6) Derive new state root
 */
 type StateTransition struct {
-	gp         *GasPool
-	msg        Message
-	gas        uint64
-	gasPrice   *uint256.Int
-	gasFeeCap  *uint256.Int
-	tip        *uint256.Int
-	initialGas uint64
-	value      *uint256.Int
-	data       []byte
-	state      evmtypes.IntraBlockState
-	evm        vm.VMInterface
+	gp              *GasPool
+	msg             Message
+	gas             uint64
+	gasPrice        *uint256.Int
+	gasFeeCap       *uint256.Int
+	tip             *uint256.Int
+	initialGas      uint64
+	value           *uint256.Int
+	data            []byte
+	state           evmtypes.IntraBlockState
+	evm             vm.VMInterface
+	firehoseContext *firehose.Context
 
 	//some pre-allocated intermediate variables
 	sharedBuyGas        *uint256.Int
@@ -215,15 +217,16 @@ func NewStateTransition(evm vm.VMInterface, msg Message, gp *GasPool) *StateTran
 	isParlia := evm.ChainConfig().Parlia != nil
 	isBor := evm.ChainConfig().Bor != nil
 	return &StateTransition{
-		gp:        gp,
-		evm:       evm,
-		msg:       msg,
-		gasPrice:  msg.GasPrice(),
-		gasFeeCap: msg.FeeCap(),
-		tip:       msg.Tip(),
-		value:     msg.Value(),
-		data:      msg.Data(),
-		state:     evm.IntraBlockState(),
+		gp:              gp,
+		evm:             evm,
+		msg:             msg,
+		gasPrice:        msg.GasPrice(),
+		gasFeeCap:       msg.FeeCap(),
+		tip:             msg.Tip(),
+		value:           msg.Value(),
+		data:            msg.Data(),
+		state:           evm.IntraBlockState(),
+		firehoseContext: evm.FirehoseContext(),
 
 		sharedBuyGas:        uint256.NewInt(0),
 		sharedBuyGasBalance: uint256.NewInt(0),
@@ -291,7 +294,7 @@ func (st *StateTransition) buyGas(gasBailout bool) error {
 
 	st.initialGas = st.msg.Gas()
 	if subBalance {
-		st.state.SubBalance(st.msg.From(), mgval)
+		st.state.SubBalance(st.msg.From(), mgval, st.firehoseContext, firehose.BalanceChangeReason("gas_buy"))
 	}
 	return nil
 }
@@ -420,6 +423,11 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 	if st.gas < gas {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gas, gas)
 	}
+
+	if st.firehoseContext.Enabled() {
+		st.firehoseContext.RecordGasConsume(st.gas, gas, firehose.GasChangeReason("intrinsic_gas"))
+	}
+
 	st.gas -= gas
 
 	var bailout bool
@@ -436,6 +444,8 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 	}
 
 	// Set up the initial access list.
+	// CS TODO: code is deviating here from go-eth
+	// if rules := st.evm.ChainConfig().Rules(st.evm.Context.BlockNumber, st.evm.Context.Random != nil); rules.IsBerlin {
 	if rules.IsBerlin {
 		st.state.PrepareAccessList(msg.From(), msg.To(), vm.ActivePrecompiles(rules), msg.AccessList())
 		// EIP-3651 warm COINBASE
@@ -456,7 +466,7 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 		ret, _, st.gas, vmerr = st.evm.Create(sender, st.data, st.gas, st.value)
 	} else {
 		// Increment the nonce for the next transaction
-		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
+		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1, st.firehoseContext)
 		ret, st.gas, vmerr = st.evm.Call(sender, st.to(), st.data, st.gas, st.value, bailout)
 	}
 	if refunds {
@@ -479,20 +489,22 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 	amount := new(uint256.Int).SetUint64(st.gasUsed())
 	amount.Mul(amount, effectiveTip) // gasUsed * effectiveTip = how much goes to the block producer (miner, validator)
 	if st.isParlia {
-		st.state.AddBalance(consensus.SystemAddress, amount)
+		st.state.AddBalance(consensus.SystemAddress, amount, false, st.firehoseContext, firehose.BalanceChangeReason("reward_transaction_fee"))
 	} else {
-		st.state.AddBalance(st.evm.Context().Coinbase, amount)
+		st.state.AddBalance(st.evm.Context().Coinbase, amount, false, st.firehoseContext, firehose.BalanceChangeReason("reward_transaction_fee"))
 	}
 	if !msg.IsFree() && rules.IsLondon && rules.IsEip1559FeeCollector {
 		burntContractAddress := *st.evm.ChainConfig().Eip1559FeeCollector
 		burnAmount := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gasUsed()), st.evm.Context().BaseFee)
-		st.state.AddBalance(burntContractAddress, burnAmount)
+		// CS TODO: not sure what reason to log here
+		st.state.AddBalance(burntContractAddress, burnAmount, false, st.firehoseContext, firehose.BalanceChangeReason("unknown"))
 	}
 	if st.isBor {
 		// Deprecating transfer log and will be removed in future fork. PLEASE DO NOT USE this transfer log going forward. Parameters won't get updated as expected going forward with EIP1559
 		// add transfer log
 		output1 := input1.Clone()
 		output2 := input2.Clone()
+		// CS TODO: context logging may not be required
 		AddFeeTransferLog(
 			st.state,
 
@@ -504,6 +516,7 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 			input2,
 			output1.Sub(output1, amount),
 			output2.Add(output2, amount),
+			st.firehoseContext,
 		)
 	}
 
@@ -524,7 +537,7 @@ func (st *StateTransition) refundGas(refundQuotient uint64) {
 
 	// Return ETH for remaining gas, exchanged at the original rate.
 	remaining := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gas), st.gasPrice)
-	st.state.AddBalance(st.msg.From(), remaining)
+	st.state.AddBalance(st.msg.From(), remaining, false, st.firehoseContext, firehose.BalanceChangeReason("gas_refund"))
 
 	// Also return remaining gas to the block gas counter so it is
 	// available for the next transaction.
