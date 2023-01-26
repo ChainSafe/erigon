@@ -728,6 +728,7 @@ Loop:
 	}
 	return nil
 }
+
 func blockWithSenders(db kv.RoDB, tx kv.Tx, blockReader services.BlockReader, blockNum uint64) (b *types.Block, err error) {
 	if tx == nil {
 		tx, err = db.BeginRo(context.Background())

@@ -671,7 +671,7 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 // Initialize runs any pre-transaction state modifications (e.g. epoch start)
 func (p *Parlia) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, e consensus.EpochReader, header *types.Header,
-	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall) {
+	state *state.IntraBlockState, txs []types.Transaction, uncles []*types.Header, syscall consensus.SystemCall, context *firehose.Context) {
 }
 
 func (p *Parlia) splitTxs(txs types.Transactions, header *types.Header) (userTxs types.Transactions, systemTxs types.Transactions, err error) {
