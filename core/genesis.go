@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"sync"
 
 	"github.com/c2h5oh/datasize"
@@ -40,12 +41,14 @@ import (
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/common/math"
+	"github.com/ledgerwatch/erigon/common/u256"
 	"github.com/ledgerwatch/erigon/consensus/ethash"
 	"github.com/ledgerwatch/erigon/consensus/serenity"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/params/networkname"
 	"github.com/ledgerwatch/erigon/turbo/trie"
@@ -391,7 +394,7 @@ func (g *Genesis) ToBlock() (*types.Block, *state.IntraBlockState, error) {
 		}
 		// See https://github.com/NethermindEth/nethermind/blob/master/src/Nethermind/Nethermind.Consensus.AuRa/InitializationSteps/LoadGenesisBlockAuRa.cs
 		if hasConstructorAllocation && g.Config.Aura != nil {
-			statedb.CreateAccount(libcommon.Address{}, false)
+			statedb.CreateAccount(libcommon.Address{}, false, firehose.NoOpContext)
 		}
 
 		keys := sortedAllocKeys(g.Alloc)
@@ -403,24 +406,25 @@ func (g *Genesis) ToBlock() (*types.Block, *state.IntraBlockState, error) {
 			if overflow {
 				panic("overflow at genesis allocs")
 			}
-			statedb.AddBalance(addr, balance)
-			statedb.SetCode(addr, account.Code)
-			statedb.SetNonce(addr, account.Nonce)
+			statedb.AddBalance(addr, balance, false, firehose.NoOpContext, firehose.BalanceChangeReason("genesis_balance"))
+			statedb.SetCode(addr, account.Code, firehose.NoOpContext)
+			statedb.SetNonce(addr, account.Nonce, firehose.NoOpContext)
 			for key, value := range account.Storage {
 				key := key
 				val := uint256.NewInt(0).SetBytes(value.Bytes())
-				statedb.SetState(addr, &key, *val)
+				statedb.SetState(addr, &key, *val, firehose.NoOpContext)
 			}
 
+			// CS TODO: check if this needs to be logged
 			if len(account.Constructor) > 0 {
-				_, err := SysCreate(addr, account.Constructor, *g.Config, statedb, head)
+				_, err := SysCreate(addr, account.Constructor, *g.Config, statedb, head, firehose.NoOpContext)
 				if err != nil {
 					panic(err)
 				}
 			}
 
 			if len(account.Code) > 0 || len(account.Storage) > 0 || len(account.Constructor) > 0 {
-				statedb.SetIncarnation(addr, state.FirstContractIncarnation)
+				statedb.SetIncarnation(addr, state.FirstContractIncarnation, firehose.NoOpContext)
 			}
 		}
 		if err := statedb.FinalizeTx(&chain.Rules{}, w); err != nil {
@@ -469,6 +473,7 @@ func (g *Genesis) WriteGenesisState(tx kv.RwTx) (*types.Block, *state.IntraBlock
 	if err := blockWriter.WriteHistory(); err != nil {
 		return nil, statedb, fmt.Errorf("cannot write history: %w", err)
 	}
+
 	return block, statedb, nil
 }
 
@@ -540,6 +545,65 @@ func (g *Genesis) Write(tx kv.RwTx) (*types.Block, *state.IntraBlockState, error
 	if err := rawdb.WriteTotalIssued(tx, 0, genesisIssuance); err != nil {
 		return nil, nil, err
 	}
+
+	// log genesis block
+	if firehose.Enabled {
+		if block == nil {
+			panic(fmt.Errorf("expected to have genesis block here"))
+		}
+
+		if firehose.GenesisConfig == nil {
+			panic(fmt.Errorf("the genesis config is not set, there is something weird as all code path should generate the correct genesis config"))
+		}
+
+		genesis := firehose.GenesisConfig.(*Genesis)
+		if genesis == nil {
+			panic(fmt.Errorf("the genesis config is not set, there is something weird as all code path should generate the correct genesis config"))
+		}
+
+		recomputedGenesisBlock, _, _ := genesis.ToBlock()
+		if block.Hash() != recomputedGenesisBlock.Hash() {
+			panic(fmt.Errorf("invalid Firehose genesis block and actual chain's stored genesis block, the actual genesis block's hash field extracted from Geth's database does not fit with hash of genesis block generated from Firehose determined genesis config, you might need to provide the correct 'genesis.json' file via --firehose-genesis-file"))
+		}
+
+		firehose.MaybeSyncContext().RecordGenesisBlock(block, func(ctx *firehose.Context) {
+			sortedAddrs := make([]libcommon.Address, len(genesis.Alloc))
+			i := 0
+			for addr := range genesis.Alloc {
+				sortedAddrs[i] = addr
+				i++
+			}
+
+			sort.Slice(sortedAddrs, func(i, j int) bool {
+				return bytes.Compare(sortedAddrs[i][:], sortedAddrs[j][:]) <= -1
+			})
+
+			for _, addr := range sortedAddrs {
+				account := genesis.Alloc[addr]
+
+				ctx.RecordNewAccount(addr)
+
+				acountBalance, overflow := uint256.FromBig(account.Balance)
+				if overflow {
+					panic("genesis account balance overflow on big int conversion")
+				}
+				ctx.RecordBalanceChange(addr, u256.Num0, acountBalance, firehose.BalanceChangeReason("genesis_balance"))
+				if len(account.Code) > 0 {
+					ctx.RecordCodeChange(addr, nil, nil, crypto.Keccak256Hash(account.Code), account.Code)
+				}
+
+				if account.Nonce > 0 {
+					ctx.RecordNonceChange(addr, 0, account.Nonce)
+				}
+
+				for key, value := range account.Storage {
+					val := uint256.NewInt(0).SetBytes(value.Bytes())
+					ctx.RecordStorageChange(addr, &key, u256.Num0, val)
+				}
+			}
+		})
+	}
+
 	return block, statedb, rawdb.WriteTotalBurnt(tx, 0, common.Big0)
 }
 

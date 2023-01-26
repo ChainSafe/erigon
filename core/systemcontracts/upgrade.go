@@ -10,6 +10,7 @@ import (
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params/networkname"
 )
 
@@ -541,10 +542,12 @@ func applySystemContractUpgrade(upgrade *Upgrade, blockNumber *big.Int, statedb 
 		prevContractCode := statedb.GetCode(cfg.ContractAddr)
 		if len(prevContractCode) == 0 && len(newContractCode) > 0 {
 			// system contracts defined after genesis need to be explicitly created
-			statedb.CreateAccount(cfg.ContractAddr, true)
+			// CS TODO: check if this needs to be logged
+			statedb.CreateAccount(cfg.ContractAddr, true, firehose.NoOpContext)
 		}
 
-		statedb.SetCode(cfg.ContractAddr, newContractCode)
+		// CS TODO: check if this needs to be logged
+		statedb.SetCode(cfg.ContractAddr, newContractCode, firehose.NoOpContext)
 
 		if cfg.AfterUpgrade != nil {
 			err := cfg.AfterUpgrade(blockNumber, cfg.ContractAddr, statedb)

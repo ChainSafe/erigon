@@ -1271,7 +1271,7 @@ func (p *Parlia) systemCall(from, contract libcommon.Address, data []byte, ibs *
 	vmConfig := vm.Config{NoReceipts: true}
 	// Create a new context to be used in the EVM environment
 	blockContext := core.NewEVMBlockContext(header, core.GetHashFn(header, nil), p, &from)
-	evm := vm.NewEVM(blockContext, core.NewEVMTxContext(msg), ibs, chainConfig, vmConfig)
+	evm := vm.NewEVM(blockContext, core.NewEVMTxContext(msg), ibs, chainConfig, vmConfig, firehoseContext)
 	ret, leftOverGas, err := evm.Call(
 		vm.AccountRef(msg.From()),
 		*msg.To(),
