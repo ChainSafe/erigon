@@ -14,6 +14,7 @@ import (
 	"github.com/ledgerwatch/log/v3"
 	"google.golang.org/grpc"
 
+	"github.com/ledgerwatch/erigon/firehose"
 	ethapi2 "github.com/ledgerwatch/erigon/turbo/adapter/ethapi"
 
 	"github.com/ledgerwatch/erigon/common"
@@ -444,7 +445,7 @@ func (api *APIImpl) CreateAccessList(ctx context.Context, args ethapi2.CallArgs,
 		blockCtx := transactions.NewEVMBlockContext(engine, header, bNrOrHash.RequireCanonical, tx, api._blockReader)
 		txCtx := core.NewEVMTxContext(msg)
 
-		evm := vm.NewEVM(blockCtx, txCtx, state, chainConfig, config)
+		evm := vm.NewEVM(blockCtx, txCtx, state, chainConfig, config, firehose.NoOpContext)
 		gp := new(core.GasPool).AddGas(msg.Gas())
 		res, err := core.ApplyMessage(evm, msg, gp, true /* refunds */, false /* gasBailout */)
 		if err != nil {

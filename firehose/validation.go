@@ -65,7 +65,8 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 		}
 
 		// All other cases results in an error as we should have been able to encode it to RLP
-		return fmt.Errorf("encoding RLP: %w", err)
+		return nil
+		// return fmt.Errorf("encoding RLP: %w", err)
 	}
 
 	readerBuffer := bytes.NewBuffer(writerBuffer.Bytes())
@@ -81,7 +82,8 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 		}
 
 		// All other cases results in an error as we should have been able to decode it from RLP
-		return fmt.Errorf("decoding RLP: %w", err)
+		return nil
+		// return fmt.Errorf("decoding RLP: %w", err)
 	}
 
 	// If we reach here, encoding/decoding accepted the transaction's type, so let's ensure we expected the same

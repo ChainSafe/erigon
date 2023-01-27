@@ -265,7 +265,7 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 		"archive_blocks_to_keep", firehose.ArchiveBlocksToKeep,
 		"genesis_provenance", genesisProvenance,
 		"firehose_version", params.FirehoseVersion(),
-		"geth_version", params.VersionWithMeta,
+		"erigon_version", params.VersionWithMeta,
 		"chain_variant", params.Variant,
 	)
 
