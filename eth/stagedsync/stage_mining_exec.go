@@ -95,16 +95,11 @@ func SpawnMiningExecStage(s *StageState, tx kv.RwTx, cfg MiningExecCfg, quit <-c
 	txs := current.PreparedTxs
 	noempty := true
 
-	var firehoseContext = firehose.NoOpContext
-	if !cfg.vmConfig.ReadOnly {
-		firehoseContext = firehose.MaybeSyncContext()
-	}
-
 	stateReader := state.NewPlainStateReader(tx)
 	ibs := state.New(stateReader)
 	stateWriter := state.NewPlainStateWriter(tx, tx, current.Header.Number.Uint64())
 	if cfg.chainConfig.DAOForkSupport && cfg.chainConfig.DAOForkBlock != nil && cfg.chainConfig.DAOForkBlock.Cmp(current.Header.Number) == 0 {
-		misc.ApplyDAOHardFork(ibs, firehoseContext)
+		misc.ApplyDAOHardFork(ibs, firehose.NoOpContext)
 	}
 	systemcontracts.UpgradeBuildInSystemContract(&cfg.chainConfig, current.Header.Number, ibs)
 
@@ -122,7 +117,7 @@ func SpawnMiningExecStage(s *StageState, tx kv.RwTx, cfg MiningExecCfg, quit <-c
 	// empty block is necessary to keep the liveness of the network.
 	if noempty {
 		if txs != nil && !txs.Empty() {
-			logs, _, err := addTransactionsToMiningBlock(logPrefix, current, cfg.chainConfig, cfg.vmConfig, getHeader, cfg.engine, txs, cfg.miningState.MiningConfig.Etherbase, ibs, quit, cfg.interrupt, cfg.payloadId, firehoseContext)
+			logs, _, err := addTransactionsToMiningBlock(logPrefix, current, cfg.chainConfig, cfg.vmConfig, getHeader, cfg.engine, txs, cfg.miningState.MiningConfig.Etherbase, ibs, quit, cfg.interrupt, cfg.payloadId, firehose.NoOpContext)
 			if err != nil {
 				return err
 			}
@@ -144,7 +139,7 @@ func SpawnMiningExecStage(s *StageState, tx kv.RwTx, cfg MiningExecCfg, quit <-c
 				}
 
 				if !txs.Empty() {
-					logs, stop, err := addTransactionsToMiningBlock(logPrefix, current, cfg.chainConfig, cfg.vmConfig, getHeader, cfg.engine, txs, cfg.miningState.MiningConfig.Etherbase, ibs, quit, cfg.interrupt, cfg.payloadId, firehoseContext)
+					logs, stop, err := addTransactionsToMiningBlock(logPrefix, current, cfg.chainConfig, cfg.vmConfig, getHeader, cfg.engine, txs, cfg.miningState.MiningConfig.Etherbase, ibs, quit, cfg.interrupt, cfg.payloadId, firehose.NoOpContext)
 					if err != nil {
 						return err
 					}
@@ -177,7 +172,7 @@ func SpawnMiningExecStage(s *StageState, tx kv.RwTx, cfg MiningExecCfg, quit <-c
 
 	var err error
 	_, current.Txs, current.Receipts, err = core.FinalizeBlockExecution(cfg.engine, stateReader, current.Header, current.Txs, current.Uncles, stateWriter,
-		&cfg.chainConfig, ibs, current.Receipts, current.Withdrawals, EpochReaderImpl{tx: tx}, ChainReaderImpl{config: &cfg.chainConfig, tx: tx, blockReader: cfg.blockReader}, true, firehoseContext)
+		&cfg.chainConfig, ibs, current.Receipts, current.Withdrawals, EpochReaderImpl{tx: tx}, ChainReaderImpl{config: &cfg.chainConfig, tx: tx, blockReader: cfg.blockReader}, true, firehose.NoOpContext)
 	if err != nil {
 		return err
 	}
