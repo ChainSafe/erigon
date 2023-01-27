@@ -10,6 +10,7 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon-lib/kv"
@@ -180,7 +181,7 @@ func SpawnMiningCreateBlockStage(s *StageState, tx kv.RwTx, cfg MiningCreateBloc
 	stateReader := state.NewPlainStateReader(tx)
 	ibs := state.New(stateReader)
 
-	if err = cfg.engine.Prepare(chain, header, ibs); err != nil {
+	if err = cfg.engine.Prepare(chain, header, ibs, firehose.NoOpContext); err != nil {
 		log.Error("Failed to prepare header for mining",
 			"err", err,
 			"headerNumber", header.Number.Uint64(),
