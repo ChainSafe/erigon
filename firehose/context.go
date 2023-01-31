@@ -238,11 +238,6 @@ func maxPriorityFeePerGas(tx types.Transaction) *big.Int {
 }
 
 func gasPrice(tx types.Transaction, baseFee *big.Int) *uint256.Int {
-	baseFeeI, overflow := uint256.FromBig(baseFee)
-	if overflow {
-		panic("overflow on big int conversion")
-	}
-
 	switch tx.Type() {
 	case types.LegacyTxType, types.AccessListTxType:
 		return tx.GetPrice()
@@ -250,6 +245,11 @@ func gasPrice(tx types.Transaction, baseFee *big.Int) *uint256.Int {
 	case types.DynamicFeeTxType:
 		if baseFee == nil {
 			return tx.GetPrice()
+		}
+
+		baseFeeI, overflow := uint256.FromBig(baseFee)
+		if overflow {
+			panic("overflow on big int conversion")
 		}
 
 		return erigonmath.Min256(new(uint256.Int).Add(tx.GetTip(), baseFeeI), tx.GetFeeCap())
@@ -568,8 +568,8 @@ func (ctx *Context) RecordStorageChange(addr libcommon.Address, key *libcommon.H
 		ctx.callIndex(),
 		Addr(addr),
 		Hash(*key),
-		oldData.String(),
-		newData.String(),
+		Hash(libcommon.BigToHash(oldData.ToBig())),
+		Hash(libcommon.BigToHash(newData.ToBig())),
 		Uint64(ctx.totalOrderingCounter.Inc()),
 	)
 }
@@ -588,8 +588,8 @@ func (ctx *Context) RecordBalanceChange(addr libcommon.Address, oldBalance, newB
 		ctx.printer.Print("BALANCE_CHANGE",
 			ctx.callIndex(),
 			Addr(addr),
-			oldBalance.String(),
-			newBalance.String(),
+			Hex(oldBalance.Bytes()),
+			Hex(newBalance.Bytes()),
 			string(reason),
 			Uint64(ctx.totalOrderingCounter.Inc()),
 		)
@@ -632,7 +632,7 @@ func (ctx *Context) RecordSuicide(addr libcommon.Address, suicided bool, balance
 		ctx.callIndex(),
 		Addr(addr),
 		Bool(suicided),
-		balanceBeforeSuicide.String(),
+		Hex(balanceBeforeSuicide.Bytes()),
 	)
 
 	if balanceBeforeSuicide.Sign() != 0 {
