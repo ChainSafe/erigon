@@ -19,6 +19,7 @@ package core
 
 import (
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/ledgerwatch/erigon-lib/chain"
@@ -270,6 +271,18 @@ func ExecuteBlockEphemerallyForBSC(
 	}
 
 	if firehoseContext.Enabled() {
+		// Calculate the total difficulty of the block
+		ptd := chainReader.GetTd(block.ParentHash(), block.NumberU64()-1)
+		difficulty := block.Difficulty()
+		if difficulty == nil {
+			difficulty = big.NewInt(0)
+		}
+
+		td := ptd
+		if ptd != nil {
+			td = new(big.Int).Add(difficulty, ptd)
+		}
+
 		finalizedBlock := newBlock
 		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
 			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
@@ -279,7 +292,8 @@ func ExecuteBlockEphemerallyForBSC(
 
 		// CS TODO: check if difficulty is being set correctly
 		// go-eth have a different logic to find the difficulty
-		firehoseContext.EndBlock(block, finalizedBlock, block.Header().Difficulty)
+		block.ParentHash()
+		firehoseContext.EndBlock(block, finalizedBlock, td)
 	}
 
 	execRs := &EphemeralExecResult{
@@ -448,6 +462,18 @@ func ExecuteBlockEphemerally(
 	}
 
 	if firehoseContext.Enabled() {
+		// Calculate the total difficulty of the block
+		ptd := chainReader.GetTd(block.ParentHash(), block.NumberU64()-1)
+		difficulty := block.Difficulty()
+		if difficulty == nil {
+			difficulty = big.NewInt(0)
+		}
+
+		td := ptd
+		if ptd != nil {
+			td = new(big.Int).Add(difficulty, ptd)
+		}
+
 		finalizedBlock := newBlock
 		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
 			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
@@ -457,7 +483,7 @@ func ExecuteBlockEphemerally(
 
 		// CS TODO: check if difficulty is being set correctly
 		// go-eth have a different logic to find the difficulty
-		firehoseContext.EndBlock(block, finalizedBlock, block.Header().Difficulty)
+		firehoseContext.EndBlock(block, finalizedBlock, td)
 	}
 
 	blockLogs := ibs.Logs()
@@ -633,6 +659,18 @@ func ExecuteBlockEphemerallyBor(
 	}
 
 	if firehoseContext.Enabled() {
+		// Calculate the total difficulty of the block
+		ptd := chainReader.GetTd(block.ParentHash(), block.NumberU64()-1)
+		difficulty := block.Difficulty()
+		if difficulty == nil {
+			difficulty = big.NewInt(0)
+		}
+
+		td := ptd
+		if ptd != nil {
+			td = new(big.Int).Add(difficulty, ptd)
+		}
+
 		finalizedBlock := newBlock
 		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
 			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
@@ -642,7 +680,7 @@ func ExecuteBlockEphemerallyBor(
 
 		// CS TODO: check if difficulty is being set correctly
 		// go-eth have a different logic to find the difficulty
-		firehoseContext.EndBlock(block, finalizedBlock, block.Header().Difficulty)
+		firehoseContext.EndBlock(block, finalizedBlock, td)
 	}
 
 	blockLogs := ibs.Logs()
