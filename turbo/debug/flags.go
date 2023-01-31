@@ -223,12 +223,24 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 
 	// Firehose
 	log.Info("Initializing firehose")
-	firehose.Enabled = ctx.Bool(firehoseEnabledFlag.Name)
-	firehose.SyncInstrumentationEnabled = ctx.Bool(firehoseSyncInstrumentationFlag.Name)
-	firehose.MiningEnabled = ctx.Bool(firehoseMiningEnabledFlag.Name)
-	firehose.BlockProgressEnabled = ctx.Bool(firehoseBlockProgressFlag.Name)
-	firehose.CompactionDisabled = ctx.Bool(firehoseCompactionDisabledFlag.Name)
-	firehose.ArchiveBlocksToKeep = ctx.Uint64(firehoseArchiveBlocksToKeepFlag.Name)
+	if ctx.IsSet(firehoseEnabledFlag.Name) {
+		firehose.Enabled = ctx.Bool(firehoseEnabledFlag.Name)
+	}
+	if ctx.IsSet(firehoseSyncInstrumentationFlag.Name) {
+		firehose.SyncInstrumentationEnabled = ctx.Bool(firehoseSyncInstrumentationFlag.Name)
+	}
+	if ctx.IsSet(firehoseMiningEnabledFlag.Name) {
+		firehose.MiningEnabled = ctx.Bool(firehoseMiningEnabledFlag.Name)
+	}
+	if ctx.IsSet(firehoseBlockProgressFlag.Name) {
+		firehose.BlockProgressEnabled = ctx.Bool(firehoseBlockProgressFlag.Name)
+	}
+	if ctx.IsSet(firehoseCompactionDisabledFlag.Name) {
+		firehose.CompactionDisabled = ctx.Bool(firehoseCompactionDisabledFlag.Name)
+	}
+	if ctx.IsSet(firehoseArchiveBlocksToKeepFlag.Name) {
+		firehose.ArchiveBlocksToKeep = ctx.Uint64(firehoseArchiveBlocksToKeepFlag.Name)
+	}
 
 	genesisProvenance := "unset"
 
@@ -265,7 +277,7 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 		"archive_blocks_to_keep", firehose.ArchiveBlocksToKeep,
 		"genesis_provenance", genesisProvenance,
 		"firehose_version", params.FirehoseVersion(),
-		"geth_version", params.VersionWithMeta,
+		"erigon_version", params.VersionWithMeta,
 		"chain_variant", params.Variant,
 	)
 

@@ -47,6 +47,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/ethdb/olddb"
 	"github.com/ledgerwatch/erigon/event"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync"
@@ -661,8 +662,8 @@ func (b *SimulatedBackend) callContract(_ context.Context, call ethereum.CallMsg
 		call.Value = new(uint256.Int)
 	}
 	// Set infinite balance to the fake caller account.
-	from := statedb.GetOrNewStateObject(call.From)
-	from.SetBalance(uint256.NewInt(0).SetAllOne())
+	from := statedb.GetOrNewStateObject(call.From, false, firehose.NoOpContext)
+	from.SetBalance(uint256.NewInt(0).SetAllOne(), firehose.NoOpContext, firehose.IgnoredBalanceChangeReason)
 	// Execute the call.
 	msg := callMsg{call}
 
@@ -671,7 +672,7 @@ func (b *SimulatedBackend) callContract(_ context.Context, call ethereum.CallMsg
 	evmContext := core.NewEVMBlockContext(header, core.GetHashFn(header, b.getHeader), b.m.Engine, nil)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	vmEnv := vm.NewEVM(evmContext, txContext, statedb, b.m.ChainConfig, vm.Config{})
+	vmEnv := vm.NewEVM(evmContext, txContext, statedb, b.m.ChainConfig, vm.Config{}, firehose.NoOpContext)
 	gasPool := new(core.GasPool).AddGas(math.MaxUint64)
 
 	return core.NewStateTransition(vmEnv, msg, gasPool).TransitionDb(true /* refunds */, false /* gasBailout */)
@@ -701,7 +702,7 @@ func (b *SimulatedBackend) SendTransaction(ctx context.Context, tx types.Transac
 		&b.pendingHeader.Coinbase, b.gasPool,
 		b.pendingState, state.NewNoopWriter(),
 		b.pendingHeader, tx,
-		&b.pendingHeader.GasUsed, vm.Config{}); err != nil {
+		&b.pendingHeader.GasUsed, vm.Config{}, firehose.NoOpContext); err != nil {
 		return err
 	}
 	//fmt.Printf("==== Start producing block %d\n", (b.prependBlock.NumberU64() + 1))

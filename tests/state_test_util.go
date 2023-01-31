@@ -39,6 +39,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/turbo/trie"
 
@@ -244,7 +245,7 @@ func (t *StateTest) RunNoVerify(tx kv.RwTx, subtest StateSubtest, vmconfig vm.Co
 		rnd := libcommon.BigToHash(t.json.Env.Random)
 		context.PrevRanDao = &rnd
 	}
-	evm := vm.NewEVM(context, txContext, statedb, config, vmconfig)
+	evm := vm.NewEVM(context, txContext, statedb, config, vmconfig, firehose.NoOpContext)
 
 	// Execute the message.
 	snapshot := statedb.Snapshot()
@@ -312,21 +313,21 @@ func MakePreState(rules *chain.Rules, tx kv.RwTx, accounts core.GenesisAlloc, bl
 	r := state.NewPlainStateReader(tx)
 	statedb := state.New(r)
 	for addr, a := range accounts {
-		statedb.SetCode(addr, a.Code)
-		statedb.SetNonce(addr, a.Nonce)
+		statedb.SetCode(addr, a.Code, firehose.NoOpContext)
+		statedb.SetNonce(addr, a.Nonce, firehose.NoOpContext)
 		balance := uint256.NewInt(0)
 		if a.Balance != nil {
 			balance, _ = uint256.FromBig(a.Balance)
 		}
-		statedb.SetBalance(addr, balance)
+		statedb.SetBalance(addr, balance, firehose.NoOpContext, "test")
 		for k, v := range a.Storage {
 			key := k
 			val := uint256.NewInt(0).SetBytes(v.Bytes())
-			statedb.SetState(addr, &key, *val)
+			statedb.SetState(addr, &key, *val, firehose.NoOpContext)
 		}
 
 		if len(a.Code) > 0 || len(a.Storage) > 0 {
-			statedb.SetIncarnation(addr, state.FirstContractIncarnation)
+			statedb.SetIncarnation(addr, state.FirstContractIncarnation, firehose.NoOpContext)
 
 			var b [8]byte
 			binary.BigEndian.PutUint64(b[:], state.FirstContractIncarnation)

@@ -523,28 +523,6 @@ func (g *Genesis) Write(tx kv.RwTx) (*types.Block, *state.IntraBlockState, error
 	if err := rawdb.WriteChainConfig(tx, block.Hash(), config); err != nil {
 		return nil, nil, err
 	}
-	// We support ethash/serenity for issuance (for now)
-	if g.Config.Consensus != chain.EtHashConsensus {
-		return block, statedb, nil
-	}
-	// Issuance is the sum of allocs
-	genesisIssuance := big.NewInt(0)
-	for _, account := range g.Alloc {
-		genesisIssuance.Add(genesisIssuance, account.Balance)
-	}
-
-	// BlockReward can be present at genesis
-	if block.Header().Difficulty.Cmp(serenity.SerenityDifficulty) == 0 {
-		// Proof-of-stake is 0.3 ether per block (TODO: revisit)
-		genesisIssuance.Add(genesisIssuance, serenity.RewardSerenity)
-	} else {
-		blockReward, _ := ethash.AccumulateRewards(g.Config, block.Header(), nil)
-		// Set BlockReward
-		genesisIssuance.Add(genesisIssuance, blockReward.ToBig())
-	}
-	if err := rawdb.WriteTotalIssued(tx, 0, genesisIssuance); err != nil {
-		return nil, nil, err
-	}
 
 	// log genesis block
 	if firehose.Enabled {
@@ -602,6 +580,29 @@ func (g *Genesis) Write(tx kv.RwTx) (*types.Block, *state.IntraBlockState, error
 				}
 			}
 		})
+	}
+
+	// We support ethash/serenity for issuance (for now)
+	if g.Config.Consensus != chain.EtHashConsensus {
+		return block, statedb, nil
+	}
+	// Issuance is the sum of allocs
+	genesisIssuance := big.NewInt(0)
+	for _, account := range g.Alloc {
+		genesisIssuance.Add(genesisIssuance, account.Balance)
+	}
+
+	// BlockReward can be present at genesis
+	if block.Header().Difficulty.Cmp(serenity.SerenityDifficulty) == 0 {
+		// Proof-of-stake is 0.3 ether per block (TODO: revisit)
+		genesisIssuance.Add(genesisIssuance, serenity.RewardSerenity)
+	} else {
+		blockReward, _ := ethash.AccumulateRewards(g.Config, block.Header(), nil)
+		// Set BlockReward
+		genesisIssuance.Add(genesisIssuance, blockReward.ToBig())
+	}
+	if err := rawdb.WriteTotalIssued(tx, 0, genesisIssuance); err != nil {
+		return nil, nil, err
 	}
 
 	return block, statedb, rawdb.WriteTotalBurnt(tx, 0, common.Big0)

@@ -31,6 +31,7 @@ import (
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/firehose"
 )
 
 type Prestate struct {
@@ -77,18 +78,18 @@ func MakePreState(chainRules *chain.Rules, tx kv.RwTx, accounts core.GenesisAllo
 	stateReader, stateWriter := state.NewPlainStateReader(tx), state.NewPlainStateWriter(tx, tx, blockNr)
 	statedb := state.New(stateReader) //ibs
 	for addr, a := range accounts {
-		statedb.SetCode(addr, a.Code)
-		statedb.SetNonce(addr, a.Nonce)
+		statedb.SetCode(addr, a.Code, firehose.NoOpContext)
+		statedb.SetNonce(addr, a.Nonce, firehose.NoOpContext)
 		balance, _ := uint256.FromBig(a.Balance)
-		statedb.SetBalance(addr, balance)
+		statedb.SetBalance(addr, balance, firehose.NoOpContext, firehose.IgnoredBalanceChangeReason)
 		for k, v := range a.Storage {
 			key := k
 			val := uint256.NewInt(0).SetBytes(v.Bytes())
-			statedb.SetState(addr, &key, *val)
+			statedb.SetState(addr, &key, *val, firehose.NoOpContext)
 		}
 
 		if len(a.Code) > 0 || len(a.Storage) > 0 {
-			statedb.SetIncarnation(addr, state.FirstContractIncarnation)
+			statedb.SetIncarnation(addr, state.FirstContractIncarnation, firehose.NoOpContext)
 			var b [8]byte
 			binary.BigEndian.PutUint64(b[:], state.FirstContractIncarnation)
 			tx.Put(kv.IncarnationMap, addr[:], b[:])

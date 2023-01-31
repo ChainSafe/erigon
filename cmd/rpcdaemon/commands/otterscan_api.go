@@ -18,6 +18,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/adapter/ethapi"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
@@ -133,7 +134,7 @@ func (api *OtterscanAPIImpl) runTracer(ctx context.Context, tx kv.Tx, hash libco
 	} else {
 		vmConfig = vm.Config{Debug: true, Tracer: tracer}
 	}
-	vmenv := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
+	vmenv := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig, firehose.NoOpContext)
 
 	result, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()), true, false /* gasBailout */)
 	if err != nil {

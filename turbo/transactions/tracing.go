@@ -23,6 +23,7 @@ import (
 	"github.com/ledgerwatch/erigon/eth/stagedsync"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/eth/tracers/logger"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 	"github.com/ledgerwatch/erigon/turbo/services"
 )
@@ -58,12 +59,12 @@ func ComputeTxEnv(ctx context.Context, engine consensus.EngineReader, block *typ
 	signer := types.MakeSigner(cfg, block.NumberU64())
 
 	BlockContext := core.NewEVMBlockContext(header, core.GetHashFn(header, getHeader), engine, nil)
-	vmenv := vm.NewEVM(BlockContext, evmtypes.TxContext{}, statedb, cfg, vm.Config{})
+	vmenv := vm.NewEVM(BlockContext, evmtypes.TxContext{}, statedb, cfg, vm.Config{}, firehose.NoOpContext)
 	rules := vmenv.ChainRules()
 
 	consensusHeaderReader := stagedsync.NewChainReaderImpl(cfg, dbtx, nil)
 
-	core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, nil, header, block.Transactions(), block.Uncles(), cfg, statedb)
+	core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, nil, header, block.Transactions(), block.Uncles(), cfg, statedb, firehose.NoOpContext)
 
 	for idx, tx := range block.Transactions() {
 		select {
@@ -77,7 +78,7 @@ func ComputeTxEnv(ctx context.Context, engine consensus.EngineReader, block *typ
 		msg, _ := tx.AsMessage(*signer, block.BaseFee(), rules)
 		if msg.FeeCap().IsZero() && engine != nil {
 			syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-				return core.SysCallContract(contract, data, *cfg, statedb, header, engine, true /* constCall */)
+				return core.SysCallContract(contract, data, *cfg, statedb, header, engine, true /* constCall */, firehose.NoOpContext)
 			}
 			msg.SetIsFree(engine.IsServiceTransaction(msg.From(), syscall))
 		}
@@ -158,7 +159,7 @@ func TraceTx(
 		streaming = true
 	}
 	// Run the transaction with tracing enabled.
-	vmenv := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer})
+	vmenv := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer}, firehose.NoOpContext)
 	var refunds = true
 	if config != nil && config.NoRefunds != nil && *config.NoRefunds {
 		refunds = false

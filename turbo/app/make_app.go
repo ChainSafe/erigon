@@ -8,13 +8,13 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ledgerwatch/erigon/cmd/utils"
-	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/node"
 	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
 	cli2 "github.com/ledgerwatch/erigon/turbo/cli"
 	"github.com/ledgerwatch/erigon/turbo/debug"
+	turboNode "github.com/ledgerwatch/erigon/turbo/node"
 )
 
 // MakeApp creates a cli application (based on `github.com/urlfave/cli` package).
@@ -28,8 +28,9 @@ func MakeApp(action cli.ActionFunc, cliFlags []cli.Flag) *cli.App {
 	app.Flags = append(cliFlags, debug.Flags...) // debug flags are required
 	app.Flags = append(app.Flags, debug.FirehoseFlags...)
 	app.Before = func(ctx *cli.Context) error {
-		chain := ctx.String(utils.ChainFlag.Name)
-		if err := debug.Setup(ctx, core.DefaultGenesisBlockByChainName(chain)); err != nil {
+		nodeCfg := turboNode.NewNodConfigUrfave(ctx)
+		ethCfg := turboNode.NewEthConfigUrfave(ctx, nodeCfg)
+		if err := debug.Setup(ctx, ethCfg.Genesis); err != nil {
 			return err
 		}
 

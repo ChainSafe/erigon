@@ -45,6 +45,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/runtime"
 	"github.com/ledgerwatch/erigon/eth/tracers/logger"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 )
 
@@ -164,7 +165,7 @@ func runCmd(ctx *cli.Context) error {
 	if ctx.String(SenderFlag.Name) != "" {
 		sender = libcommon.HexToAddress(ctx.String(SenderFlag.Name))
 	}
-	statedb.CreateAccount(sender, true)
+	statedb.CreateAccount(sender, true, firehose.NoOpContext)
 
 	if ctx.String(ReceiverFlag.Name) != "" {
 		receiver = libcommon.HexToAddress(ctx.String(ReceiverFlag.Name))
@@ -276,7 +277,7 @@ func runCmd(ctx *cli.Context) error {
 		}
 	} else {
 		if len(code) > 0 {
-			statedb.SetCode(receiver, code)
+			statedb.SetCode(receiver, code, firehose.NoOpContext)
 		}
 		execFunc = func() ([]byte, uint64, error) {
 			return runtime.Call(receiver, input, &runtimeConfig)

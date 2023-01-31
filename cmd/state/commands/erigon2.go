@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ledgerwatch/erigon/eth/ethconsensusconfig"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/turbo/logging"
 	"github.com/ledgerwatch/erigon/turbo/services"
 
@@ -411,11 +412,11 @@ func processBlock(trace bool, txNumStart uint64, rw *ReaderWrapper, ww *WriterWr
 	for i, tx := range block.Transactions() {
 		ibs := state.New(rw)
 		if daoBlock {
-			misc.ApplyDAOHardFork(ibs)
+			misc.ApplyDAOHardFork(ibs, firehose.NoOpContext)
 			daoBlock = false
 		}
 		ibs.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, _, err := core.ApplyTransaction(chainConfig, core.GetHashFn(header, getHeader), engine, nil, gp, ibs, ww, header, tx, usedGas, vmConfig)
+		receipt, _, err := core.ApplyTransaction(chainConfig, core.GetHashFn(header, getHeader), engine, nil, gp, ibs, ww, header, tx, usedGas, vmConfig, firehose.NoOpContext)
 		if err != nil {
 			return 0, nil, fmt.Errorf("could not apply tx %d [%x] failed: %w", i, tx.Hash(), err)
 		}
@@ -432,7 +433,7 @@ func processBlock(trace bool, txNumStart uint64, rw *ReaderWrapper, ww *WriterWr
 	ibs := state.New(rw)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	if _, _, _, err := engine.FinalizeAndAssemble(chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), nil, nil, nil, nil); err != nil {
+	if _, _, _, err := engine.FinalizeAndAssemble(chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), nil, nil, nil, nil, firehose.NoOpContext); err != nil {
 		return 0, nil, fmt.Errorf("finalize of block %d failed: %w", block.NumberU64(), err)
 	}
 
