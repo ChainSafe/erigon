@@ -17,8 +17,6 @@ import (
 
 	"github.com/ledgerwatch/erigon/firehose"
 
-
-	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/state"

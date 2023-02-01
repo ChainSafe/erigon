@@ -63,7 +63,7 @@ func ComputeTxEnv(ctx context.Context, engine consensus.EngineReader, block *typ
 		msg, _ := txn.AsMessage(*signer, block.BaseFee(), rules)
 		if msg.FeeCap().IsZero() && engine != nil {
 			syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-				return core.SysCallContract(contract, data, *cfg, statedb, header, engine, true /* constCall */)
+				return core.SysCallContract(contract, data, *cfg, statedb, header, engine, true /* constCall */, firehose.NoOpContext)
 			}
 			msg.SetIsFree(engine.IsServiceTransaction(msg.From(), syscall))
 		}
