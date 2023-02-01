@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/holiman/uint256"
+
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
@@ -78,8 +79,6 @@ type EVM struct {
 	txContext evmtypes.TxContext
 	// IntraBlockState gives access to the underlying state
 	intraBlockState evmtypes.IntraBlockState
-	// Depth is the current call stack
-	depth int
 
 	// chainConfig contains information about the current chain
 	chainConfig *chain.Config
@@ -155,21 +154,6 @@ func (evm *EVM) Cancelled() bool {
 	return atomic.LoadInt32(&evm.abort) == 1
 }
 
-// Depth returns the current call stack depth
-func (evm *EVM) Depth() int {
-	return evm.depth
-}
-
-// IncrementDepth increments the call stack depth
-func (evm *EVM) IncrementDepth() {
-	evm.depth++
-}
-
-// DecrementDepth decrements the call stack depth
-func (evm *EVM) DecrementDepth() {
-	evm.depth--
-}
-
 // CallGasTemp returns the callGasTemp for the EVM
 func (evm *EVM) CallGasTemp() uint64 {
 	return evm.callGasTemp
@@ -186,7 +170,7 @@ func (evm *EVM) Interpreter() Interpreter {
 }
 
 func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, input []byte, gas uint64, value *uint256.Int, bailout bool) (ret []byte, leftOverGas uint64, err error) {
-	if evm.config.NoRecursion && evm.depth > 0 {
+	if evm.config.NoRecursion && evm.interpreter.Depth() > 0 {
 		return nil, gas, nil
 	}
 	// CS TODO: need to check whether we should start call here.
@@ -224,7 +208,7 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 	}
 
 	// Fail if we're trying to execute above the call depth limit
-	if evm.depth > int(params.CallCreateDepth) {
+	if evm.interpreter.Depth() > int(params.CallCreateDepth) {
 		if evm.firehoseContext.Enabled() {
 			evm.firehoseContext.EndFailedCall(gas, true, ErrDepth.Error())
 		}
@@ -258,7 +242,7 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 						v = nil
 					}
 					// Calling a non existing account, don't do anything, but ping the tracer
-					if evm.depth == 0 {
+					if evm.interpreter.Depth() == 0 {
 						evm.config.Tracer.CaptureStart(evm, caller.Address(), addr, isPrecompile, false /* create */, input, gas, v, code)
 						defer func(startGas uint64) { // Lazy evaluation of the parameters
 							evm.config.Tracer.CaptureEnd(ret, 0, err)
@@ -290,7 +274,7 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 		if typ == STATICCALL {
 			v = nil
 		}
-		if evm.depth == 0 {
+		if evm.interpreter.Depth() == 0 {
 			evm.config.Tracer.CaptureStart(evm, caller.Address(), addr, isPrecompile, false /* create */, input, gas, v, code)
 			defer func(startGas uint64) { // Lazy evaluation of the parameters
 				evm.config.Tracer.CaptureEnd(ret, startGas-gas, err)
@@ -419,36 +403,52 @@ func (c *codeAndHash) Hash() libcommon.Hash {
 func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64, value *uint256.Int, address libcommon.Address, typ OpCode, incrementNonce bool) ([]byte, libcommon.Address, uint64, error) {
 	var ret []byte
 	var err error
+	var gasConsumption uint64
 
 	if evm.firehoseContext.Enabled() {
 		evm.firehoseContext.StartCall("CREATE")
 		evm.firehoseContext.RecordCallParams("CREATE", caller.Address(), address, value, gas, nil)
 	}
 
+	if evm.config.Debug {
+		if evm.interpreter.Depth() == 0 {
+			evm.config.Tracer.CaptureStart(evm, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
+			defer func() {
+				evm.config.Tracer.CaptureEnd(ret, gasConsumption, err)
+			}()
+		} else {
+			evm.config.Tracer.CaptureEnter(typ, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
+			defer func() {
+				evm.config.Tracer.CaptureExit(ret, gasConsumption, err)
+			}()
+		}
+	}
+
 	// Depth check execution. Fail if we're trying to execute above the
 	// limit.
-	if evm.depth > int(params.CallCreateDepth) {
+	if evm.interpreter.Depth() > int(params.CallCreateDepth) {
+		err = ErrDepth
 		if evm.firehoseContext.Enabled() {
 			evm.firehoseContext.EndFailedCall(gas, true, ErrDepth.Error())
 		}
-
-		return nil, libcommon.Address{}, gas, ErrDepth
+		return nil, libcommon.Address{}, gas, err
 	}
 	if !evm.context.CanTransfer(evm.intraBlockState, caller.Address(), value) {
+		err = ErrInsufficientBalance
 		if evm.firehoseContext.Enabled() {
 			evm.firehoseContext.EndFailedCall(gas, true, ErrInsufficientBalance.Error())
 		}
-
-		return nil, libcommon.Address{}, gas, ErrInsufficientBalance
+		return nil, libcommon.Address{}, gas, err
 	}
 	if incrementNonce {
 		nonce := evm.intraBlockState.GetNonce(caller.Address())
 		if nonce+1 < nonce {
+			err = ErrNonceUintOverflow
 			if evm.firehoseContext.Enabled() {
 				evm.firehoseContext.EndFailedCall(gas, true, ErrNonceUintOverflow.Error())
 			}
 
-			return nil, libcommon.Address{}, gas, ErrNonceUintOverflow
+			return nil, libcommon.Address{}, gas, err
 		}
 		evm.intraBlockState.SetNonce(caller.Address(), nonce+1, evm.firehoseContext)
 	}
@@ -485,16 +485,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	contract := NewContract(caller, AccountRef(address), value, gas, evm.config.SkipAnalysis, evm.firehoseContext)
 	contract.SetCodeOptionalHash(&address, codeAndHash)
 
-	if evm.config.Debug {
-		if evm.depth == 0 {
-			evm.config.Tracer.CaptureStart(evm, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
-		} else {
-			evm.config.Tracer.CaptureEnter(typ, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
-		}
-	}
-
-	// CS TODO: decide what to do with this condition. Should we bring it top or add firehose operation on this
-	if evm.config.NoRecursion && evm.depth > 0 {
+	if evm.config.NoRecursion && evm.interpreter.Depth() > 0 {
 		return nil, address, gas, nil
 	}
 
@@ -539,13 +530,8 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
-	if evm.config.Debug {
-		if evm.depth == 0 {
-			evm.config.Tracer.CaptureEnd(ret, gas-contract.Gas, err)
-		} else {
-			evm.config.Tracer.CaptureExit(ret, gas-contract.Gas, err)
-		}
-	}
+	// calculate gasConsumption for deferred captures
+	gasConsumption = gas - contract.Gas
 
 	if evm.firehoseContext.Enabled() {
 		evm.firehoseContext.EndCall(contract.Gas, nil)

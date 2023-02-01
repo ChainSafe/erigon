@@ -21,9 +21,9 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon-lib/common/math"
 	"github.com/ledgerwatch/log/v3"
 
-	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/vm/stack"
 	"github.com/ledgerwatch/erigon/firehose"
 )
@@ -61,6 +61,9 @@ type Interpreter interface {
 	// Run loops and evaluates the contract's code with the given input data and returns
 	// the return byte-slice and an error if one occurred.
 	Run(contract *Contract, input []byte, static bool) ([]byte, error)
+
+	// `Depth` returns the current call stack's depth.
+	Depth() int
 }
 
 // ScopeContext contains the things that are per-call, such as stack and memory,
@@ -82,7 +85,8 @@ type keccakState interface {
 // EVMInterpreter represents an EVM interpreter
 type EVMInterpreter struct {
 	*VM
-	jt *JumpTable // EVM instruction table
+	jt    *JumpTable // EVM instruction table
+	depth int
 }
 
 // structcheck doesn't see embedding
@@ -165,8 +169,8 @@ func NewEVMInterpreter(evm VMInterpreter, cfg Config) *EVMInterpreter {
 // ErrExecutionReverted which means revert-and-keep-gas-left.
 func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (ret []byte, err error) {
 	// Increment the call depth which is restricted to 1024
-	in.evm.IncrementDepth()
-	defer func() { in.evm.DecrementDepth() }()
+	in.depth++
+	defer func() { in.depth-- }()
 
 	// Make sure the readOnly is only set if we aren't in readOnly yet.
 	// This makes also sure that the readOnly flag isn't removed for child calls.
@@ -213,9 +217,9 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		defer func() {
 			if err != nil {
 				if !logged {
-					in.cfg.Tracer.CaptureState(pcCopy, op, gasCopy, cost, callContext, in.returnData, in.evm.Depth(), err) //nolint:errcheck
+					in.cfg.Tracer.CaptureState(pcCopy, op, gasCopy, cost, callContext, in.returnData, in.depth, err) //nolint:errcheck
 				} else {
-					in.cfg.Tracer.CaptureFault(pcCopy, op, gasCopy, cost, callContext, in.evm.Depth(), err)
+					in.cfg.Tracer.CaptureFault(pcCopy, op, gasCopy, cost, callContext, in.depth, err)
 				}
 			}
 		}()
@@ -280,7 +284,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			}
 		}
 		if in.cfg.Debug {
-			in.cfg.Tracer.CaptureState(_pc, op, gasCopy, cost, callContext, in.returnData, in.evm.Depth(), err) //nolint:errcheck
+			in.cfg.Tracer.CaptureState(_pc, op, gasCopy, cost, callContext, in.returnData, in.depth, err) //nolint:errcheck
 			logged = true
 		}
 
@@ -314,6 +318,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	}
 
 	return res, err
+}
+
+// Depth returns the current call stack depth.
+func (in *EVMInterpreter) Depth() int {
+	return in.depth
 }
 
 func (vm *VM) setReadonly(outerReadonly bool) func() {
