@@ -10,6 +10,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/core"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/node"
 )
 
@@ -49,6 +50,9 @@ func initGenesis(ctx *cli.Context) error {
 	if err := json.NewDecoder(file).Decode(genesis); err != nil {
 		utils.Fatalf("invalid genesis file: %v", err)
 	}
+
+	// setting the firehose genesis to the decoded genesis
+	firehose.GenesisConfig = genesis
 
 	// Open and initialise both full and light databases
 	stack := MakeConfigNodeDefault(ctx)
