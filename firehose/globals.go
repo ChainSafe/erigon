@@ -11,14 +11,6 @@ var Enabled = false
 // speculative execution.
 var SyncInstrumentationEnabled = true
 
-// MiningEnabled determines if mining code should stay enabled even when firehose
-// is active. In normal production setup, we always activate firehose on syncer node
-// only. However, on local development setup, one might need to test speculative execution
-// code locally. To achieve this, it's possible to enable firehose on miner, disable
-// sync instrumentation and enable mining. This way, new blocks are mined, sync logs are
-// not printed and speculative execution log can be accumulated.
-var MiningEnabled = false
-
 // BlockProgressEnabled enable output of finalize block line only.
 //
 // Currently, when taking backups, the best way to know about current
