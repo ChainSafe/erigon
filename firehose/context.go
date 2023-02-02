@@ -12,6 +12,7 @@ import (
 
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	erigonmath "github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/common/u256"
@@ -724,7 +725,7 @@ func (ctx *Context) RecordTrxPool(eventType string, tx types.Transaction, err er
 	)
 }
 
-type AccessList types.AccessList
+type AccessList types2.AccessList
 
 // marshal in a binary format that will be printed as hex in firehose and read on the console reader
 // in a binary format.
