@@ -82,24 +82,9 @@ var (
 		Name:  "firehose-sync-instrumentation",
 		Usage: "Activate/deactivate Firehose sync output instrumentation, enabled by default",
 	}
-	firehoseMiningEnabledFlag = &cli.BoolFlag{
-		Name:  "firehose-mining-enabled",
-		Usage: "Activate/deactivate mining code even if Firehose is active, required speculative execution on local miner node, disabled by default",
-	}
 	firehoseBlockProgressFlag = &cli.BoolFlag{
 		Name:  "firehose-block-progress",
 		Usage: "Activate/deactivate Firehose block progress output instrumentation, disabled by default",
-	}
-	// CS TODO: this may not be required
-	firehoseCompactionDisabledFlag = &cli.BoolFlag{
-		Name:  "firehose-compaction-disabled",
-		Usage: "Disabled database compaction, enabled by default",
-	}
-	// CS TODO: this may not be required
-	firehoseArchiveBlocksToKeepFlag = &cli.Uint64Flag{
-		Name:  "firehose-archive-blocks-to-keep",
-		Usage: "Controls how many archive blocks the node should keep, this tweaks the core/blockchain.go constant value TriesInMemory, the default value of 0 can be used to use Geth default value instead which is 128",
-		Value: firehose.ArchiveBlocksToKeep,
 	}
 	firehoseGenesisFileFlag = &cli.StringFlag{
 		Name:  "firehose-genesis-file",
@@ -116,8 +101,8 @@ var Flags = []cli.Flag{
 
 // FirehoseFlags holds all StreamingFast Firehose related command-line flags.
 var FirehoseFlags = []cli.Flag{
-	firehoseEnabledFlag, firehoseSyncInstrumentationFlag, firehoseMiningEnabledFlag, firehoseBlockProgressFlag,
-	firehoseCompactionDisabledFlag, firehoseArchiveBlocksToKeepFlag, firehoseGenesisFileFlag,
+	firehoseEnabledFlag, firehoseSyncInstrumentationFlag, firehoseBlockProgressFlag,
+	firehoseGenesisFileFlag,
 }
 
 func SetupCobra(cmd *cobra.Command) error {
@@ -229,17 +214,8 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 	if ctx.IsSet(firehoseSyncInstrumentationFlag.Name) {
 		firehose.SyncInstrumentationEnabled = ctx.Bool(firehoseSyncInstrumentationFlag.Name)
 	}
-	if ctx.IsSet(firehoseMiningEnabledFlag.Name) {
-		firehose.MiningEnabled = ctx.Bool(firehoseMiningEnabledFlag.Name)
-	}
 	if ctx.IsSet(firehoseBlockProgressFlag.Name) {
 		firehose.BlockProgressEnabled = ctx.Bool(firehoseBlockProgressFlag.Name)
-	}
-	if ctx.IsSet(firehoseCompactionDisabledFlag.Name) {
-		firehose.CompactionDisabled = ctx.Bool(firehoseCompactionDisabledFlag.Name)
-	}
-	if ctx.IsSet(firehoseArchiveBlocksToKeepFlag.Name) {
-		firehose.ArchiveBlocksToKeep = ctx.Uint64(firehoseArchiveBlocksToKeepFlag.Name)
 	}
 
 	genesisProvenance := "unset"
@@ -271,10 +247,7 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 	log.Info("Firehose initialized",
 		"enabled", firehose.Enabled,
 		"sync_instrumentation_enabled", firehose.SyncInstrumentationEnabled,
-		"mining_enabled", firehose.MiningEnabled,
 		"block_progress_enabled", firehose.BlockProgressEnabled,
-		"compaction_disabled", firehose.CompactionDisabled,
-		"archive_blocks_to_keep", firehose.ArchiveBlocksToKeep,
 		"genesis_provenance", genesisProvenance,
 		"firehose_version", params.FirehoseVersion(),
 		"erigon_version", params.VersionWithMeta,
