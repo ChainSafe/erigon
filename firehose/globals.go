@@ -23,21 +23,6 @@ var SyncInstrumentationEnabled = true
 // precedence over this setting.
 var BlockProgressEnabled = false
 
-// CompactionDisabled disables all leveldb table compaction that could
-// happen.
-//
-// It does so mainly be increasing to their maximum all the settings that
-// causes compaction to happen as well as disabling some code path inside
-// Geth where manual compaction can be triggered.
-var CompactionDisabled = false
-
-// ArchiveBlocksToKeep defines how many blocks our node should keep up prior
-// pruning the state. This is actually used to override `core/blockchain.go` `TriesInMemory`
-// variable.
-//
-// A value of 0 means use the Geth default value.
-var ArchiveBlocksToKeep = uint64(0)
-
 // GenesisConfig keeps globally for the process the genesis config of the chain.
 // The genesis config extracted from the initialization code of Geth, otherwise
 // the operator will need to set the flag `--firehose-genesis-file` pointing
