@@ -39,7 +39,7 @@ const (
 	VersionKeyFinished = "ErigonVersionFinished"
 
 	FirehoseVersionMajor = 2
-	FirehoseVersionMinor = 1
+	FirehoseVersionMinor = 0
 	Variant              = "erigon"
 )
 
