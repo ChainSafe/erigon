@@ -309,7 +309,7 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 	} else if len(code) == 0 {
 		// If the account has no code, we can abort here
 		// The depth-check is already done, and precompiles handled above
-		if evm.firehoseContext.Enabled() {
+		if typ == CALL && evm.firehoseContext.Enabled() {
 			evm.firehoseContext.RecordCallWithoutCode()
 		}
 		ret, err = nil, nil // gas is unchanged
