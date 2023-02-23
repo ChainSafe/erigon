@@ -450,9 +450,7 @@ func (sdb *IntraBlockState) getStateObject(addr libcommon.Address) (stateObject 
 	// Load the object from the database.
 	if _, ok := sdb.nilAccounts[addr]; ok {
 		if bi, ok := sdb.balanceInc[addr]; ok && !bi.transferred {
-			// CS TODO: check if we need to provide actual firehose context
-			// this means that the account is being created through this logic
-			// and we need to capture this
+			// account will never be created here when firehose is enabled
 			return sdb.createObject(addr, nil, false, firehose.NoOpContext)
 		}
 		return nil
@@ -465,9 +463,7 @@ func (sdb *IntraBlockState) getStateObject(addr libcommon.Address) (stateObject 
 	if account == nil {
 		sdb.nilAccounts[addr] = struct{}{}
 		if bi, ok := sdb.balanceInc[addr]; ok && !bi.transferred {
-			// CS TODO: check if we need to provide actual firehose context
-			// this means that the account is being created through this logic
-			// and we need to capture this
+			// account will never be created here when firehose is enabled
 			return sdb.createObject(addr, nil, false, firehose.NoOpContext)
 		}
 		return nil

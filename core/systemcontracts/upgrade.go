@@ -542,11 +542,9 @@ func applySystemContractUpgrade(upgrade *Upgrade, blockNumber *big.Int, statedb 
 		prevContractCode := statedb.GetCode(cfg.ContractAddr)
 		if len(prevContractCode) == 0 && len(newContractCode) > 0 {
 			// system contracts defined after genesis need to be explicitly created
-			// CS TODO: check if this needs to be logged
 			statedb.CreateAccount(cfg.ContractAddr, true, firehose.NoOpContext)
 		}
 
-		// CS TODO: check if this needs to be logged
 		statedb.SetCode(cfg.ContractAddr, newContractCode, firehose.NoOpContext)
 
 		if cfg.AfterUpgrade != nil {
