@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - devel
+      - "firehose-v*"
 
 jobs:
   coverage:

@@ -5,11 +5,13 @@ on:
       - devel
       - alpha
       - stable
+      - "firehose-v*"
   pull_request:
     branches:
       - devel
       - alpha
       - stable
+      - "firehose-v*"
     types:
       - opened
       - reopened
