@@ -1,6 +1,9 @@
 package cltypes
 
 import (
+	"bytes"
+	"fmt"
+
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/cl/cltypes/ssz_utils"
@@ -9,7 +12,10 @@ import (
 	"github.com/ledgerwatch/erigon/common"
 )
 
-const DepositProofLength = 33
+const (
+	DepositProofLength = 33
+	SyncCommitteeSize  = 512
+)
 
 type DepositData struct {
 	PubKey                [48]byte
@@ -178,4 +184,153 @@ func (e *SignedVoluntaryExit) HashTreeRoot() ([32]byte, error) {
 
 func (e *SignedVoluntaryExit) EncodingSizeSSZ() int {
 	return 96 + e.VolunaryExit.SizeSSZ()
+}
+
+/*
+ * Sync committe public keys and their aggregate public keys, we use array of pubKeys.
+ */
+type SyncCommittee struct {
+	PubKeys            [][48]byte `ssz-size:"512,48"`
+	AggregatePublicKey [48]byte   `ssz-size:"48"`
+}
+
+// MarshalSSZTo ssz marshals the SyncCommittee object to a target array
+func (s *SyncCommittee) EncodeSSZ(buf []byte) ([]byte, error) {
+	dst := buf
+
+	if len(s.PubKeys) != SyncCommitteeSize {
+		return nil, fmt.Errorf("wrong sync committee size")
+	}
+	for _, key := range s.PubKeys {
+		dst = append(dst, key[:]...)
+	}
+	dst = append(dst, s.AggregatePublicKey[:]...)
+
+	return dst, nil
+}
+
+// UnmarshalSSZ ssz unmarshals the SyncCommittee object
+func (s *SyncCommittee) DecodeSSZ(buf []byte) error {
+	if len(buf) < 24624 {
+		return ssz_utils.ErrLowBufferSize
+	}
+
+	s.PubKeys = make([][48]byte, SyncCommitteeSize)
+	for i := range s.PubKeys {
+		copy(s.PubKeys[i][:], buf[i*48:(i*48)+48])
+	}
+	copy(s.AggregatePublicKey[:], buf[24576:])
+
+	return nil
+}
+
+// SizeSSZ returns the ssz encoded size in bytes for the SyncCommittee object
+func (s *SyncCommittee) SizeSSZ() (size int) {
+	size = 24624
+	return
+}
+
+// HashTreeRootWith ssz hashes the SyncCommittee object with a hasher
+func (s *SyncCommittee) HashSSZ() ([32]byte, error) {
+	// Compute the sync committee leaf
+	pubKeysLeaves := make([][32]byte, SyncCommitteeSize)
+	if len(s.PubKeys) != SyncCommitteeSize {
+		return [32]byte{}, fmt.Errorf("wrong sync committee size")
+	}
+	var err error
+	for i, key := range s.PubKeys {
+		pubKeysLeaves[i], err = merkle_tree.PublicKeyRoot(key)
+		if err != nil {
+			return [32]byte{}, err
+		}
+	}
+	pubKeyLeaf, err := merkle_tree.ArraysRoot(pubKeysLeaves, SyncCommitteeSize)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	aggregatePublicKeyRoot, err := merkle_tree.PublicKeyRoot(s.AggregatePublicKey)
+	if err != nil {
+		return [32]byte{}, err
+	}
+
+	return merkle_tree.ArraysRoot([][32]byte{pubKeyLeaf, aggregatePublicKeyRoot}, 2)
+}
+
+func (s *SyncCommittee) Equal(s2 *SyncCommittee) bool {
+	if !bytes.Equal(s.AggregatePublicKey[:], s2.AggregatePublicKey[:]) {
+		return false
+	}
+	if len(s.PubKeys) != len(s2.PubKeys) {
+		return false
+	}
+	for i := range s.PubKeys {
+		if !bytes.Equal(s.PubKeys[i][:], s2.PubKeys[i][:]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Validator, contains if we were on bellatrix/alteir/phase0 and transition epoch.
+type Validator struct {
+	PublicKey                  [48]byte
+	WithdrawalCredentials      libcommon.Hash
+	EffectiveBalance           uint64
+	Slashed                    bool
+	ActivationEligibilityEpoch uint64
+	ActivationEpoch            uint64
+	ExitEpoch                  uint64
+	WithdrawableEpoch          uint64
+}
+
+func (v *Validator) EncodeSSZ(dst []byte) ([]byte, error) {
+	buf := dst
+	buf = append(buf, v.PublicKey[:]...)
+	buf = append(buf, v.WithdrawalCredentials[:]...)
+	buf = append(buf, ssz_utils.Uint64SSZ(v.EffectiveBalance)...)
+	buf = append(buf, ssz_utils.BoolSSZ(v.Slashed))
+	buf = append(buf, ssz_utils.Uint64SSZ(v.ActivationEligibilityEpoch)...)
+	buf = append(buf, ssz_utils.Uint64SSZ(v.ActivationEpoch)...)
+	buf = append(buf, ssz_utils.Uint64SSZ(v.ExitEpoch)...)
+	buf = append(buf, ssz_utils.Uint64SSZ(v.WithdrawableEpoch)...)
+	return buf, nil
+}
+
+func (v *Validator) DecodeSSZ(buf []byte) error {
+	if len(buf) < v.EncodingSizeSSZ() {
+		return ssz_utils.ErrLowBufferSize
+	}
+	copy(v.PublicKey[:], buf)
+	copy(v.WithdrawalCredentials[:], buf[48:])
+	v.EffectiveBalance = ssz_utils.UnmarshalUint64SSZ(buf[80:])
+	v.Slashed = buf[88] == 1
+	v.ActivationEligibilityEpoch = ssz_utils.UnmarshalUint64SSZ(buf[89:])
+	v.ActivationEpoch = ssz_utils.UnmarshalUint64SSZ(buf[97:])
+	v.ExitEpoch = ssz_utils.UnmarshalUint64SSZ(buf[105:])
+	v.WithdrawableEpoch = ssz_utils.UnmarshalUint64SSZ(buf[113:])
+	return nil
+}
+
+func (v *Validator) EncodingSizeSSZ() int {
+	return 121
+}
+
+func (v *Validator) HashSSZ() ([32]byte, error) {
+	var (
+		leaves = make([][32]byte, 8)
+		err    error
+	)
+
+	leaves[0], err = merkle_tree.PublicKeyRoot(v.PublicKey)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	leaves[1] = v.WithdrawalCredentials
+	leaves[2] = merkle_tree.Uint64Root(v.EffectiveBalance)
+	leaves[3] = merkle_tree.BoolRoot(v.Slashed)
+	leaves[4] = merkle_tree.Uint64Root(v.ActivationEligibilityEpoch)
+	leaves[5] = merkle_tree.Uint64Root(v.ActivationEpoch)
+	leaves[6] = merkle_tree.Uint64Root(v.ExitEpoch)
+	leaves[7] = merkle_tree.Uint64Root(v.WithdrawableEpoch)
+	return merkle_tree.ArraysRoot(leaves, 8)
 }
