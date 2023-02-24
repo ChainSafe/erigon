@@ -218,7 +218,7 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 		firehose.BlockProgressEnabled = ctx.Bool(firehoseBlockProgressFlag.Name)
 	}
 
-	genesisProvenance := "unset"
+	var genesisProvenance string
 
 	if genesis != nil {
 		firehose.GenesisConfig = genesis
