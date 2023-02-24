@@ -3,668 +3,13 @@
 package cltypes
 
 import (
+	"fmt"
+
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/core/types"
-	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	ssz "github.com/prysmaticlabs/fastssz"
 )
-
-// MarshalSSZ ssz marshals the SyncCommittee object
-func (s *SyncCommittee) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(s)
-}
-
-// MarshalSSZTo ssz marshals the SyncCommittee object to a target array
-func (s *SyncCommittee) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'PubKeys'
-	if size := len(s.PubKeys); size != 512 {
-		err = ssz.ErrVectorLengthFn("--.PubKeys", size, 512)
-		return
-	}
-	for ii := 0; ii < 512; ii++ {
-		dst = append(dst, s.PubKeys[ii][:]...)
-	}
-
-	// Field (1) 'AggregatePublicKey'
-	dst = append(dst, s.AggregatePublicKey[:]...)
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the SyncCommittee object
-func (s *SyncCommittee) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 24624 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'PubKeys'
-	s.PubKeys = make([][48]byte, 512)
-	for ii := 0; ii < 512; ii++ {
-		copy(s.PubKeys[ii][:], buf[0:24576][ii*48:(ii+1)*48])
-	}
-
-	// Field (1) 'AggregatePublicKey'
-	copy(s.AggregatePublicKey[:], buf[24576:24624])
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the SyncCommittee object
-func (s *SyncCommittee) SizeSSZ() (size int) {
-	size = 24624
-	return
-}
-
-// HashTreeRoot ssz hashes the SyncCommittee object
-func (s *SyncCommittee) HashTreeRoot() ([32]byte, error) {
-	return ssz.HashWithDefaultHasher(s)
-}
-
-// HashTreeRootWith ssz hashes the SyncCommittee object with a hasher
-func (s *SyncCommittee) HashTreeRootWith(hh *ssz.Hasher) (err error) {
-	indx := hh.Index()
-
-	// Field (0) 'PubKeys'
-	{
-		if size := len(s.PubKeys); size != 512 {
-			err = ssz.ErrVectorLengthFn("--.PubKeys", size, 512)
-			return
-		}
-		subIndx := hh.Index()
-		for _, i := range s.PubKeys {
-			hh.PutBytes(i[:])
-		}
-
-		if ssz.EnableVectorizedHTR {
-			hh.MerkleizeVectorizedHTR(subIndx)
-		} else {
-			hh.Merkleize(subIndx)
-		}
-	}
-
-	// Field (1) 'AggregatePublicKey'
-	hh.PutBytes(s.AggregatePublicKey[:])
-
-	if ssz.EnableVectorizedHTR {
-		hh.MerkleizeVectorizedHTR(indx)
-	} else {
-		hh.Merkleize(indx)
-	}
-	return
-}
-
-// MarshalSSZ ssz marshals the LightClientBootstrap object
-func (l *LightClientBootstrap) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(l)
-}
-
-// MarshalSSZTo ssz marshals the LightClientBootstrap object to a target array
-func (l *LightClientBootstrap) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'Header'
-	if l.Header == nil {
-		l.Header = new(BeaconBlockHeader)
-	}
-	dst = l.Header.EncodeSSZ(dst)
-	// Field (1) 'CurrentSyncCommittee'
-	if l.CurrentSyncCommittee == nil {
-		l.CurrentSyncCommittee = new(SyncCommittee)
-	}
-	if dst, err = l.CurrentSyncCommittee.MarshalSSZTo(dst); err != nil {
-		return
-	}
-
-	// Field (2) 'CurrentSyncCommitteeBranch'
-	if size := len(l.CurrentSyncCommitteeBranch); size != 5 {
-		err = ssz.ErrVectorLengthFn("--.CurrentSyncCommitteeBranch", size, 5)
-		return
-	}
-	for ii := 0; ii < 5; ii++ {
-		if size := len(l.CurrentSyncCommitteeBranch[ii]); size != 32 {
-			err = ssz.ErrBytesLengthFn("--.CurrentSyncCommitteeBranch[ii]", size, 32)
-			return
-		}
-		dst = append(dst, l.CurrentSyncCommitteeBranch[ii][:]...)
-	}
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the LightClientBootstrap object
-func (l *LightClientBootstrap) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 24896 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'Header'
-	if l.Header == nil {
-		l.Header = new(BeaconBlockHeader)
-	}
-	if err = l.Header.DecodeSSZ(buf[0:112]); err != nil {
-		return err
-	}
-
-	// Field (1) 'CurrentSyncCommittee'
-	if l.CurrentSyncCommittee == nil {
-		l.CurrentSyncCommittee = new(SyncCommittee)
-	}
-	if err = l.CurrentSyncCommittee.UnmarshalSSZ(buf[112:24736]); err != nil {
-		return err
-	}
-
-	// Field (2) 'CurrentSyncCommitteeBranch'
-	l.CurrentSyncCommitteeBranch = make([]libcommon.Hash, 5)
-	for ii := 0; ii < 5; ii++ {
-		copy(l.CurrentSyncCommitteeBranch[ii][:], buf[24736:24896][ii*32:(ii+1)*32])
-	}
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the LightClientBootstrap object
-func (l *LightClientBootstrap) SizeSSZ() (size int) {
-	size = 24896
-	return
-}
-
-// MarshalSSZ ssz marshals the LightClientUpdate object
-func (l *LightClientUpdate) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(l)
-}
-
-// MarshalSSZTo ssz marshals the LightClientUpdate object to a target array
-func (l *LightClientUpdate) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'AttestedHeader'
-	if l.AttestedHeader == nil {
-		l.AttestedHeader = new(BeaconBlockHeader)
-	}
-	dst = l.AttestedHeader.EncodeSSZ(dst)
-	// Field (1) 'NextSyncCommitee'
-	if l.NextSyncCommitee == nil {
-		l.NextSyncCommitee = new(SyncCommittee)
-	}
-	if dst, err = l.NextSyncCommitee.MarshalSSZTo(dst); err != nil {
-		return
-	}
-
-	// Field (2) 'NextSyncCommitteeBranch'
-	if size := len(l.NextSyncCommitteeBranch); size != 5 {
-		err = ssz.ErrVectorLengthFn("--.NextSyncCommitteeBranch", size, 5)
-		return
-	}
-	for ii := 0; ii < 5; ii++ {
-		if size := len(l.NextSyncCommitteeBranch[ii]); size != 32 {
-			err = ssz.ErrBytesLengthFn("--.NextSyncCommitteeBranch[ii]", size, 32)
-			return
-		}
-		dst = append(dst, l.NextSyncCommitteeBranch[ii][:]...)
-	}
-
-	// Field (3) 'FinalizedHeader'
-	if l.FinalizedHeader == nil {
-		l.FinalizedHeader = new(BeaconBlockHeader)
-	}
-	dst = l.FinalizedHeader.EncodeSSZ(dst)
-
-	// Field (4) 'FinalityBranch'
-	if size := len(l.FinalityBranch); size != 6 {
-		err = ssz.ErrVectorLengthFn("--.FinalityBranch", size, 6)
-		return
-	}
-	for ii := 0; ii < 6; ii++ {
-		if size := len(l.FinalityBranch[ii]); size != 32 {
-			err = ssz.ErrBytesLengthFn("--.FinalityBranch[ii]", size, 32)
-			return
-		}
-		dst = append(dst, l.FinalityBranch[ii][:]...)
-	}
-
-	// Field (5) 'SyncAggregate'
-	if l.SyncAggregate == nil {
-		l.SyncAggregate = new(SyncAggregate)
-	}
-	dst = l.SyncAggregate.EncodeSSZ(dst)
-
-	// Field (6) 'SignatureSlot'
-	dst = ssz.MarshalUint64(dst, l.SignatureSlot)
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the LightClientUpdate object
-func (l *LightClientUpdate) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 25368 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'AttestedHeader'
-	if l.AttestedHeader == nil {
-		l.AttestedHeader = new(BeaconBlockHeader)
-	}
-	if err = l.AttestedHeader.DecodeSSZ(buf[0:112]); err != nil {
-		return err
-	}
-
-	// Field (1) 'NextSyncCommitee'
-	if l.NextSyncCommitee == nil {
-		l.NextSyncCommitee = new(SyncCommittee)
-	}
-	if err = l.NextSyncCommitee.UnmarshalSSZ(buf[112:24736]); err != nil {
-		return err
-	}
-
-	// Field (2) 'NextSyncCommitteeBranch'
-	l.NextSyncCommitteeBranch = make([]libcommon.Hash, 5)
-	for ii := 0; ii < 5; ii++ {
-		copy(l.NextSyncCommitteeBranch[ii][:], buf[24736:24896][ii*32:(ii+1)*32])
-	}
-
-	// Field (3) 'FinalizedHeader'
-	if l.FinalizedHeader == nil {
-		l.FinalizedHeader = new(BeaconBlockHeader)
-	}
-	if err = l.FinalizedHeader.DecodeSSZ(buf[24896:25008]); err != nil {
-		return err
-	}
-
-	// Field (4) 'FinalityBranch'
-	l.FinalityBranch = make([]libcommon.Hash, 6)
-	for ii := 0; ii < 6; ii++ {
-		copy(l.FinalityBranch[ii][:], buf[25008:25200][ii*32:(ii+1)*32])
-	}
-
-	// Field (5) 'SyncAggregate'
-	if l.SyncAggregate == nil {
-		l.SyncAggregate = new(SyncAggregate)
-	}
-	if err = l.SyncAggregate.DecodeSSZ(buf[25200:25360]); err != nil {
-		return err
-	}
-
-	// Field (6) 'SignatureSlot'
-	l.SignatureSlot = ssz.UnmarshallUint64(buf[25360:25368])
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the LightClientUpdate object
-func (l *LightClientUpdate) SizeSSZ() (size int) {
-	size = 25368
-	return
-}
-
-// MarshalSSZ ssz marshals the LightClientFinalityUpdate object
-func (l *LightClientFinalityUpdate) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(l)
-}
-
-// MarshalSSZTo ssz marshals the LightClientFinalityUpdate object to a target array
-func (l *LightClientFinalityUpdate) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'AttestedHeader'
-	if l.AttestedHeader == nil {
-		l.AttestedHeader = new(BeaconBlockHeader)
-	}
-	dst =  l.AttestedHeader.EncodeSSZ(dst)
-
-	// Field (1) 'FinalizedHeader'
-	if l.FinalizedHeader == nil {
-		l.FinalizedHeader = new(BeaconBlockHeader)
-	}
-	dst = l.FinalizedHeader.EncodeSSZ(dst)
-	// Field (2) 'FinalityBranch'
-	if size := len(l.FinalityBranch); size != 6 {
-		err = ssz.ErrVectorLengthFn("--.FinalityBranch", size, 6)
-		return
-	}
-	for ii := 0; ii < 6; ii++ {
-		if size := len(l.FinalityBranch[ii]); size != 32 {
-			err = ssz.ErrBytesLengthFn("--.FinalityBranch[ii]", size, 32)
-			return
-		}
-		dst = append(dst, l.FinalityBranch[ii][:]...)
-	}
-
-	// Field (3) 'SyncAggregate'
-	if l.SyncAggregate == nil {
-		l.SyncAggregate = new(SyncAggregate)
-	}
-	dst = l.SyncAggregate.EncodeSSZ(dst)
-	
-
-	// Field (4) 'SignatureSlot'
-	dst = ssz.MarshalUint64(dst, l.SignatureSlot)
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the LightClientFinalityUpdate object
-func (l *LightClientFinalityUpdate) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 584 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'AttestedHeader'
-	if l.AttestedHeader == nil {
-		l.AttestedHeader = new(BeaconBlockHeader)
-	}
-	if err = l.AttestedHeader.DecodeSSZ(buf[0:112]); err != nil {
-		return err
-	}
-
-	// Field (1) 'FinalizedHeader'
-	if l.FinalizedHeader == nil {
-		l.FinalizedHeader = new(BeaconBlockHeader)
-	}
-	if err = l.FinalizedHeader.DecodeSSZ(buf[112:224]); err != nil {
-		return err
-	}
-
-	// Field (2) 'FinalityBranch'
-	l.FinalityBranch = make([]libcommon.Hash, 6)
-	for ii := 0; ii < 6; ii++ {
-		copy(l.FinalityBranch[ii][:], buf[224:416][ii*32:(ii+1)*32])
-	}
-
-	// Field (3) 'SyncAggregate'
-	if l.SyncAggregate == nil {
-		l.SyncAggregate = new(SyncAggregate)
-	}
-	if err = l.SyncAggregate.DecodeSSZ(buf[416:576]); err != nil {
-		return err
-	}
-
-	// Field (4) 'SignatureSlot'
-	l.SignatureSlot = ssz.UnmarshallUint64(buf[576:584])
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the LightClientFinalityUpdate object
-func (l *LightClientFinalityUpdate) SizeSSZ() (size int) {
-	size = 584
-	return
-}
-
-// MarshalSSZ ssz marshals the LightClientOptimisticUpdate object
-func (l *LightClientOptimisticUpdate) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(l)
-}
-
-// MarshalSSZTo ssz marshals the LightClientOptimisticUpdate object to a target array
-func (l *LightClientOptimisticUpdate) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'AttestedHeader'
-	if l.AttestedHeader == nil {
-		l.AttestedHeader = new(BeaconBlockHeader)
-	}
-	dst = l.AttestedHeader.EncodeSSZ(dst)
-	// Field (1) 'SyncAggregate'
-	if l.SyncAggregate == nil {
-		l.SyncAggregate = new(SyncAggregate)
-	}
-	dst = l.SyncAggregate.EncodeSSZ(dst)
-
-	// Field (2) 'SignatureSlot'
-	dst = ssz.MarshalUint64(dst, l.SignatureSlot)
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the LightClientOptimisticUpdate object
-func (l *LightClientOptimisticUpdate) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 280 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'AttestedHeader'
-	if l.AttestedHeader == nil {
-		l.AttestedHeader = new(BeaconBlockHeader)
-	}
-	if err = l.AttestedHeader.DecodeSSZ(buf[0:112]); err != nil {
-		return err
-	}
-
-	// Field (1) 'SyncAggregate'
-	if l.SyncAggregate == nil {
-		l.SyncAggregate = new(SyncAggregate)
-	}
-	if err = l.SyncAggregate.DecodeSSZ(buf[112:272]); err != nil {
-		return err
-	}
-
-	// Field (2) 'SignatureSlot'
-	l.SignatureSlot = ssz.UnmarshallUint64(buf[272:280])
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the LightClientOptimisticUpdate object
-func (l *LightClientOptimisticUpdate) SizeSSZ() (size int) {
-	size = 280
-	return
-}
-
-
-// MarshalSSZ ssz marshals the Fork object
-func (f *Fork) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(f)
-}
-
-// MarshalSSZTo ssz marshals the Fork object to a target array
-func (f *Fork) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'PreviousVersion'
-	dst = append(dst, f.PreviousVersion[:]...)
-
-	// Field (1) 'CurrentVersion'
-	dst = append(dst, f.CurrentVersion[:]...)
-
-	// Field (2) 'Epoch'
-	dst = ssz.MarshalUint64(dst, f.Epoch)
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the Fork object
-func (f *Fork) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 16 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'PreviousVersion'
-	copy(f.PreviousVersion[:], buf[0:4])
-
-	// Field (1) 'CurrentVersion'
-	copy(f.CurrentVersion[:], buf[4:8])
-
-	// Field (2) 'Epoch'
-	f.Epoch = ssz.UnmarshallUint64(buf[8:16])
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the Fork object
-func (f *Fork) SizeSSZ() (size int) {
-	size = 16
-	return
-}
-
-// HashTreeRoot ssz hashes the Fork object
-func (f *Fork) HashTreeRoot() ([32]byte, error) {
-	return ssz.HashWithDefaultHasher(f)
-}
-
-// HashTreeRootWith ssz hashes the Fork object with a hasher
-func (f *Fork) HashTreeRootWith(hh *ssz.Hasher) (err error) {
-	indx := hh.Index()
-
-	// Field (0) 'PreviousVersion'
-	hh.PutBytes(f.PreviousVersion[:])
-
-	// Field (1) 'CurrentVersion'
-	hh.PutBytes(f.CurrentVersion[:])
-
-	// Field (2) 'Epoch'
-	hh.PutUint64(f.Epoch)
-
-	if ssz.EnableVectorizedHTR {
-		hh.MerkleizeVectorizedHTR(indx)
-	} else {
-		hh.Merkleize(indx)
-	}
-	return
-}
-
-// MarshalSSZ ssz marshals the Validator object
-func (v *Validator) MarshalSSZ() ([]byte, error) {
-	return ssz.MarshalSSZ(v)
-}
-
-// MarshalSSZTo ssz marshals the Validator object to a target array
-func (v *Validator) MarshalSSZTo(buf []byte) (dst []byte, err error) {
-	dst = buf
-
-	// Field (0) 'PublicKey'
-	dst = append(dst, v.PublicKey[:]...)
-
-	// Field (1) 'WithdrawalCredentials'
-	if size := len(v.WithdrawalCredentials); size != 32 {
-		err = ssz.ErrBytesLengthFn("--.WithdrawalCredentials", size, 32)
-		return
-	}
-	dst = append(dst, v.WithdrawalCredentials...)
-
-	// Field (2) 'EffectiveBalance'
-	dst = ssz.MarshalUint64(dst, v.EffectiveBalance)
-
-	// Field (3) 'Slashed'
-	dst = ssz.MarshalBool(dst, v.Slashed)
-
-	// Field (4) 'ActivationEligibilityEpoch'
-	dst = ssz.MarshalUint64(dst, v.ActivationEligibilityEpoch)
-
-	// Field (5) 'ActivationEpoch'
-	dst = ssz.MarshalUint64(dst, v.ActivationEpoch)
-
-	// Field (6) 'ExitEpoch'
-	dst = ssz.MarshalUint64(dst, v.ExitEpoch)
-
-	// Field (7) 'WithdrawableEpoch'
-	dst = ssz.MarshalUint64(dst, v.WithdrawableEpoch)
-
-	return
-}
-
-// UnmarshalSSZ ssz unmarshals the Validator object
-func (v *Validator) UnmarshalSSZ(buf []byte) error {
-	var err error
-	size := uint64(len(buf))
-	if size != 121 {
-		return ssz.ErrSize
-	}
-
-	// Field (0) 'PublicKey'
-	copy(v.PublicKey[:], buf[0:48])
-
-	// Field (1) 'WithdrawalCredentials'
-	if cap(v.WithdrawalCredentials) == 0 {
-		v.WithdrawalCredentials = make([]byte, 0, len(buf[48:80]))
-	}
-	v.WithdrawalCredentials = append(v.WithdrawalCredentials, buf[48:80]...)
-
-	// Field (2) 'EffectiveBalance'
-	v.EffectiveBalance = ssz.UnmarshallUint64(buf[80:88])
-
-	// Field (3) 'Slashed'
-	v.Slashed = ssz.UnmarshalBool(buf[88:89])
-
-	// Field (4) 'ActivationEligibilityEpoch'
-	v.ActivationEligibilityEpoch = ssz.UnmarshallUint64(buf[89:97])
-
-	// Field (5) 'ActivationEpoch'
-	v.ActivationEpoch = ssz.UnmarshallUint64(buf[97:105])
-
-	// Field (6) 'ExitEpoch'
-	v.ExitEpoch = ssz.UnmarshallUint64(buf[105:113])
-
-	// Field (7) 'WithdrawableEpoch'
-	v.WithdrawableEpoch = ssz.UnmarshallUint64(buf[113:121])
-
-	return err
-}
-
-// SizeSSZ returns the ssz encoded size in bytes for the Validator object
-func (v *Validator) SizeSSZ() (size int) {
-	size = 121
-	return
-}
-
-// HashTreeRoot ssz hashes the Validator object
-func (v *Validator) HashTreeRoot() ([32]byte, error) {
-	return ssz.HashWithDefaultHasher(v)
-}
-
-// HashTreeRootWith ssz hashes the Validator object with a hasher
-func (v *Validator) HashTreeRootWith(hh *ssz.Hasher) (err error) {
-	indx := hh.Index()
-
-	// Field (0) 'PublicKey'
-	hh.PutBytes(v.PublicKey[:])
-
-	// Field (1) 'WithdrawalCredentials'
-	if size := len(v.WithdrawalCredentials); size != 32 {
-		err = ssz.ErrBytesLengthFn("--.WithdrawalCredentials", size, 32)
-		return
-	}
-	hh.PutBytes(v.WithdrawalCredentials)
-
-	// Field (2) 'EffectiveBalance'
-	hh.PutUint64(v.EffectiveBalance)
-
-	// Field (3) 'Slashed'
-	hh.PutBool(v.Slashed)
-
-	// Field (4) 'ActivationEligibilityEpoch'
-	hh.PutUint64(v.ActivationEligibilityEpoch)
-
-	// Field (5) 'ActivationEpoch'
-	hh.PutUint64(v.ActivationEpoch)
-
-	// Field (6) 'ExitEpoch'
-	hh.PutUint64(v.ExitEpoch)
-
-	// Field (7) 'WithdrawableEpoch'
-	hh.PutUint64(v.WithdrawableEpoch)
-
-	if ssz.EnableVectorizedHTR {
-		hh.MerkleizeVectorizedHTR(indx)
-	} else {
-		hh.Merkleize(indx)
-	}
-	return
-}
 
 // MarshalSSZ ssz marshals the BeaconStateBellatrix object
 func (b *BeaconStateBellatrix) MarshalSSZ() ([]byte, error) {
@@ -689,7 +34,7 @@ func (b *BeaconStateBellatrix) MarshalSSZTo(buf []byte) (dst []byte, err error) 
 	if b.Fork == nil {
 		b.Fork = new(Fork)
 	}
-	if dst, err = b.Fork.MarshalSSZTo(dst); err != nil {
+	if dst, err = b.Fork.EncodeSSZ(dst); err != nil {
 		return
 	}
 
@@ -800,7 +145,7 @@ func (b *BeaconStateBellatrix) MarshalSSZTo(buf []byte) (dst []byte, err error) 
 	if b.CurrentSyncCommittee == nil {
 		b.CurrentSyncCommittee = new(SyncCommittee)
 	}
-	if dst, err = b.CurrentSyncCommittee.MarshalSSZTo(dst); err != nil {
+	if dst, err = b.CurrentSyncCommittee.EncodeSSZ(dst); err != nil {
 		return
 	}
 
@@ -808,7 +153,7 @@ func (b *BeaconStateBellatrix) MarshalSSZTo(buf []byte) (dst []byte, err error) 
 	if b.NextSyncCommittee == nil {
 		b.NextSyncCommittee = new(SyncCommittee)
 	}
-	if dst, err = b.NextSyncCommittee.MarshalSSZTo(dst); err != nil {
+	if dst, err = b.NextSyncCommittee.EncodeSSZ(dst); err != nil {
 		return
 	}
 
@@ -843,7 +188,7 @@ func (b *BeaconStateBellatrix) MarshalSSZTo(buf []byte) (dst []byte, err error) 
 		return
 	}
 	for ii := 0; ii < len(b.Validators); ii++ {
-		if dst, err = b.Validators[ii].MarshalSSZTo(dst); err != nil {
+		if dst, err = b.Validators[ii].EncodeSSZ(dst); err != nil {
 			return
 		}
 	}
@@ -908,7 +253,7 @@ func (b *BeaconStateBellatrix) UnmarshalSSZ(buf []byte) error {
 	if b.Fork == nil {
 		b.Fork = new(Fork)
 	}
-	if err = b.Fork.UnmarshalSSZ(buf[48:64]); err != nil {
+	if err = b.Fork.DecodeSSZ(buf[48:64]); err != nil {
 		return err
 	}
 
@@ -1028,7 +373,7 @@ func (b *BeaconStateBellatrix) UnmarshalSSZ(buf []byte) error {
 	if b.CurrentSyncCommittee == nil {
 		b.CurrentSyncCommittee = new(SyncCommittee)
 	}
-	if err = b.CurrentSyncCommittee.UnmarshalSSZ(buf[2687381:2712005]); err != nil {
+	if err = b.CurrentSyncCommittee.DecodeSSZ(buf[2687381:2712005]); err != nil {
 		return err
 	}
 
@@ -1036,7 +381,7 @@ func (b *BeaconStateBellatrix) UnmarshalSSZ(buf []byte) error {
 	if b.NextSyncCommittee == nil {
 		b.NextSyncCommittee = new(SyncCommittee)
 	}
-	if err = b.NextSyncCommittee.UnmarshalSSZ(buf[2712005:2736629]); err != nil {
+	if err = b.NextSyncCommittee.DecodeSSZ(buf[2712005:2736629]); err != nil {
 		return err
 	}
 
@@ -1088,11 +433,12 @@ func (b *BeaconStateBellatrix) UnmarshalSSZ(buf []byte) error {
 			if b.Validators[ii] == nil {
 				b.Validators[ii] = new(Validator)
 			}
-			if err = b.Validators[ii].UnmarshalSSZ(buf[ii*121 : (ii+1)*121]); err != nil {
+			if err = b.Validators[ii].DecodeSSZ(buf[ii*121 : (ii+1)*121]); err != nil {
 				return err
 			}
 		}
 	}
+	fmt.Println(len(b.Validators))
 
 	// Field (12) 'Balances'
 	{
