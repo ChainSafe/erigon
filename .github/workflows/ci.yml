@@ -5,11 +5,13 @@ on:
       - devel
       - alpha
       - stable
+      - "firehose-v*"
   pull_request:
     branches:
       - devel
       - alpha
       - stable
+      - "firehose-v*"
     types:
       - opened
       - reopened
@@ -65,6 +67,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: v1.50
+          skip-pkg-cache: true
 
       - name: Test
         run: make test
