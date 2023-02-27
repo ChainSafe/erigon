@@ -236,7 +236,7 @@ release: git-submodules
 		--privileged \
 		-e CGO_ENABLED=1 \
 		-e GITHUB_TOKEN \
-		-e DOCKER_CREDS_FILE \
+		-e DOCKER_CREDS_FILE='/go/src/$(PACKAGE_NAME)/.docker-creds' \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v `pwd`:/go/src/$(PACKAGE_NAME) \
 		-w /go/src/$(PACKAGE_NAME) \
