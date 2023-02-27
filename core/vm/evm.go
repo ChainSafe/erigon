@@ -172,7 +172,7 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 	if evm.config.NoRecursion && evm.interpreter.Depth() > 0 {
 		return nil, gas, nil
 	}
-	// CS TODO: need to check whether we should start call here.
+
 	if evm.firehoseContext.Enabled() {
 		switch typ {
 		case CALL:
@@ -186,20 +186,6 @@ func (evm *EVM) call(typ OpCode, caller ContractRef, addr libcommon.Address, inp
 			evm.firehoseContext.RecordCallParams("STATIC", caller.Address(), addr, firehose.EmptyValue, gas, input)
 		case DELEGATECALL:
 			evm.firehoseContext.StartCall("DELEGATE")
-
-			// Firehose a Delegate Call is quite different then a standard Call or event Call Code
-			// because it executes using the state of the parent call. Assumuming a contract that
-			// receives a method `execute`, let's say this contract is A. When in the `execute`
-			// method a `delegatecall` is performed to contract B, the net effect is that code of
-			// B is loaded and executed against the current state and value of contract A. As such,
-			// the real caller is the one that called contract A.
-			//
-			// Thoughts: When I wrote this comment, I realized that it's misleading in Firehose stack
-			// in fact. The caller is still contract A, we should probably have recorded the parent
-			// caller as actually another extra field only available on Delegate Call. The same problem
-			// arise with the `value` field, it's actually the value sent to parent call that initiate
-			// `execute` on contract A.
-
 			// It's a sure thing that caller is a Contract, it cannot be anything else, so we are safe
 			parent := caller.(*Contract)
 			evm.firehoseContext.RecordCallParams("DELEGATE", parent.Address(), addr, parent.value, gas, input)

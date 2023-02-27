@@ -415,7 +415,6 @@ func (g *Genesis) ToBlock() (*types.Block, *state.IntraBlockState, error) {
 				statedb.SetState(addr, &key, *val, firehose.NoOpContext)
 			}
 
-			// CS TODO: check if this needs to be logged
 			if len(account.Constructor) > 0 {
 				_, err := SysCreate(addr, account.Constructor, *g.Config, statedb, head, firehose.NoOpContext)
 				if err != nil {

@@ -290,8 +290,6 @@ func ExecuteBlockEphemerallyForBSC(
 			finalizedBlock = nil
 		}
 
-		// CS TODO: check if difficulty is being set correctly
-		// go-eth have a different logic to find the difficulty
 		block.ParentHash()
 		firehoseContext.EndBlock(block, finalizedBlock, td)
 	}
@@ -481,8 +479,6 @@ func ExecuteBlockEphemerally(
 			finalizedBlock = nil
 		}
 
-		// CS TODO: check if difficulty is being set correctly
-		// go-eth have a different logic to find the difficulty
 		firehoseContext.EndBlock(block, finalizedBlock, td)
 	}
 
@@ -678,8 +674,6 @@ func ExecuteBlockEphemerallyBor(
 			finalizedBlock = nil
 		}
 
-		// CS TODO: check if difficulty is being set correctly
-		// go-eth have a different logic to find the difficulty
 		firehoseContext.EndBlock(block, finalizedBlock, td)
 	}
 
