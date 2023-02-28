@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/holiman/uint256"
+
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
@@ -393,6 +394,21 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		evm.firehoseContext.StartCall("CREATE")
 		evm.firehoseContext.RecordCallParams("CREATE", caller.Address(), address, value, gas, nil)
 	}
+	var gasConsumption uint64
+
+	if evm.config.Debug {
+		if evm.interpreter.Depth() == 0 {
+			evm.config.Tracer.CaptureStart(evm, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
+			defer func() {
+				evm.config.Tracer.CaptureEnd(ret, gasConsumption, err)
+			}()
+		} else {
+			evm.config.Tracer.CaptureEnter(typ, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
+			defer func() {
+				evm.config.Tracer.CaptureExit(ret, gasConsumption, err)
+			}()
+		}
+	}
 
 	// Depth check execution. Fail if we're trying to execute above the
 	// limit.
@@ -401,15 +417,18 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 			evm.firehoseContext.EndFailedCall(gas, true, ErrDepth.Error())
 		}
 
-		return nil, libcommon.Address{}, gas, ErrDepth
+		err = ErrDepth
+		return nil, libcommon.Address{}, gas, err
 	}
 	if !evm.context.CanTransfer(evm.intraBlockState, caller.Address(), value) {
 		if evm.firehoseContext.Enabled() {
 			evm.firehoseContext.EndFailedCall(gas, true, ErrInsufficientBalance.Error())
 		}
 
-		return nil, libcommon.Address{}, gas, ErrInsufficientBalance
+		err = ErrInsufficientBalance
+		return nil, libcommon.Address{}, gas, err
 	}
+
 	if incrementNonce {
 		nonce := evm.intraBlockState.GetNonce(caller.Address())
 		if nonce+1 < nonce {
@@ -417,7 +436,8 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 				evm.firehoseContext.EndFailedCall(gas, true, ErrNonceUintOverflow.Error())
 			}
 
-			return nil, libcommon.Address{}, gas, ErrNonceUintOverflow
+			err = ErrNonceUintOverflow
+			return nil, libcommon.Address{}, gas, err
 		}
 		evm.intraBlockState.SetNonce(caller.Address(), nonce+1, evm.firehoseContext)
 	}
@@ -454,24 +474,19 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	contract := NewContract(caller, AccountRef(address), value, gas, evm.config.SkipAnalysis, evm.firehoseContext)
 	contract.SetCodeOptionalHash(&address, codeAndHash)
 
-	if evm.config.Debug {
-		if evm.interpreter.Depth() == 0 {
-			evm.config.Tracer.CaptureStart(evm, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
-		} else {
-			evm.config.Tracer.CaptureEnter(typ, caller.Address(), address, false /* precompile */, true /* create */, codeAndHash.code, gas, value, nil)
-		}
-	}
-
-	// CS TODO: decide what to do with this condition. Should we bring it top or add firehose operation on this
 	if evm.config.NoRecursion && evm.interpreter.Depth() > 0 {
 		return nil, address, gas, nil
 	}
 
 	ret, err = run(evm, contract, nil, false)
 
-	// check whether the max code size has been exceeded
-	if err == nil && evm.chainRules.IsSpuriousDragon && len(ret) > params.MaxCodeSize && !evm.chainRules.IsAura {
-		err = ErrMaxCodeSizeExceeded
+	// EIP-170: Contract code size limit
+	if err == nil && evm.chainRules.IsSpuriousDragon && len(ret) > params.MaxCodeSize {
+		// Gnosis Chain prior to Shanghai didn't have EIP-170 enabled,
+		// but EIP-3860 (part of Shanghai) requires EIP-170.
+		if !evm.chainRules.IsAura || evm.config.HasEip3860(evm.chainRules) {
+			err = ErrMaxCodeSizeExceeded
+		}
 	}
 
 	// Reject code starting with 0xEF if EIP-3541 is enabled.
@@ -508,13 +523,8 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
-	if evm.config.Debug {
-		if evm.interpreter.Depth() == 0 {
-			evm.config.Tracer.CaptureEnd(ret, gas-contract.Gas, err)
-		} else {
-			evm.config.Tracer.CaptureExit(ret, gas-contract.Gas, err)
-		}
-	}
+	// calculate gasConsumption for deferred captures
+	gasConsumption = gas - contract.Gas
 
 	if evm.firehoseContext.Enabled() {
 		evm.firehoseContext.EndCall(contract.Gas, nil)

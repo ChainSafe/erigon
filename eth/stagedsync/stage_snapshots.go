@@ -20,10 +20,8 @@ import (
 	proto_downloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloader"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
+	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
 	"github.com/ledgerwatch/erigon-lib/state"
-	"github.com/ledgerwatch/log/v3"
-	"golang.org/x/sync/semaphore"
-
 	"github.com/ledgerwatch/erigon/consensus"
 	"github.com/ledgerwatch/erigon/consensus/parlia"
 	"github.com/ledgerwatch/erigon/core/rawdb"
@@ -33,6 +31,7 @@ import (
 	"github.com/ledgerwatch/erigon/turbo/services"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync/snapcfg"
+	"github.com/ledgerwatch/log/v3"
 )
 
 type SnapshotsCfg struct {
@@ -132,7 +131,7 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 
 	cfg.snapshots.LogStat()
 	cfg.agg.LogStats(tx, func(endTxNumMinimax uint64) uint64 {
-		_, histBlockNumProgress, _ := rawdb.TxNums.FindBlockNum(tx, endTxNumMinimax)
+		_, histBlockNumProgress, _ := rawdbv3.TxNums.FindBlockNum(tx, endTxNumMinimax)
 		return histBlockNumProgress
 	})
 
@@ -149,8 +148,8 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 			// wait for Downloader service to download all expected snapshots
 			if cfg.snapshots.IndicesMax() < cfg.snapshots.SegmentsMax() {
 				chainID, _ := uint256.FromBig(cfg.chainConfig.ChainID)
-				sem := semaphore.NewWeighted(int64(estimate.IndexSnapshot.Workers()))
-				if err := snapshotsync.BuildMissedIndices(s.LogPrefix(), ctx, cfg.dirs, *chainID, sem); err != nil {
+				indexWorkers := estimate.IndexSnapshot.Workers()
+				if err := snapshotsync.BuildMissedIndices(s.LogPrefix(), ctx, cfg.dirs, *chainID, indexWorkers); err != nil {
 					return fmt.Errorf("BuildMissedIndices: %w", err)
 				}
 			}
@@ -165,8 +164,8 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 	}
 
 	if cfg.historyV3 {
-		sem := semaphore.NewWeighted(int64(estimate.IndexSnapshot.Workers()))
-		if err := cfg.agg.BuildMissedIndices(ctx, sem); err != nil {
+		indexWorkers := estimate.IndexSnapshot.Workers()
+		if err := cfg.agg.BuildMissedIndices(ctx, indexWorkers); err != nil {
 			return err
 		}
 		if cfg.dbEventNotifier != nil {
@@ -182,13 +181,13 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 		s.BlockNumber = blocksAvailable
 	}
 
-	if err := FillDBFromSnapshots(s.LogPrefix(), ctx, tx, cfg.dirs, cfg.snapshots, cfg.blockReader, cfg.chainConfig, cfg.engine); err != nil {
+	if err := FillDBFromSnapshots(s.LogPrefix(), ctx, tx, cfg.dirs, cfg.snapshots, cfg.blockReader, cfg.chainConfig, cfg.engine, cfg.agg); err != nil {
 		return err
 	}
 	return nil
 }
 
-func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs datadir.Dirs, sn *snapshotsync.RoSnapshots, blockReader services.FullBlockReader, chainConfig chain.Config, engine consensus.Engine) error {
+func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs datadir.Dirs, sn *snapshotsync.RoSnapshots, blockReader services.FullBlockReader, chainConfig chain.Config, engine consensus.Engine, agg *state.AggregatorV3) error {
 	blocksAvailable := sn.BlocksAvailable()
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
@@ -295,7 +294,7 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 				toBlock = cmp.Max(toBlock, progress)
 
 				_ = tx.ClearBucket(kv.MaxTxNum)
-				if err := rawdb.TxNums.WriteForGenesis(tx, 1); err != nil {
+				if err := rawdbv3.TxNums.WriteForGenesis(tx, 1); err != nil {
 					return err
 				}
 				if err := sn.Bodies.View(func(bs []*snapshotsync.BodySegment) error {
@@ -313,7 +312,7 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 							}
 							maxTxNum := baseTxNum + txAmount - 1
 
-							if err := rawdb.TxNums.Append(tx, blockNum, maxTxNum); err != nil {
+							if err := rawdbv3.TxNums.Append(tx, blockNum, maxTxNum); err != nil {
 								return fmt.Errorf("%w. blockNum=%d, maxTxNum=%d", err, blockNum, maxTxNum)
 							}
 							return nil
@@ -325,6 +324,9 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 				}); err != nil {
 					return fmt.Errorf("build txNum => blockNum mapping: %w", err)
 				}
+			}
+			if err := rawdb.WriteSnapshots(tx, sn.Files(), agg.Files()); err != nil {
+				return err
 			}
 		}
 	}
@@ -468,7 +470,7 @@ Finish:
 	if err := cfg.snapshots.ReopenFolder(); err != nil {
 		return err
 	}
-	if err := cfg.agg.ReopenFiles(); err != nil {
+	if err := cfg.agg.OpenFolder(); err != nil {
 		return err
 	}
 
@@ -479,7 +481,7 @@ Finish:
 		cfg.dbEventNotifier.OnNewSnapshot()
 	}
 
-	firstNonGenesis, err := rawdb.SecondKey(tx, kv.Headers)
+	firstNonGenesis, err := rawdbv3.SecondKey(tx, kv.Headers)
 	if err != nil {
 		return err
 	}
@@ -519,13 +521,20 @@ func SnapshotsPrune(s *PruneState, cfg SnapshotsCfg, ctx context.Context, tx kv.
 
 	sn := cfg.blockRetire.Snapshots()
 	if sn != nil && sn.Cfg().Enabled && sn.Cfg().Produce {
-		if err := cfg.blockRetire.PruneAncientBlocks(tx); err != nil {
+		br := cfg.blockRetire
+		if err := br.PruneAncientBlocks(tx, 100); err != nil {
 			return err
 		}
 
-		if err := retireBlocksInSingleBackgroundThread(s, cfg.blockRetire, cfg.agg, ctx, tx); err != nil {
-			return fmt.Errorf("retireBlocksInSingleBackgroundThread: %w", err)
+		//TODO: initialSync maybe save files progress here
+		if cfg.agg.NeedSaveFilesListInDB() || br.NeedSaveFilesListInDB() {
+			if err := rawdb.WriteSnapshots(tx, br.Snapshots().Files(), cfg.agg.Files()); err != nil {
+				return err
+			}
 		}
+
+		br.RetireBlocksInBackground(ctx, s.ForwardProgress, log.LvlDebug)
+		cfg.agg.BuildFilesInBackground()
 	}
 
 	if !useExternalTx {
@@ -533,26 +542,6 @@ func SnapshotsPrune(s *PruneState, cfg SnapshotsCfg, ctx context.Context, tx kv.
 			return err
 		}
 	}
-
-	return nil
-}
-
-// retiring blocks in a single thread in the brackground
-func retireBlocksInSingleBackgroundThread(s *PruneState, blockRetire *snapshotsync.BlockRetire, agg *state.AggregatorV3, ctx context.Context, tx kv.RwTx) (err error) {
-	// if something already happens in background - noop
-	if blockRetire.Working() {
-		return nil
-	}
-	ok, err := blockRetire.BackgroundResult.GetAndReset()
-	if err != nil {
-		log.Warn(fmt.Sprintf("[%s]", s.LogPrefix()), "err", err)
-	} else if ok {
-		if err := rawdb.WriteSnapshots(tx, blockRetire.Snapshots().Files(), agg.Files()); err != nil {
-			return err
-		}
-	}
-
-	blockRetire.RetireBlocksInBackground(ctx, s.ForwardProgress, log.LvlInfo)
 
 	return nil
 }

@@ -1,6 +1,7 @@
 package privateapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,14 +10,15 @@ import (
 	"time"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/log/v3"
+	"google.golang.org/protobuf/types/known/emptypb"
+
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/types"
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/log/v3"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/consensus/serenity"
@@ -39,14 +41,15 @@ import (
 // 2.2.0 - add NodesInfo function
 // 3.0.0 - adding PoS interfaces
 // 3.1.0 - add Subscribe to logs
-var EthBackendAPIVersion = &types2.VersionReply{Major: 3, Minor: 1, Patch: 0}
+// 3.2.0 - add EngineGetBlobsBundleV1
+var EthBackendAPIVersion = &types2.VersionReply{Major: 3, Minor: 2, Patch: 0}
 
 const MaxBuilders = 128
 
 var UnknownPayloadErr = rpc.CustomError{Code: -38001, Message: "Unknown payload"}
 var InvalidForkchoiceStateErr = rpc.CustomError{Code: -38002, Message: "Invalid forkchoice state"}
 var InvalidPayloadAttributesErr = rpc.CustomError{Code: -38003, Message: "Invalid payload attributes"}
-var InvalidParamsErr = rpc.CustomError{Code: -32602, Message: "Invalid params"}
+var TooLargeRequestErr = rpc.CustomError{Code: -38004, Message: "Too large request"}
 
 type EthBackendServer struct {
 	remote.UnimplementedETHBACKENDServer // must be embedded to have forward compatible implementations.
@@ -266,20 +269,32 @@ func convertPayloadStatus(payloadStatus *engineapi.PayloadStatus) *remote.Engine
 }
 
 func (s *EthBackendServer) stageLoopIsBusy() bool {
-	for i := 0; i < 20; i++ {
-		if !s.hd.BeaconRequestList.IsWaiting() {
-			// This might happen, for example, in the following scenario:
-			// 1) CL sends NewPayload and immediately after that ForkChoiceUpdated.
-			// 2) We happily process NewPayload and stage loop is at the end.
-			// 3) We start processing ForkChoiceUpdated,
-			// but the stage loop hasn't moved yet from the end to the beginning of HeadersPOS
-			// and thus requestList.WaitForRequest() is not called yet.
-
-			// TODO(yperbasis): find a more elegant solution
-			time.Sleep(5 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	wait, ok := s.hd.BeaconRequestList.WaitForWaiting(ctx)
+	if !ok {
+		select {
+		case <-wait:
+			return false
+		case <-ctx.Done():
+			return true
 		}
 	}
-	return !s.hd.BeaconRequestList.IsWaiting()
+	return false
+}
+
+func (s *EthBackendServer) checkWithdrawalsPresence(time uint64, withdrawals []*types.Withdrawal) error {
+	if !s.config.IsShanghai(time) && withdrawals != nil {
+		return &rpc.InvalidParamsError{Message: "withdrawals before shanghai"}
+	}
+	if s.config.IsShanghai(time) && withdrawals == nil {
+		return &rpc.InvalidParamsError{Message: "missing withdrawals list"}
+	}
+	return nil
+}
+
+func (s *EthBackendServer) EngineGetBlobsBundleV1(ctx context.Context, in *remote.EngineGetBlobsBundleRequest) (*types2.BlobsBundleV1, error) {
+	return nil, fmt.Errorf("EngineGetBlobsBundleV1: not implemented yet")
 }
 
 // EngineNewPayload validates and possibly executes payload
@@ -312,14 +327,17 @@ func (s *EthBackendServer) EngineNewPayload(ctx context.Context, req *types2.Exe
 		header.WithdrawalsHash = &wh
 	}
 
-	if !s.config.IsShanghai(header.Time) && withdrawals != nil || s.config.IsShanghai(header.Time) && withdrawals == nil {
-		return nil, &InvalidParamsErr
+	if err := s.checkWithdrawalsPresence(header.Time, withdrawals); err != nil {
+		return nil, err
 	}
 
 	blockHash := gointerfaces.ConvertH256ToHash(req.BlockHash)
 	if header.Hash() != blockHash {
 		log.Error("[NewPayload] invalid block hash", "stated", libcommon.Hash(blockHash), "actual", header.Hash())
-		return &remote.EnginePayloadStatus{Status: remote.EngineStatus_INVALID_BLOCK_HASH}, nil
+		return &remote.EnginePayloadStatus{
+			Status:          remote.EngineStatus_INVALID,
+			ValidationError: "invalid block hash",
+		}, nil
 	}
 
 	for _, txn := range req.Transactions {
@@ -327,7 +345,6 @@ func (s *EthBackendServer) EngineNewPayload(ctx context.Context, req *types2.Exe
 			log.Warn("[NewPayload] typed txn marshalled as RLP string", "txn", common.Bytes2Hex(txn))
 			return &remote.EnginePayloadStatus{
 				Status:          remote.EngineStatus_INVALID,
-				LatestValidHash: nil,
 				ValidationError: "typed txn marshalled as RLP string",
 			}, nil
 		}
@@ -338,7 +355,6 @@ func (s *EthBackendServer) EngineNewPayload(ctx context.Context, req *types2.Exe
 		log.Warn("[NewPayload] failed to decode transactions", "err", err)
 		return &remote.EnginePayloadStatus{
 			Status:          remote.EngineStatus_INVALID,
-			LatestValidHash: nil,
 			ValidationError: err.Error(),
 		}, nil
 	}
@@ -501,11 +517,12 @@ func (s *EthBackendServer) getQuickPayloadStatusIfPossible(blockHash libcommon.H
 }
 
 // The expected value to be received by the feeRecipient in wei
-func blockValue(block *types.Block, baseFee *uint256.Int) *uint256.Int {
+func blockValue(br *types.BlockWithReceipts, baseFee *uint256.Int) *uint256.Int {
 	blockValue := uint256.NewInt(0)
-	for _, tx := range block.Transactions() {
-		gas := new(uint256.Int).SetUint64(tx.GetGas())
-		effectiveTip := tx.GetEffectiveGasTip(baseFee)
+	txs := br.Block.Transactions()
+	for i := range txs {
+		gas := new(uint256.Int).SetUint64(br.Receipts[i].GasUsed)
+		effectiveTip := txs[i].GetEffectiveGasTip(baseFee)
 		txValue := new(uint256.Int).Mul(gas, effectiveTip)
 		blockValue.Add(blockValue, txValue)
 	}
@@ -533,11 +550,12 @@ func (s *EthBackendServer) EngineGetPayload(ctx context.Context, req *remote.Eng
 		return nil, &UnknownPayloadErr
 	}
 
-	block, err := builder.Stop()
+	blockWithReceipts, err := builder.Stop()
 	if err != nil {
 		log.Error("Failed to build PoS block", "err", err)
 		return nil, err
 	}
+	block := blockWithReceipts.Block
 
 	baseFee := new(uint256.Int)
 	baseFee.SetFromBig(block.Header().BaseFee)
@@ -569,7 +587,7 @@ func (s *EthBackendServer) EngineGetPayload(ctx context.Context, req *remote.Eng
 		payload.Withdrawals = ConvertWithdrawalsToRpc(block.Withdrawals())
 	}
 
-	blockValue := blockValue(block, baseFee)
+	blockValue := blockValue(blockWithReceipts, baseFee)
 	return &remote.EngineGetPayloadResponse{
 		ExecutionPayload: payload,
 		BlockValue:       gointerfaces.ConvertUint256IntToH256(blockValue),
@@ -654,9 +672,8 @@ func (s *EthBackendServer) EngineForkChoiceUpdated(ctx context.Context, req *rem
 		param.Withdrawals = ConvertWithdrawalsFromRpc(payloadAttributes.Withdrawals)
 	}
 
-	if (!s.config.IsShanghai(payloadAttributes.Timestamp) && param.Withdrawals != nil) ||
-		(s.config.IsShanghai(payloadAttributes.Timestamp) && param.Withdrawals == nil) {
-		return nil, &InvalidParamsErr
+	if err := s.checkWithdrawalsPresence(payloadAttributes.Timestamp, param.Withdrawals); err != nil {
+		return nil, err
 	}
 
 	// Initiate payload building
@@ -676,6 +693,96 @@ func (s *EthBackendServer) EngineForkChoiceUpdated(ctx context.Context, req *rem
 		},
 		PayloadId: s.payloadId,
 	}, nil
+}
+
+func (s *EthBackendServer) EngineGetPayloadBodiesByHashV1(ctx context.Context, request *remote.EngineGetPayloadBodiesByHashV1Request) (*remote.EngineGetPayloadBodiesV1Response, error) {
+	tx, err := s.db.BeginRo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bodies := make([]*types2.ExecutionPayloadBodyV1, len(request.Hashes))
+
+	for hashIdx, hash := range request.Hashes {
+		h := gointerfaces.ConvertH256ToHash(hash)
+		block, err := rawdb.ReadBlockByHash(tx, h)
+		if err != nil {
+			return nil, err
+		}
+
+		body, err := extractPayloadBodyFromBlock(block)
+		if err != nil {
+			return nil, err
+		}
+		bodies[hashIdx] = body
+	}
+
+	return &remote.EngineGetPayloadBodiesV1Response{Bodies: bodies}, nil
+}
+
+func (s *EthBackendServer) EngineGetPayloadBodiesByRangeV1(ctx context.Context, request *remote.EngineGetPayloadBodiesByRangeV1Request) (*remote.EngineGetPayloadBodiesV1Response, error) {
+	tx, err := s.db.BeginRo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bodies := make([]*types2.ExecutionPayloadBodyV1, 0, request.Count)
+
+	for i := uint64(0); i < request.Count; i++ {
+		hash, err := rawdb.ReadCanonicalHash(tx, request.Start+i)
+		if err != nil {
+			return nil, err
+		}
+		if hash == (libcommon.Hash{}) {
+			// break early if beyond the last known canonical header
+			break
+		}
+
+		block := rawdb.ReadBlock(tx, hash, request.Start+i)
+		body, err := extractPayloadBodyFromBlock(block)
+		if err != nil {
+			return nil, err
+		}
+		bodies = append(bodies, body)
+	}
+
+	return &remote.EngineGetPayloadBodiesV1Response{Bodies: bodies}, nil
+}
+
+func extractPayloadBodyFromBlock(block *types.Block) (*types2.ExecutionPayloadBodyV1, error) {
+	if block == nil {
+		return nil, nil
+	}
+
+	txs := block.Transactions()
+	bdTxs := make([][]byte, len(txs))
+	for idx, tx := range txs {
+		var buf bytes.Buffer
+		if err := tx.MarshalBinary(&buf); err != nil {
+			return nil, err
+		} else {
+			bdTxs[idx] = buf.Bytes()
+		}
+	}
+
+	wds := block.Withdrawals()
+	bdWds := make([]*types2.Withdrawal, len(wds))
+
+	if wds == nil {
+		// pre shanghai blocks could have nil withdrawals so nil the slice as per spec
+		bdWds = nil
+	} else {
+		for idx, wd := range wds {
+			bdWds[idx] = &types2.Withdrawal{
+				Index:          wd.Index,
+				ValidatorIndex: wd.Validator,
+				Address:        gointerfaces.ConvertAddressToH160(wd.Address),
+				Amount:         wd.Amount,
+			}
+		}
+	}
+
+	return &types2.ExecutionPayloadBodyV1{Transactions: bdTxs, Withdrawals: bdWds}, nil
 }
 
 func (s *EthBackendServer) evictOldBuilders() {

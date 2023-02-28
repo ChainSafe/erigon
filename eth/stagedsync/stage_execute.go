@@ -19,6 +19,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/length"
 	"github.com/ledgerwatch/erigon-lib/etl"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
 	"github.com/ledgerwatch/erigon-lib/kv/temporal/historyv2"
 	libstate "github.com/ledgerwatch/erigon-lib/state"
 	"github.com/ledgerwatch/log/v3"
@@ -295,16 +296,16 @@ func reconstituteBlock(agg *libstate.AggregatorV3, db kv.RoDB, tx kv.Tx) (n uint
 	if err != nil {
 		return 0, false, err
 	}
-	reconToBlock := cmp.Min(sendersProgress, agg.EndTxNumMinimax())
+	reconToBlock := cmp.Min(sendersProgress, agg.EndTxNumFrozenAndIndexed())
 	if tx == nil {
 		if err = db.View(context.Background(), func(tx kv.Tx) error {
-			ok, n, err = rawdb.TxNums.FindBlockNum(tx, reconToBlock)
+			ok, n, err = rawdbv3.TxNums.FindBlockNum(tx, reconToBlock)
 			return err
 		}); err != nil {
 			return
 		}
 	} else {
-		ok, n, err = rawdb.TxNums.FindBlockNum(tx, reconToBlock)
+		ok, n, err = rawdbv3.TxNums.FindBlockNum(tx, reconToBlock)
 	}
 	return
 }
@@ -313,7 +314,7 @@ func unwindExec3(u *UnwindState, s *StageState, tx kv.RwTx, ctx context.Context,
 	cfg.agg.SetLogPrefix(s.LogPrefix())
 	rs := state.NewStateV3()
 	// unwind all txs of u.UnwindPoint block. 1 txn in begin/end of block - system txs
-	txNum, err := rawdb.TxNums.Min(tx, u.UnwindPoint+1)
+	txNum, err := rawdbv3.TxNums.Min(tx, u.UnwindPoint+1)
 	if err != nil {
 		return err
 	}
@@ -742,11 +743,11 @@ func PruneExecutionStage(s *PruneState, tx kv.RwTx, cfg ExecuteBlockCfg, ctx con
 	if cfg.historyV3 {
 		cfg.agg.SetTx(tx)
 		if initialCycle {
-			if err = cfg.agg.Prune(ctx, ethconfig.HistoryV3AggregationStep*2); err != nil { // prune part of retired data, before commit
+			if err = cfg.agg.Prune(ctx, ethconfig.HistoryV3AggregationStep/10); err != nil { // prune part of retired data, before commit
 				return err
 			}
 		} else {
-			if err = cfg.agg.PruneWithTiemout(ctx, 500*time.Millisecond); err != nil { // prune part of retired data, before commit
+			if err = cfg.agg.PruneWithTiemout(ctx, 1*time.Second); err != nil { // prune part of retired data, before commit
 				return err
 			}
 		}

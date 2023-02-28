@@ -1,12 +1,18 @@
 package state
 
 import (
+	"errors"
+
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
-	"github.com/ledgerwatch/erigon/cl/cltypes/ssz_utils"
 	"github.com/ledgerwatch/erigon/core/types"
+)
+
+var (
+	// Error for missing validator
+	InvalidValidatorIndex = errors.New("invalid validator index")
 )
 
 // Just a bunch of simple getters.
@@ -21,6 +27,13 @@ func (b *BeaconState) GenesisValidatorsRoot() libcommon.Hash {
 
 func (b *BeaconState) Slot() uint64 {
 	return b.slot
+}
+
+func (b *BeaconState) PreviousSlot() uint64 {
+	if b.slot == 0 {
+		return 0
+	}
+	return b.slot - 1
 }
 
 func (b *BeaconState) Fork() *cltypes.Fork {
@@ -59,12 +72,22 @@ func (b *BeaconState) Validators() []*cltypes.Validator {
 	return b.validators
 }
 
-func (b *BeaconState) ValidatorAt(index int) *cltypes.Validator {
-	return b.validators[index]
+func (b *BeaconState) ValidatorAt(index int) (cltypes.Validator, error) {
+	if index >= len(b.validators) {
+		return cltypes.Validator{}, InvalidValidatorIndex
+	}
+	return *b.validators[index], nil
 }
 
 func (b *BeaconState) Balances() []uint64 {
 	return b.balances
+}
+
+func (b *BeaconState) ValidatorBalance(index int) (uint64, error) {
+	if index >= len(b.balances) {
+		return 0, InvalidValidatorIndex
+	}
+	return b.balances[index], nil
 }
 
 func (b *BeaconState) RandaoMixes() [randoMixesLength]libcommon.Hash {
@@ -79,15 +102,15 @@ func (b *BeaconState) SlashingSegmentAt(pos int) uint64 {
 	return b.slashings[pos]
 }
 
-func (b *BeaconState) PreviousEpochParticipation() []byte {
+func (b *BeaconState) PreviousEpochParticipation() cltypes.ParticipationFlagsList {
 	return b.previousEpochParticipation
 }
 
-func (b *BeaconState) CurrentEpochParticipation() []byte {
+func (b *BeaconState) CurrentEpochParticipation() cltypes.ParticipationFlagsList {
 	return b.currentEpochParticipation
 }
 
-func (b *BeaconState) JustificationBits() byte {
+func (b *BeaconState) JustificationBits() cltypes.JustificationBits {
 	return b.justificationBits
 }
 
@@ -97,6 +120,13 @@ func (b *BeaconState) PreviousJustifiedCheckpoint() *cltypes.Checkpoint {
 
 func (b *BeaconState) CurrentJustifiedCheckpoint() *cltypes.Checkpoint {
 	return b.currentJustifiedCheckpoint
+}
+
+func (b *BeaconState) ValidatorInactivityScore(index int) (uint64, error) {
+	if len(b.inactivityScores) <= index {
+		return 0, InvalidValidatorIndex
+	}
+	return b.inactivityScores[index], nil
 }
 
 func (b *BeaconState) FinalizedCheckpoint() *cltypes.Checkpoint {
@@ -115,40 +145,23 @@ func (b *BeaconState) LatestExecutionPayloadHeader() *types.Header {
 	return b.latestExecutionPayloadHeader
 }
 
-// GetStateSSZObject allows us to use ssz methods.
-func (b *BeaconState) GetStateSSZObject() ssz_utils.ObjectSSZ {
-	switch b.version {
-	case clparams.BellatrixVersion:
-		return &cltypes.BeaconStateBellatrix{
-			GenesisTime:                  b.genesisTime,
-			GenesisValidatorsRoot:        b.genesisValidatorsRoot,
-			Slot:                         b.slot,
-			Fork:                         b.fork,
-			LatestBlockHeader:            b.latestBlockHeader,
-			BlockRoots:                   preparateRootsForHashing(b.blockRoots[:]),
-			StateRoots:                   preparateRootsForHashing(b.stateRoots[:]),
-			HistoricalRoots:              preparateRootsForHashing(b.historicalRoots),
-			Eth1Data:                     b.eth1Data,
-			Eth1DataVotes:                b.eth1DataVotes,
-			Eth1DepositIndex:             b.eth1DepositIndex,
-			Validators:                   b.validators,
-			Balances:                     b.balances,
-			RandaoMixes:                  preparateRootsForHashing(b.randaoMixes[:]),
-			Slashings:                    b.slashings[:],
-			PreviousEpochParticipation:   b.previousEpochParticipation,
-			CurrentEpochParticipation:    b.currentEpochParticipation,
-			JustificationBits:            []byte{b.justificationBits},
-			FinalizedCheckpoint:          b.finalizedCheckpoint,
-			CurrentJustifiedCheckpoint:   b.currentJustifiedCheckpoint,
-			PreviousJustifiedCheckpoint:  b.previousJustifiedCheckpoint,
-			InactivityScores:             b.inactivityScores,
-			CurrentSyncCommittee:         b.currentSyncCommittee,
-			NextSyncCommittee:            b.nextSyncCommittee,
-			LatestExecutionPayloadHeader: b.latestExecutionPayloadHeader,
-		}
-	case clparams.CapellaVersion:
-		panic("not implemented")
-	default:
-		panic("not a valid version")
-	}
+func (b *BeaconState) NextWithdrawalIndex() uint64 {
+	return b.nextWithdrawalIndex
+}
+
+func (b *BeaconState) NextWithdrawalValidatorIndex() uint64 {
+	return b.nextWithdrawalValidatorIndex
+}
+
+func (b *BeaconState) HistoricalSummaries() []*cltypes.HistoricalSummary {
+	return b.historicalSummaries
+}
+
+func (b *BeaconState) Version() clparams.StateVersion {
+	return b.version
+}
+
+func (b *BeaconState) ValidatorIndexByPubkey(key [48]byte) (uint64, bool) {
+	val, ok := b.publicKeyIndicies[key]
+	return val, ok
 }

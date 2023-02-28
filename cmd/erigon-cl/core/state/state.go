@@ -1,10 +1,15 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+
+	lru "github.com/hashicorp/golang-lru"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
+	"github.com/ledgerwatch/erigon/cl/utils"
 	"github.com/ledgerwatch/erigon/core/types"
 )
 
@@ -19,35 +24,59 @@ const (
 
 type BeaconState struct {
 	// State fields
-	genesisTime                  uint64
-	genesisValidatorsRoot        libcommon.Hash
-	slot                         uint64
-	fork                         *cltypes.Fork
-	latestBlockHeader            *cltypes.BeaconBlockHeader
-	blockRoots                   [blockRootsLength]libcommon.Hash
-	stateRoots                   [stateRootsLength]libcommon.Hash
-	historicalRoots              []libcommon.Hash
-	eth1Data                     *cltypes.Eth1Data
-	eth1DataVotes                []*cltypes.Eth1Data
-	eth1DepositIndex             uint64
-	validators                   []*cltypes.Validator
-	balances                     []uint64
-	randaoMixes                  [randoMixesLength]libcommon.Hash
-	slashings                    [slashingsLength]uint64
-	previousEpochParticipation   []byte
-	currentEpochParticipation    []byte
-	justificationBits            byte
-	previousJustifiedCheckpoint  *cltypes.Checkpoint
-	currentJustifiedCheckpoint   *cltypes.Checkpoint
-	finalizedCheckpoint          *cltypes.Checkpoint
-	inactivityScores             []uint64
-	currentSyncCommittee         *cltypes.SyncCommittee
-	nextSyncCommittee            *cltypes.SyncCommittee
+	genesisTime                uint64
+	genesisValidatorsRoot      libcommon.Hash
+	slot                       uint64
+	fork                       *cltypes.Fork
+	latestBlockHeader          *cltypes.BeaconBlockHeader
+	blockRoots                 [blockRootsLength]libcommon.Hash
+	stateRoots                 [stateRootsLength]libcommon.Hash
+	historicalRoots            []libcommon.Hash
+	eth1Data                   *cltypes.Eth1Data
+	eth1DataVotes              []*cltypes.Eth1Data
+	eth1DepositIndex           uint64
+	validators                 []*cltypes.Validator
+	balances                   []uint64
+	randaoMixes                [randoMixesLength]libcommon.Hash
+	slashings                  [slashingsLength]uint64
+	previousEpochParticipation cltypes.ParticipationFlagsList
+	currentEpochParticipation  cltypes.ParticipationFlagsList
+	justificationBits          cltypes.JustificationBits
+	// Altair
+	previousJustifiedCheckpoint *cltypes.Checkpoint
+	currentJustifiedCheckpoint  *cltypes.Checkpoint
+	finalizedCheckpoint         *cltypes.Checkpoint
+	inactivityScores            []uint64
+	currentSyncCommittee        *cltypes.SyncCommittee
+	nextSyncCommittee           *cltypes.SyncCommittee
+	// Bellatrix
 	latestExecutionPayloadHeader *types.Header
+	// Capella
+	nextWithdrawalIndex          uint64
+	nextWithdrawalValidatorIndex uint64
+	historicalSummaries          []*cltypes.HistoricalSummary
 	// Internals
-	version       clparams.StateVersion   // State version
-	leaves        [][32]byte              // Pre-computed leaves.
-	touchedLeaves map[StateLeafIndex]bool // Maps each leaf to whether they were touched or not.
+	version           clparams.StateVersion   // State version
+	leaves            [32][32]byte            // Pre-computed leaves.
+	touchedLeaves     map[StateLeafIndex]bool // Maps each leaf to whether they were touched or not.
+	publicKeyIndicies map[[48]byte]uint64
+	// Caches
+	activeValidatorsCache       *lru.Cache
+	committeeCache              *lru.Cache
+	shuffledSetsCache           *lru.Cache
+	totalActiveBalanceCache     *uint64
+	totalActiveBalanceRootCache uint64
+	proposerIndex               *uint64
+	// Configs
+	beaconConfig *clparams.BeaconChainConfig
+}
+
+func New(cfg *clparams.BeaconChainConfig) *BeaconState {
+	state := &BeaconState{
+		beaconConfig: cfg,
+	}
+	state.initBeaconState()
+	return state
 }
 
 func preparateRootsForHashing(roots []libcommon.Hash) [][32]byte {
@@ -58,85 +87,14 @@ func preparateRootsForHashing(roots []libcommon.Hash) [][32]byte {
 	return ret
 }
 
-// FromBellatrixState initialize the beacon state as a bellatrix state.
-func FromBellatrixState(state *cltypes.BeaconStateBellatrix) *BeaconState {
-	var blockRoots [stateRootsLength]libcommon.Hash
-	var stateRoots [stateRootsLength]libcommon.Hash
-	var randaoMixes [randoMixesLength]libcommon.Hash
-	historicalRoots := make([]libcommon.Hash, len(state.HistoricalRoots))
-	var slashings [slashingsLength]uint64
-	copy(slashings[:], state.Slashings)
-	for i := range state.BlockRoots {
-		copy(blockRoots[i][:], state.BlockRoots[i][:])
-	}
-	for i := range state.StateRoots {
-		copy(stateRoots[i][:], state.StateRoots[i][:])
-	}
-	for i := range state.RandaoMixes {
-		copy(randaoMixes[i][:], state.RandaoMixes[i][:])
-	}
-	for i := range state.HistoricalRoots {
-		copy(historicalRoots[i][:], state.HistoricalRoots[i][:])
-	}
-
-	return &BeaconState{
-		genesisTime:                 state.GenesisTime,
-		genesisValidatorsRoot:       state.GenesisValidatorsRoot,
-		slot:                        state.Slot,
-		fork:                        state.Fork,
-		latestBlockHeader:           state.LatestBlockHeader,
-		blockRoots:                  blockRoots,
-		stateRoots:                  stateRoots,
-		historicalRoots:             historicalRoots,
-		eth1Data:                    state.Eth1Data,
-		eth1DataVotes:               state.Eth1DataVotes,
-		eth1DepositIndex:            state.Eth1DepositIndex,
-		validators:                  state.Validators,
-		balances:                    state.Balances,
-		randaoMixes:                 randaoMixes,
-		slashings:                   slashings,
-		previousEpochParticipation:  state.PreviousEpochParticipation,
-		currentEpochParticipation:   state.CurrentEpochParticipation,
-		justificationBits:           state.JustificationBits[0],
-		previousJustifiedCheckpoint: state.PreviousJustifiedCheckpoint,
-		currentJustifiedCheckpoint:  state.CurrentJustifiedCheckpoint,
-		finalizedCheckpoint:         state.FinalizedCheckpoint,
-		inactivityScores:            state.InactivityScores,
-		currentSyncCommittee:        state.CurrentSyncCommittee,
-		nextSyncCommittee:           state.NextSyncCommittee,
-		// Bellatrix only
-		latestExecutionPayloadHeader: state.LatestExecutionPayloadHeader,
-		// Internals
-		version:       clparams.BellatrixVersion,
-		leaves:        make([][32]byte, BellatrixLeavesSize),
-		touchedLeaves: map[StateLeafIndex]bool{},
-		// TODO: Make proper hasher
-	}
-}
-
-// MarshallSSZTo encodes the state into the given buffer.
-func (b *BeaconState) MarshalSSZTo(dst []byte) ([]byte, error) {
-	return b.GetStateSSZObject().MarshalSSZTo(dst)
-}
-
-// MarshallSSZTo encodes the state.
-func (b *BeaconState) MarshalSSZ() ([]byte, error) {
-	return b.GetStateSSZObject().MarshalSSZ()
-}
-
 // MarshallSSZTo retrieve the SSZ encoded length of the state.
-func (b *BeaconState) SizeSSZ() int {
-	return b.GetStateSSZObject().SizeSSZ()
-}
-
-// MarshallSSZTo retrieve the SSZ encoded length of the state.
-func (b *BeaconState) UnmarshalSSZ(buf []byte) error {
-	panic("beacon state should be derived, use FromBellatrixState instead.")
+func (b *BeaconState) DecodeSSZ(buf []byte) error {
+	panic("not implemented")
 }
 
 // BlockRoot computes the block root for the state.
 func (b *BeaconState) BlockRoot() ([32]byte, error) {
-	stateRoot, err := b.HashTreeRoot()
+	stateRoot, err := b.HashSSZ()
 	if err != nil {
 		return [32]byte{}, err
 	}
@@ -146,5 +104,69 @@ func (b *BeaconState) BlockRoot() ([32]byte, error) {
 		BodyRoot:      b.latestBlockHeader.BodyRoot,
 		ParentRoot:    b.latestBlockHeader.ParentRoot,
 		Root:          stateRoot,
-	}).HashTreeRoot()
+	}).HashSSZ()
+}
+
+func (b *BeaconState) _refreshActiveBalances() {
+	epoch := b.Epoch()
+	b.totalActiveBalanceCache = new(uint64)
+	*b.totalActiveBalanceCache = 0
+	for _, validator := range b.validators {
+		if validator.Active(epoch) {
+			*b.totalActiveBalanceCache += validator.EffectiveBalance
+		}
+	}
+	*b.totalActiveBalanceCache = utils.Max64(b.beaconConfig.EffectiveBalanceIncrement, *b.totalActiveBalanceCache)
+	b.totalActiveBalanceRootCache = utils.IntegerSquareRoot(*b.totalActiveBalanceCache)
+}
+
+func (b *BeaconState) _updateProposerIndex() (err error) {
+	epoch := b.Epoch()
+
+	hash := sha256.New()
+	// Input for the seed hash.
+	input := b.GetSeed(epoch, clparams.MainnetBeaconConfig.DomainBeaconProposer)
+	slotByteArray := make([]byte, 8)
+	binary.LittleEndian.PutUint64(slotByteArray, b.slot)
+
+	// Add slot to the end of the input.
+	inputWithSlot := append(input[:], slotByteArray...)
+
+	// Calculate the hash.
+	hash.Write(inputWithSlot)
+	seed := hash.Sum(nil)
+
+	indices := b.GetActiveValidatorsIndices(epoch)
+
+	// Write the seed to an array.
+	seedArray := [32]byte{}
+	copy(seedArray[:], seed)
+	b.proposerIndex = new(uint64)
+	*b.proposerIndex, err = b.ComputeProposerIndex(indices, seedArray)
+	return
+}
+
+func (b *BeaconState) initBeaconState() error {
+	if b.touchedLeaves == nil {
+		b.touchedLeaves = make(map[StateLeafIndex]bool)
+	}
+	b.publicKeyIndicies = make(map[[48]byte]uint64)
+	b._refreshActiveBalances()
+	for i, validator := range b.validators {
+		b.publicKeyIndicies[validator.PublicKey] = uint64(i)
+	}
+	var err error
+	if b.activeValidatorsCache, err = lru.New(5); err != nil {
+		return err
+	}
+	if b.shuffledSetsCache, err = lru.New(25); err != nil {
+		return err
+	}
+	if b.committeeCache, err = lru.New(256); err != nil {
+		return err
+	}
+	if err := b._updateProposerIndex(); err != nil {
+		return err
+	}
+	return nil
 }

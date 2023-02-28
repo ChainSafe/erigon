@@ -3,6 +3,7 @@ package firehose
 import (
 	"encoding/binary"
 	"fmt"
+	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"math"
 	"math/big"
 	"os"
@@ -724,7 +725,7 @@ func (ctx *Context) RecordTrxPool(eventType string, tx types.Transaction, err er
 	)
 }
 
-type AccessList types.AccessList
+type AccessList types2.AccessList
 
 // marshal in a binary format that will be printed as hex in firehose and read on the console reader
 // in a binary format.
