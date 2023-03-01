@@ -53,5 +53,5 @@ lighthouse bn --network goerli --execution-endpoint http://localhost:8551 --exec
 Firehose support stdin reader which we can use with Erigon instrumented client. Command to start the instrumented client with Firehose is provided below
 
 ```
-erigon --datadir=/datadir/erigon/data   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity --nat "extip:18.216.37.132"  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
+erigon --datadir=/datadir/erigon/data   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
 ```
