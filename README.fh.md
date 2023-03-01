@@ -26,6 +26,21 @@ For the best result when working with this repository and the scripts it contain
 - The remote `sf` exists on main module and points to `git@github.com:ChainSafe/erigon.git`
 - The remote `origin` exists on main module and points to https://github.com/ledgerwatch/erigon.git
 
+### Install Erigon
+
+To install Erigon, run the below command
+```
+go install ./cmd/erigon
+```
+
+### Running battlefield test
+
+[Battlefield](https://github.com/streamingfast/battlefield-ethereum) requires geth and Erigon for the test. Clone the battlefield repo, install the clients(geth and Erigon) and run the below command to run the test
+```
+cd battlefield-ethereum
+./bin/compare_vs_oracle.sh erigon
+```
+
 ### Running Erigon
 
 Erigon can be used as an Execution Layer (EL) for Consensus Layer clients (CL). Default configuration is OK. 
@@ -50,8 +65,8 @@ lighthouse bn --network goerli --execution-endpoint http://localhost:8551 --exec
 
 ### Running Erigon with Firehose
 
-Firehose support stdin reader which we can use with Erigon instrumented client. Command to start the instrumented client with Firehose is provided below
-
+[Firehose](https://github.com/streamingfast/firehose-ethereum) support stdin reader which we can use with Erigon instrumented client. Clone the firehose-ethereum repo and run the below command to start the instrumented client with Firehose:
 ```
+cd firehose-ethereum
 erigon --datadir=/datadir/erigon/data   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
 ```
