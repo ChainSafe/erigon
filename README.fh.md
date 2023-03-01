@@ -49,7 +49,7 @@ If your CL client is on a different device, add --authrpc.addr 0.0.0.0 (Engine A
 
 Starting Erigon for goerli chain
 ```
-erigon --datadir=/datadir/erigon/data   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity
+erigon --datadir=<path_to_datadir>   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity
 ```
 
 In order to establish a secure connection between the Consensus Layer and the Execution Layer, a JWT secret key is automatically generated.
@@ -60,7 +60,7 @@ Once Erigon is running, you need to point your CL client to <erigon address>:855
 
 Starting lighthouse for CL
 ```
-lighthouse bn --network goerli --execution-endpoint http://localhost:8551 --execution-jwt /datadir/erigon/data/jwt.hex --disable-deposit-contract-sync --datadir=/datadir/lighthouse --checkpoint-sync-url https://beaconstate-goerli.chainsafe.io --http
+lighthouse bn --network goerli --execution-endpoint http://localhost:8551 --execution-jwt <path_to_datadir>/jwt.hex --disable-deposit-contract-sync --datadir=/datadir/lighthouse --checkpoint-sync-url https://beaconstate-goerli.chainsafe.io --http
 ```
 
 ### Running Erigon with Firehose
@@ -68,5 +68,5 @@ lighthouse bn --network goerli --execution-endpoint http://localhost:8551 --exec
 [Firehose](https://github.com/streamingfast/firehose-ethereum) support stdin reader which we can use with Erigon instrumented client. Clone the firehose-ethereum repo and run the below command to start the instrumented client with Firehose:
 ```
 cd firehose-ethereum
-erigon --datadir=/datadir/erigon/data   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
+erigon --datadir=<path_to_datadir>   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
 ```
