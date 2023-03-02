@@ -1,13 +1,6 @@
 name: Integration tests
 on:
-  push:
-    branches:
-      - devel
-      - alpha
-      - stable
-      - "firehose-v*"
-  schedule:
-    - cron: '20 16 * * *' # daily at 16:20 UTC
+  workflow_dispatch:
 jobs:
   tests:
     strategy:
