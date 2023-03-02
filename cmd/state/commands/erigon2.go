@@ -173,7 +173,7 @@ func Erigon2(genesis *core.Genesis, chainConfig *chain2.Config, logger log.Logge
 	w := agg.MakeStateWriter(changesets /* beforeOn */)
 	var rootHash []byte
 	if block == 0 {
-		genBlock, genesisIbs, err4 := genesis.ToBlock()
+		genBlock, genesisIbs, err4 := genesis.ToBlock("")
 		if err4 != nil {
 			return err4
 		}
@@ -643,5 +643,5 @@ func initConsensusEngine(cc *chain2.Config, snapshots *snapshotsync.RoSnapshots)
 	} else {
 		consensusConfig = &config.Ethash
 	}
-	return ethconsensusconfig.CreateConsensusEngine(cc, l, consensusConfig, config.Miner.Notify, config.Miner.Noverify, config.HeimdallURL, config.WithoutHeimdall, datadirCli, snapshots, true /* readonly */)
+	return ethconsensusconfig.CreateConsensusEngine(cc, l, consensusConfig, config.Miner.Notify, config.Miner.Noverify, config.HeimdallgRPCAddress, config.HeimdallURL, config.WithoutHeimdall, datadirCli, snapshots, true /* readonly */)
 }

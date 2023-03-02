@@ -2,7 +2,7 @@
 
 # Erigon
 
-Erigon is an implementation of Ethereum (execution client), on the efficiency frontier, written in Go.
+Erigon is an implementation of Ethereum (execution client), on the efficiency frontier. [Archive Node](https://ethereum.org/en/developers/docs/nodes-and-clients/archive-nodes/#what-is-an-archive-node) by default.
 
 ![Build status](https://github.com/ledgerwatch/erigon/actions/workflows/ci.yml/badge.svg)
 
@@ -26,7 +26,7 @@ Erigon is an implementation of Ethereum (execution client), on the efficiency fr
     + [Faster Initial Sync](#faster-initial-sync)
     + [JSON-RPC daemon](#json-rpc-daemon)
     + [Run all components by docker-compose](#run-all-components-by-docker-compose)
-    + [Grafana dashboard](#grafana-dashboard)
+    + [Grafana dashboar god](#grafana-dashboard)
 - [Documentation](#documentation)
 - [FAQ](#faq)
 - [Getting in touch](#getting-in-touch)
@@ -38,13 +38,12 @@ Erigon is an implementation of Ethereum (execution client), on the efficiency fr
 
 <!--te-->
 
+**Disclaimer**: this software is currently a tech preview. We will do our best to keep it stable and make no breaking
+changes but we don't guarantee anything. Things can and will break.
 
-NB! <code>In-depth links are marked by the microscope sign (🔬) </code>
+**Important defaults**: Erigon is an Archive Node by default (to remove history see: `--prune` flags in `erigon --help`). We don't allow change this flag after first start.
 
-**Disclaimer: this software is currently a tech preview. We will do our best to keep it stable and make no breaking
-changes but we don't guarantee anything. Things can and will break.**
-
-<code>🔬 Alpha/Beta Designation has been discontinued. For release version numbering, please see [this blog post](https://erigon.substack.com/p/post-merge-release-of-erigon-dropping)</code>
+<code>In-depth links are marked by the microscope sign (🔬) </code>
 
 System Requirements
 ===================
@@ -107,6 +106,15 @@ For Gnosis Chain you need a [Consensus Layer](#beacon-chain-consensus-layer) cli
 
 Running `make help` will list and describe the convenience commands available in the [Makefile](./Makefile).
 
+### Datadir structure
+
+- chaindata: recent blocks, state, recent state history. low-latency disk recommended. 
+- snapshots: old blocks, old state history. can symlink/mount it to cheaper disk. mostly immutable.
+- temp: can grow to ~100gb, but usually empty. can symlink/mount it to cheaper disk.
+- txpool: pending transactions. safe to remove.
+- nodes:  p2p peers. safe to remove.
+
+
 ### Logging
 
 _Flags:_ 
@@ -148,13 +156,6 @@ How to start Erigon's services as separated processes, see in [docker-compose.ym
 By default, on Ethereum Mainnet, Görli, and Sepolia, the Engine API is disabled in favour of the Erigon native Embedded Consensus Layer.
 If you want to use an external Consensus Layer, run Erigon with flag `--externalcl`.
 _Warning:_ Staking (block production) is not possible with the embedded CL – use `--externalcl` instead.
-
-### Optional stages
-
-There is an optional stage that can be enabled through flags:
-
-* `--watch-the-burn`, Enable WatchTheBurn stage which keeps track of ETH issuance and is required to
-  use `erigon_watchTheBurn`.
 
 ### Testnets
 
@@ -242,9 +243,9 @@ file can be overwritten by writing the flags directly on Erigon command line
 
 ### Example
 
-`./build/bin/erigon --config ./config.yaml --chain=goerli
+`./build/bin/erigon --config ./config.yaml --chain=goerli`
 
-Assuming we have `chain : "mainnet" in our configuration file, by adding `--chain=goerli` allows the overwrite of the
+Assuming we have `chain : "mainnet"` in our configuration file, by adding `--chain=goerli` allows the overwrite of the
 flag inside
 of the yaml configuration file and sets the chain to goerli
 
@@ -370,7 +371,7 @@ Examples of stages are:
 
 ### JSON-RPC daemon
 
-Most of Erigon's components (sentry, txpool, snapshots downloader, can work inside Erigon and as independent process.
+Most of Erigon's components (txpool, rpcdaemon, snapshots downloader, sentry, ...) can work inside Erigon and as independent process.
 
 To enable built-in RPC server: `--http` and `--ws` (sharing same port with http)
 
@@ -493,7 +494,8 @@ Windows support for docker-compose is not ready yet. Please help us with .ps1 po
 
 `docker-compose up prometheus grafana`, [detailed docs](./cmd/prometheus/Readme.md).
 
-### Prune old data
+### 
+old data
 
 Disabled by default. To enable see `./build/bin/erigon --help` for flags `--prune`
 

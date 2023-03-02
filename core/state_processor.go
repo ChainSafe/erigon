@@ -109,14 +109,8 @@ func ApplyTransaction(config *chain.Config, blockHashFunc func(n uint64) libcomm
 	// about the transaction and calling mechanisms.
 	cfg.SkipAnalysis = SkipAnalysis(config, header.Number.Uint64())
 
-	var vmenv vm.VMInterface
-
-	if tx.IsStarkNet() {
-		vmenv = &vm.CVMAdapter{Cvm: vm.NewCVM(ibs, firehoseContext)}
-	} else {
-		blockContext := NewEVMBlockContext(header, blockHashFunc, engine, author)
-		vmenv = vm.NewEVM(blockContext, evmtypes.TxContext{}, ibs, config, cfg, firehoseContext)
-	}
+	blockContext := NewEVMBlockContext(header, blockHashFunc, engine, author)
+	vmenv := vm.NewEVM(blockContext, evmtypes.TxContext{}, ibs, config, cfg, firehoseContext)
 
 	return applyTransaction(config, engine, gp, ibs, stateWriter, header, tx, usedGas, vmenv, cfg, firehoseContext)
 }

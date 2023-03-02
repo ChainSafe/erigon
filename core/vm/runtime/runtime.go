@@ -120,7 +120,7 @@ func Execute(code, input []byte, cfg *Config, blockNr uint64) ([]byte, *state.In
 	setDefaults(cfg)
 
 	if cfg.State == nil {
-		db := olddb.NewObjectDatabase(memdb.New())
+		db := olddb.NewObjectDatabase(memdb.New(""))
 		defer db.Close()
 		cfg.r = state.NewDbStateReader(db)
 		cfg.w = state.NewDbStateWriter(db, 0)
@@ -159,7 +159,7 @@ func Create(input []byte, cfg *Config, blockNr uint64) ([]byte, libcommon.Addres
 	setDefaults(cfg)
 
 	if cfg.State == nil {
-		db := olddb.NewObjectDatabase(memdb.New())
+		db := olddb.NewObjectDatabase(memdb.New(""))
 		defer db.Close()
 		cfg.r = state.NewDbStateReader(db)
 		cfg.w = state.NewDbStateWriter(db, 0)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -25,7 +26,7 @@ func TestAccessList_marshal(t *testing.T) {
 		{
 			"one address no keys",
 			AccessList{
-				types.AccessTuple{
+				types2.AccessTuple{
 					Address: address(t, "0x1234567890123456789012345678901234567890"),
 				},
 			},
@@ -35,7 +36,7 @@ func TestAccessList_marshal(t *testing.T) {
 		{
 			"one address one key",
 			AccessList{
-				types.AccessTuple{
+				types2.AccessTuple{
 					Address:     address(t, "0x1234567890123456789012345678901234567890"),
 					StorageKeys: []libcommon.Hash{hash(t, "AB")},
 				},
@@ -46,7 +47,7 @@ func TestAccessList_marshal(t *testing.T) {
 		{
 			"one address multi keys",
 			AccessList{
-				types.AccessTuple{
+				types2.AccessTuple{
 					Address:     address(t, "0x1234567890123456789012345678901234567890"),
 					StorageKeys: []libcommon.Hash{hash(t, "AB"), hash(t, "EF")},
 				},
@@ -63,14 +64,14 @@ func TestAccessList_marshal(t *testing.T) {
 		{
 			"multi address multi keys",
 			AccessList{
-				types.AccessTuple{
+				types2.AccessTuple{
 					Address:     address(t, "0x1234567890123456789012345678901234567890"),
 					StorageKeys: []libcommon.Hash{hash(t, "AB"), hash(t, "EF")},
 				},
-				types.AccessTuple{
+				types2.AccessTuple{
 					Address: address(t, "0xabcdefabcdefabcdefabcdefabcdefabcdef0910"),
 				},
-				types.AccessTuple{
+				types2.AccessTuple{
 					Address:     address(t, "0x1234567890123456789012345678901234567890"),
 					StorageKeys: []libcommon.Hash{hash(t, "12")},
 				},

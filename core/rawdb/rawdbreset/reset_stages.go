@@ -12,6 +12,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
+	"github.com/ledgerwatch/erigon-lib/state"
 	"github.com/ledgerwatch/log/v3"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
@@ -25,7 +26,7 @@ import (
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync"
 )
 
-func ResetState(db kv.RwDB, ctx context.Context, chain string) error {
+func ResetState(db kv.RwDB, ctx context.Context, chain string, tmpDir string) error {
 	// don't reset senders here
 	if err := Reset(ctx, db, stages.HashState); err != nil {
 		return err
@@ -49,13 +50,13 @@ func ResetState(db kv.RwDB, ctx context.Context, chain string) error {
 		return err
 	}
 
-	if err := ResetExec(ctx, db, chain); err != nil {
+	if err := ResetExec(ctx, db, chain, tmpDir); err != nil {
 		return err
 	}
 	return nil
 }
 
-func ResetBlocks(tx kv.RwTx, db kv.RoDB, snapshots *snapshotsync.RoSnapshots, br services.FullBlockReader, dirs datadir.Dirs, cc chain.Config, engine consensus.Engine) error {
+func ResetBlocks(tx kv.RwTx, db kv.RoDB, snapshots *snapshotsync.RoSnapshots, agg *state.AggregatorV3, br services.FullBlockReader, dirs datadir.Dirs, cc chain.Config, engine consensus.Engine) error {
 	// keep Genesis
 	if err := rawdb.TruncateBlocks(context.Background(), tx, 1); err != nil {
 		return err
@@ -105,7 +106,7 @@ func ResetBlocks(tx kv.RwTx, db kv.RoDB, snapshots *snapshotsync.RoSnapshots, br
 	}
 
 	if snapshots != nil && snapshots.Cfg().Enabled && snapshots.BlocksAvailable() > 0 {
-		if err := stagedsync.FillDBFromSnapshots("fillind_db_from_snapshots", context.Background(), tx, dirs, snapshots, br, cc, engine); err != nil {
+		if err := stagedsync.FillDBFromSnapshots("fillind_db_from_snapshots", context.Background(), tx, dirs, snapshots, br, cc, engine, agg); err != nil {
 			return err
 		}
 		_ = stages.SaveStageProgress(tx, stages.Snapshots, snapshots.BlocksAvailable())
@@ -136,7 +137,7 @@ func WarmupExec(ctx context.Context, db kv.RwDB) (err error) {
 	return
 }
 
-func ResetExec(ctx context.Context, db kv.RwDB, chain string) (err error) {
+func ResetExec(ctx context.Context, db kv.RwDB, chain string, tmpDir string) (err error) {
 	historyV3 := kvcfg.HistoryV3.FromDB(db)
 	if historyV3 {
 		stateHistoryBuckets = append(stateHistoryBuckets, stateHistoryV3Buckets...)
@@ -161,7 +162,7 @@ func ResetExec(ctx context.Context, db kv.RwDB, chain string) (err error) {
 		}
 		if !historyV3 {
 			genesis := core.DefaultGenesisBlockByChainName(chain)
-			if _, _, err := genesis.WriteGenesisState(tx); err != nil {
+			if _, _, err := genesis.WriteGenesisState(tx, tmpDir); err != nil {
 				return err
 			}
 		}
