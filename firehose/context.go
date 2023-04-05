@@ -3,13 +3,14 @@ package firehose
 import (
 	"encoding/binary"
 	"fmt"
-	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"math"
 	"math/big"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
+
+	types2 "github.com/ledgerwatch/erigon-lib/types"
 
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
@@ -162,7 +163,7 @@ func (ctx *Context) ExitBlock() {
 	ctx.blockLogIndex = 0
 }
 
-func (ctx *Context) EndBlock(block *types.Block, finalizedBlock *types.Block, totalDifficulty *big.Int) {
+func (ctx *Context) EndBlock(block *types.Block, finalizedBlockHeader *types.Header, totalDifficulty *big.Int) {
 	ctx.ExitBlock()
 
 	endData := map[string]interface{}{
@@ -171,15 +172,31 @@ func (ctx *Context) EndBlock(block *types.Block, finalizedBlock *types.Block, to
 		"totalDifficulty": (*hexutil.Big)(totalDifficulty),
 	}
 
-	if finalizedBlock != nil {
-		endData["finalizedBlockNum"] = (*hexutil.Big)(finalizedBlock.Header().Number)
-		endData["finalizedBlockHash"] = finalizedBlock.Header().Hash()
+	if finalizedBlockHeader != nil {
+		endData["finalizedBlockNum"] = (*hexutil.Big)(finalizedBlockHeader.Number)
+		endData["finalizedBlockHash"] = finalizedBlockHeader.Hash()
 	}
 
 	ctx.printer.Print("END_BLOCK",
 		Uint64(block.NumberU64()),
 		Uint64(uint64(block.Size())),
 		JSON(endData),
+	)
+}
+
+// CancelBlock emit a Firehose CANCEL_BLOCK event that tells the console reader to discard any
+// accumulated block's data and start over. This happens on certains error conditions where the block
+// is actually invalid and will be re-processed by the chain so we should not record it.
+func (ctx *Context) CancelBlock(block *types.Block, err error) {
+	if ctx == nil {
+		return
+	}
+
+	ctx.ExitBlock()
+
+	ctx.printer.Print("CANCEL_BLOCK",
+		Uint64(block.NumberU64()),
+		err.Error(),
 	)
 }
 

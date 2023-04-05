@@ -27,6 +27,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/metrics"
 	"github.com/ledgerwatch/erigon/common/fdlimit"
 	"github.com/ledgerwatch/erigon/core"
+	"github.com/ledgerwatch/erigon/diagnostics"
 	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/metrics/exp"
 	"github.com/ledgerwatch/erigon/params"
@@ -193,6 +194,8 @@ func Setup(ctx *cli.Context, genesis *core.Genesis) error {
 		metricsPort := ctx.Int(metricsPortFlag.Name)
 		address := fmt.Sprintf("%s:%d", metricsAddr, metricsPort)
 		exp.Setup(address)
+		diagnostics.SetupLogsAccess(ctx)
+		diagnostics.SetupDbAccess(ctx)
 	}
 
 	// pprof server

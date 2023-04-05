@@ -67,6 +67,8 @@ func StageMiningExecCfg(
 	payloadId uint64,
 	txPool2 *txpool.TxPool,
 	txPool2DB kv.RoDB,
+	snapshots *snapshotsync.RoSnapshots,
+	transactionsV3 bool,
 ) MiningExecCfg {
 	return MiningExecCfg{
 		db:          db,
@@ -74,7 +76,7 @@ func StageMiningExecCfg(
 		notifier:    notifier,
 		chainConfig: chainConfig,
 		engine:      engine,
-		blockReader: snapshotsync.NewBlockReader(),
+		blockReader: snapshotsync.NewBlockReaderWithSnapshots(snapshots, transactionsV3),
 		vmConfig:    vmConfig,
 		tmpdir:      tmpdir,
 		interrupt:   interrupt,

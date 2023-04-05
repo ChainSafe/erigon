@@ -512,6 +512,7 @@ func (cr *FakeChainReader) Config() *chain.Config {
 }
 
 func (cr *FakeChainReader) CurrentHeader() *types.Header                               { return cr.current.Header() }
+func (cr *FakeChainReader) CurrentFinalizedHeader() *types.Header                      { return cr.current.Header() }
 func (cr *FakeChainReader) GetHeaderByNumber(number uint64) *types.Header              { return nil }
 func (cr *FakeChainReader) GetHeaderByHash(hash libcommon.Hash) *types.Header          { return nil }
 func (cr *FakeChainReader) GetHeader(hash libcommon.Hash, number uint64) *types.Header { return nil }

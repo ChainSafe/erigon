@@ -23,6 +23,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/ethdb/privateapi"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/turbo/engineapi"
 	"github.com/ledgerwatch/erigon/turbo/services"
@@ -158,16 +159,15 @@ func HeadersPOS(
 	useExternalTx bool,
 	preProgress uint64,
 ) error {
-	/*
-		if initialCycle {
-			// Let execution and other stages to finish before waiting for CL, but only if other stages aren't ahead
-			if execProgress, err := stages.GetStageProgress(tx, stages.Execution); err != nil {
-				return err
-			} else if s.BlockNumber >= execProgress {
-				return nil
-			}
+	if initialCycle {
+		// Let execution and other stages to finish before waiting for CL, but only if other stages aren't ahead.
+		// Specifically, this allows to execute snapshot blocks before waiting for CL.
+		if execProgress, err := s.ExecutionAt(tx); err != nil {
+			return err
+		} else if s.BlockNumber >= execProgress {
+			return nil
 		}
-	*/
+	}
 
 	cfg.hd.SetPOSSync(true)
 	syncing := cfg.hd.PosStatus() != headerdownload.Idle
@@ -267,6 +267,12 @@ func writeForkChoiceHashes(
 		rawdb.WriteForkchoiceSafe(tx, forkChoice.SafeBlockHash)
 	}
 	if forkChoice.FinalizedBlockHash != (libcommon.Hash{}) {
+		if firehose.Enabled {
+			// At this point, we are correctly writing a new finalized block hash that is on the canonical chain,
+			// so we are definitely not behind.
+			firehose.SetSyncingBehindFinalized(false)
+		}
+
 		rawdb.WriteForkchoiceFinalized(tx, forkChoice.FinalizedBlockHash)
 	}
 
@@ -343,6 +349,19 @@ func startHandlingForkChoice(
 		} else {
 			schedulePoSDownload(requestId, headerHash, 0 /* header height is unknown, setting to 0 */, headerHash, s, cfg)
 		}
+
+		if firehose.Enabled {
+			finalizedBlockHeader, err := cfg.blockReader.HeaderByHash(ctx, tx, forkChoice.FinalizedBlockHash)
+
+			// If there is an error reading the finalized header, we can assume we are behind, there is probably
+			// something else that will fail later. Best case, it's a transient error and `writeForkChoiceHashes`
+			// will still be called later and will properly `SetSyncingBehindFinalized(false)` so we are good.
+			if finalizedBlockHeader == nil || err != nil {
+				// advertised finalized block is in the future, we are syncing
+				firehose.SetSyncingBehindFinalized(true)
+			}
+		}
+
 		return &engineapi.PayloadStatus{Status: remote.EngineStatus_SYNCING}, nil
 	}
 
@@ -798,10 +817,11 @@ func HeadersPOW(
 	cfg.hd.SetHeaderReader(&ChainReaderImpl{config: &cfg.chainConfig, tx: tx, blockReader: cfg.blockReader})
 
 	stopped := false
+	var noProgressCounter uint = 0
 	prevProgress := headerProgress
-	var noProgressCounter int
 	var wasProgress bool
 	var lastSkeletonTime time.Time
+	var peer [64]byte
 	var sentToPeer bool
 Loop:
 	for !stopped {
@@ -817,10 +837,10 @@ Loop:
 			break
 		}
 
+		sentToPeer = false
 		currentTime := time.Now()
 		req, penalties := cfg.hd.RequestMoreHeaders(currentTime)
 		if req != nil {
-			var peer [64]byte
 			peer, sentToPeer = cfg.headerReqSend(ctx, req)
 			if sentToPeer {
 				cfg.hd.UpdateStats(req, false /* skeleton */, peer)
@@ -834,7 +854,6 @@ Loop:
 		for req != nil && sentToPeer && maxRequests > 0 {
 			req, penalties = cfg.hd.RequestMoreHeaders(currentTime)
 			if req != nil {
-				var peer [64]byte
 				peer, sentToPeer = cfg.headerReqSend(ctx, req)
 				if sentToPeer {
 					cfg.hd.UpdateStats(req, false /* skeleton */, peer)
@@ -851,7 +870,6 @@ Loop:
 		if time.Since(lastSkeletonTime) > 1*time.Second {
 			req = cfg.hd.RequestSkeleton()
 			if req != nil {
-				var peer [64]byte
 				peer, sentToPeer = cfg.headerReqSend(ctx, req)
 				if sentToPeer {
 					cfg.hd.UpdateStats(req, true /* skeleton */, peer)
@@ -893,15 +911,17 @@ Loop:
 			stats := cfg.hd.ExtractStats()
 			if prevProgress == progress {
 				noProgressCounter++
-				if noProgressCounter >= 5 {
-					log.Info("Req/resp stats", "req", stats.Requests, "reqMin", stats.ReqMinBlock, "reqMax", stats.ReqMaxBlock,
-						"skel", stats.SkeletonRequests, "skelMin", stats.SkeletonReqMinBlock, "skelMax", stats.SkeletonReqMaxBlock,
-						"resp", stats.Responses, "respMin", stats.RespMinBlock, "respMax", stats.RespMaxBlock, "dups", stats.Duplicates)
-					cfg.hd.LogAnchorState()
-					if wasProgress {
-						log.Warn("Looks like chain is not progressing, moving to the next stage")
-						break Loop
-					}
+			} else {
+				noProgressCounter = 0 // Reset, there was progress
+			}
+			if noProgressCounter >= 5 {
+				log.Info("Req/resp stats", "req", stats.Requests, "reqMin", stats.ReqMinBlock, "reqMax", stats.ReqMaxBlock,
+					"skel", stats.SkeletonRequests, "skelMin", stats.SkeletonReqMinBlock, "skelMax", stats.SkeletonReqMaxBlock,
+					"resp", stats.Responses, "respMin", stats.RespMinBlock, "respMax", stats.RespMaxBlock, "dups", stats.Duplicates)
+				cfg.hd.LogAnchorState()
+				if wasProgress {
+					log.Warn("Looks like chain is not progressing, moving to the next stage")
+					break Loop
 				}
 			}
 			prevProgress = progress
@@ -1112,8 +1132,9 @@ func NewChainReaderImpl(config *chain.Config, tx kv.Getter, blockReader services
 	return &ChainReaderImpl{config, tx, blockReader}
 }
 
-func (cr ChainReaderImpl) Config() *chain.Config        { return cr.config }
-func (cr ChainReaderImpl) CurrentHeader() *types.Header { panic("") }
+func (cr ChainReaderImpl) Config() *chain.Config                 { return cr.config }
+func (cr ChainReaderImpl) CurrentHeader() *types.Header          { panic("") }
+func (cr ChainReaderImpl) CurrentFinalizedHeader() *types.Header { panic("") }
 func (cr ChainReaderImpl) GetHeader(hash libcommon.Hash, number uint64) *types.Header {
 	if cr.blockReader != nil {
 		h, _ := cr.blockReader.Header(context.Background(), cr.tx, hash, number)

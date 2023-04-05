@@ -35,7 +35,7 @@ jobs:
             echo ::set-output name=tag_name::${TAG}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v1
-      
+
       - name: create-json
         uses: jsdaniell/create-json@v1.2.2
         with:
@@ -50,3 +50,8 @@ jobs:
           VERSION: ${{ steps.prepare.outputs.tag_name }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Publish downloads
+        run: |
+          cd cmd/release
+          docker buildx build --push --platform linux/amd64 --build-arg GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" -t thorax/download:latest .
