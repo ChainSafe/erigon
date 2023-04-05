@@ -2,7 +2,7 @@ project_name: erigon
 
 release:
   github:
-    owner: ChainSafe
+    owner: graphprotocol
     name: erigon
   disable: false
   draft: true

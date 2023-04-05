@@ -9,7 +9,7 @@ structure, it's easier to work with the Firehose fork when you use
 the same names and settings.
 ```
 cd ~/work
-git clone --branch="firehose-v2" git@github.com:ChainSafe/erigon.git
+git clone --branch="firehose-v2" git@github.com:graphprotocol/erigon.git
 cd erigon
 
 git remote rename origin sf
@@ -23,7 +23,7 @@ git fetch origin
 
 For the best result when working with this repository and the scripts it contains:
 
-- The remote `sf` exists on main module and points to `git@github.com:ChainSafe/erigon.git`
+- The remote `sf` exists on main module and points to `git@github.com:graphprotocol/erigon.git`
 - The remote `origin` exists on main module and points to https://github.com/ledgerwatch/erigon.git
 
 ### Install Erigon
@@ -43,7 +43,7 @@ cd battlefield-ethereum
 
 ### Running Erigon
 
-Erigon can be used as an Execution Layer (EL) for Consensus Layer clients (CL). Default configuration is OK. 
+Erigon can be used as an Execution Layer (EL) for Consensus Layer clients (CL). Default configuration is OK.
 
 If your CL client is on a different device, add --authrpc.addr 0.0.0.0 (Engine API listens on localhost by default) as well as --authrpc.vhosts <CL host>.
 
@@ -68,5 +68,5 @@ lighthouse bn --network goerli --execution-endpoint http://localhost:8551 --exec
 [Firehose](https://github.com/streamingfast/firehose-ethereum) support stdin reader which we can use with Erigon instrumented client. Clone the firehose-ethereum repo and run the below command to start the instrumented client with Firehose:
 ```
 cd firehose-ethereum
-erigon --datadir=<path_to_datadir>   --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
+erigon --datadir=<path_to_datadir> --firehose-enabled --chain=goerli --externalcl --private.api.addr=localhost:9090 --http.api=eth,erigon,web3,net,debug,trace,txpool,parity  $@ 2> /datadir/erigon/logs/erigon.log 1> >(./devel/standard-stdin/start.sh -c 2> /datadir/erigon/logs/firehose.log)
 ```
