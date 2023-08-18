@@ -9,6 +9,7 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+
 	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/consensus"
@@ -138,8 +139,7 @@ func (s *Serenity) Finalize(config *chain.Config, header *types.Header, state *s
 	}
 	for _, w := range withdrawals {
 		amountInWei := new(uint256.Int).Mul(uint256.NewInt(w.Amount), uint256.NewInt(params.GWei))
-		// CS TODO: confirm the addBalance reason
-		state.AddBalance(w.Address, amountInWei, false, firehoseContext, firehose.IgnoredBalanceChangeReason)
+		state.AddBalance(w.Address, amountInWei, false, firehoseContext, firehose.BalanceChangeReason("withdrawal"))
 	}
 	return txs, r, nil
 }
