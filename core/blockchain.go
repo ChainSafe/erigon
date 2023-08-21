@@ -445,6 +445,15 @@ func ExecuteBlockEphemerally(
 			firehose.SyncContext().FinalizeBlock(block)
 		}
 
+		withdrawals := block.Withdrawals()
+		if len(withdrawals) > 0 && !chainConfig.IsShanghai(block.Time()) {
+			err := fmt.Errorf("withdrawals before shanghai")
+			if firehoseContext.Enabled() {
+				firehoseContext.CancelBlock(block, err)
+			}
+			return nil, err
+		}
+
 		txs := block.Transactions()
 		newBlock, _, _, err = FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false, firehoseContext)
 		if err != nil {
@@ -631,6 +640,15 @@ func ExecuteBlockEphemerallyBor(
 			firehoseContext.FinalizeBlock(block)
 		} else if firehose.BlockProgressEnabled {
 			firehose.SyncContext().FinalizeBlock(block)
+		}
+
+		withdrawals := block.Withdrawals()
+		if len(withdrawals) > 0 && !chainConfig.IsShanghai(block.Time()) {
+			err := fmt.Errorf("withdrawals before shanghai")
+			if firehoseContext.Enabled() {
+				firehoseContext.CancelBlock(block, err)
+			}
+			return nil, err
 		}
 
 		txs := block.Transactions()
