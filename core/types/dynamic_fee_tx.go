@@ -478,3 +478,18 @@ func NewEIP1559Transaction(chainID uint256.Int, nonce uint64, to libcommon.Addre
 		FeeCap: gasFeeCap,
 	}
 }
+
+func (tx *DynamicFeeTransaction) BlobGas() uint64              { return 0 }
+func (tx *DynamicFeeTransaction) BlobGasFeeCap() *big.Int      { return nil }
+func (tx *DynamicFeeTransaction) BlobHashes() []libcommon.Hash { return nil }
+
+func (tx *DynamicFeeTransaction) EffectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
+	if baseFee == nil {
+		return dst.Set(tx.GetFeeCap().ToBig())
+	}
+	tip := dst.Sub(tx.GetFeeCap().ToBig(), baseFee)
+	if tip.Cmp(tx.GetFeeCap().ToBig()) > 0 {
+		tip.Set(tx.GetFeeCap().ToBig())
+	}
+	return tip.Add(tip, baseFee)
+}

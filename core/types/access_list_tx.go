@@ -549,3 +549,11 @@ func (tx *AccessListTx) Sender(signer Signer) (libcommon.Address, error) {
 	tx.from.Store(addr)
 	return addr, nil
 }
+
+func (tx *AccessListTx) BlobGas() uint64              { return 0 }
+func (tx *AccessListTx) BlobGasFeeCap() *big.Int      { return nil }
+func (tx *AccessListTx) BlobHashes() []libcommon.Hash { return nil }
+
+func (tx *AccessListTx) EffectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
+	return dst.Set(tx.GasPrice.ToBig())
+}

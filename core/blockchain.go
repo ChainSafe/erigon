@@ -111,7 +111,7 @@ func ExecuteBlockEphemerallyForBSC(
 	if !vmConfig.ReadOnly {
 		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
 			return nil, err
 		}
@@ -128,7 +128,7 @@ func ExecuteBlockEphemerallyForBSC(
 		if isPoSA {
 			if isSystemTx, err := posa.IsSystemTransaction(tx, block.Header()); err != nil {
 				if firehoseContext.Enabled() {
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, err
 			} else if isSystemTx {
@@ -147,8 +147,7 @@ func ExecuteBlockEphemerallyForBSC(
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
@@ -167,13 +166,9 @@ func ExecuteBlockEphemerallyForBSC(
 		if err != nil {
 			if !vmConfig.StatelessExec {
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
-			}
-			if firehoseContext.Enabled() {
-				firehoseContext.RecordFailedTransaction(err)
 			}
 			rejectedTxs = append(rejectedTxs, &RejectedTx{i, err.Error()})
 		} else {
@@ -213,7 +208,7 @@ func ExecuteBlockEphemerallyForBSC(
 		outTxs, outReceipts, err := engine.Finalize(chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), epochReader, chainReader, syscall, firehoseContext)
 		if err != nil {
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
 			return nil, err
 		}
@@ -234,38 +229,41 @@ func ExecuteBlockEphemerallyForBSC(
 
 	if chainConfig.IsByzantium(header.Number.Uint64()) && !vmConfig.NoReceipts {
 		if !vmConfig.StatelessExec && receiptSha != block.ReceiptHash() {
+			err := fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
-			return nil, fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
+			return nil, err
 		}
 	}
 	if !vmConfig.StatelessExec && newBlock.GasUsed() != header.GasUsed {
+		err := fmt.Errorf("gas used by execution: %d, in header: %d, in new Block: %v", *usedGas, header.GasUsed, newBlock.GasUsed())
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
-		return nil, fmt.Errorf("gas used by execution: %d, in header: %d, in new Block: %v", *usedGas, header.GasUsed, newBlock.GasUsed())
+		return nil, err
 	}
 
 	var bloom types.Bloom
 	if !vmConfig.NoReceipts {
 		bloom = newBlock.Bloom()
 		if !vmConfig.StatelessExec && bloom != header.Bloom {
+			err := fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
-			return nil, fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
+			return nil, err
 		}
 	}
 
 	if err := ibs.CommitBlock(chainConfig.Rules(header.Number.Uint64(), header.Time), stateWriter); err != nil {
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
 		return nil, fmt.Errorf("committing block %d failed: %w", header.Number.Uint64(), err)
 	} else if err := stateWriter.WriteChangeSets(); err != nil {
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
 		return nil, fmt.Errorf("writing changesets for block %d failed: %w", header.Number.Uint64(), err)
 	}
@@ -349,7 +347,7 @@ func ExecuteBlockEphemerally(
 	if !vmConfig.ReadOnly {
 		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
 			return nil, err
 		}
@@ -371,8 +369,7 @@ func ExecuteBlockEphemerally(
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
@@ -391,13 +388,9 @@ func ExecuteBlockEphemerally(
 		if err != nil {
 			if !vmConfig.StatelessExec {
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
-			}
-			if firehoseContext.Enabled() {
-				firehoseContext.RecordFailedTransaction(err)
 			}
 			rejectedTxs = append(rejectedTxs, &RejectedTx{i, err.Error()})
 		} else {
@@ -413,27 +406,30 @@ func ExecuteBlockEphemerally(
 
 	receiptSha := types.DeriveSha(receipts)
 	if !vmConfig.StatelessExec && chainConfig.IsByzantium(header.Number.Uint64()) && !vmConfig.NoReceipts && receiptSha != block.ReceiptHash() {
+		err := fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
-		return nil, fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
+		return nil, err
 	}
 
 	if !vmConfig.StatelessExec && *usedGas != header.GasUsed {
+		err := fmt.Errorf("gas used by execution: %d, in header: %d", *usedGas, header.GasUsed)
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
-		return nil, fmt.Errorf("gas used by execution: %d, in header: %d", *usedGas, header.GasUsed)
+		return nil, err
 	}
 
 	var bloom types.Bloom
 	if !vmConfig.NoReceipts {
 		bloom = types.CreateBloom(receipts)
 		if !vmConfig.StatelessExec && bloom != header.Bloom {
+			err := fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
-			return nil, fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
+			return nil, err
 		}
 	}
 
@@ -453,7 +449,7 @@ func ExecuteBlockEphemerally(
 		newBlock, _, _, err = FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false, firehoseContext)
 		if err != nil {
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
 			return nil, err
 		}
@@ -539,7 +535,7 @@ func ExecuteBlockEphemerallyBor(
 	if !vmConfig.ReadOnly {
 		if err := InitializeBlockExecution(engine, chainReader, epochReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
 			return nil, err
 		}
@@ -561,8 +557,7 @@ func ExecuteBlockEphemerallyBor(
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
@@ -581,13 +576,9 @@ func ExecuteBlockEphemerallyBor(
 		if err != nil {
 			if !vmConfig.StatelessExec {
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
-			}
-			if firehoseContext.Enabled() {
-				firehoseContext.RecordFailedTransaction(err)
 			}
 			rejectedTxs = append(rejectedTxs, &RejectedTx{i, err.Error()})
 		} else {
@@ -603,27 +594,30 @@ func ExecuteBlockEphemerallyBor(
 
 	receiptSha := types.DeriveSha(receipts)
 	if !vmConfig.StatelessExec && chainConfig.IsByzantium(header.Number.Uint64()) && !vmConfig.NoReceipts && receiptSha != block.ReceiptHash() {
+		err := fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
-		return nil, fmt.Errorf("mismatched receipt headers for block %d (%s != %s)", block.NumberU64(), receiptSha.Hex(), block.ReceiptHash().Hex())
+		return nil, err
 	}
 
 	if !vmConfig.StatelessExec && *usedGas != header.GasUsed {
+		err := fmt.Errorf("gas used by execution: %d, in header: %d", *usedGas, header.GasUsed)
 		if firehoseContext.Enabled() {
-			firehoseContext.ExitBlock()
+			firehoseContext.CancelBlock(block, err)
 		}
-		return nil, fmt.Errorf("gas used by execution: %d, in header: %d", *usedGas, header.GasUsed)
+		return nil, err
 	}
 
 	var bloom types.Bloom
 	if !vmConfig.NoReceipts {
 		bloom = types.CreateBloom(receipts)
 		if !vmConfig.StatelessExec && bloom != header.Bloom {
+			err := fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
-			return nil, fmt.Errorf("bloom computed by execution: %x, in header: %x", bloom, header.Bloom)
+			return nil, err
 		}
 	}
 
@@ -643,7 +637,7 @@ func ExecuteBlockEphemerallyBor(
 		newBlock, _, _, err = FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), epochReader, chainReader, false, firehoseContext)
 		if err != nil {
 			if firehoseContext.Enabled() {
-				firehoseContext.ExitBlock()
+				firehoseContext.CancelBlock(block, err)
 			}
 			return nil, err
 		}

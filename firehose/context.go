@@ -3,7 +3,6 @@ package firehose
 import (
 	"encoding/binary"
 	"fmt"
-	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"math"
 	"math/big"
 	"os"
@@ -11,13 +10,16 @@ import (
 	"strconv"
 	"strings"
 
+	types2 "github.com/ledgerwatch/erigon-lib/types"
+
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	"go.uber.org/atomic"
+
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	erigonmath "github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/common/u256"
 	"github.com/ledgerwatch/erigon/core/types"
-	"go.uber.org/atomic"
 )
 
 // NoOpContext can be used when no recording should happen for a given code path
@@ -86,6 +88,20 @@ func NewContext(printer Printer) *Context {
 	return ctx
 }
 
+func (ctx *Context) resetBlock() {
+	ctx.inBlock.Store(false)
+	ctx.blockLogIndex = 0
+	ctx.totalOrderingCounter.Store(0)
+}
+
+func (ctx *Context) resetTransaction() {
+	ctx.inTransaction.Store(false)
+	ctx.nextCallIndex = 0
+	ctx.activeCallIndex = "0"
+	ctx.callIndexStack = &ExtendedStack{}
+	ctx.callIndexStack.Push(ctx.activeCallIndex)
+}
+
 func (ctx *Context) InitVersion(nodeVersion, dmVersion, variant string) {
 	if ctx == nil {
 		return
@@ -128,7 +144,7 @@ func (ctx *Context) RecordGenesisBlock(block *types.Block, recordGenesisAlloc fu
 	root := block.Root()
 
 	ctx.StartBlock(block)
-	ctx.StartTransactionRaw(libcommon.Hash{}, &zero, &uint256.Int{}, nil, nil, nil, 0, &uint256.Int{}, 0, nil, nil, nil, nil, 0)
+	ctx.StartTransactionRaw(libcommon.Hash{}, &zero, &uint256.Int{}, nil, nil, nil, 0, &uint256.Int{}, 0, nil, nil, nil, nil, 0, 0, nil, nil)
 	ctx.RecordTrxFrom(zero)
 	recordGenesisAlloc(ctx)
 	ctx.EndTransaction(&types.Receipt{PostState: root[:]})
@@ -142,7 +158,6 @@ func (ctx *Context) StartBlock(block *types.Block) {
 	}
 
 	ctx.seenBlock.Store(true)
-	ctx.totalOrderingCounter.Store(0)
 	ctx.printer.Print("BEGIN_BLOCK", Uint64(block.NumberU64()))
 }
 
@@ -152,19 +167,21 @@ func (ctx *Context) FinalizeBlock(block *types.Block) {
 	ctx.printer.Print("FINALIZE_BLOCK", Uint64(block.NumberU64()))
 }
 
-// ExitBlock is used when an abnormal condition is encountered while processing
+// exitBlock is used when an abnormal condition is encountered while processing
 // transactions and we must end the block processing right away, resetting the start
 // along the way.
-func (ctx *Context) ExitBlock() {
-	if !ctx.inBlock.CompareAndSwap(true, false) {
+func (ctx *Context) exitBlock() {
+	if !ctx.inBlock.Load() {
 		panic("exiting a block while not already within a block scope")
 	}
-	ctx.blockLogIndex = 0
+
+	ctx.resetBlock()
+
+	// We must reset transcation because exit block can be called while a transaction is inflight
+	ctx.resetTransaction()
 }
 
 func (ctx *Context) EndBlock(block *types.Block, finalizedBlock *types.Block, totalDifficulty *big.Int) {
-	ctx.ExitBlock()
-
 	endData := map[string]interface{}{
 		"header":          block.Header(),
 		"uncles":          block.Body().Uncles,
@@ -180,6 +197,28 @@ func (ctx *Context) EndBlock(block *types.Block, finalizedBlock *types.Block, to
 		Uint64(block.NumberU64()),
 		Uint64(uint64(block.Size())),
 		JSON(endData),
+	)
+
+	ctx.exitBlock()
+}
+
+// CancelBlock emit a Firehose CANCEL_BLOCK event that tells the console reader to discard any
+// accumulated block's data and start over. This happens on certains error conditions where the block
+// is actually invalid and will be re-processed by the chain so we should not record it.
+func (ctx *Context) CancelBlock(block *types.Block, err error) {
+	if ctx == nil {
+		return
+	}
+
+	// There is some particular runtime code path that could trigger a CANCEL_BLOCK without having started
+	// one, it's ok, the reader is resistant to such and here, we simply don't call `ExitBlock`.
+	if ctx.inBlock.Load() {
+		ctx.exitBlock()
+	}
+
+	ctx.printer.Print("CANCEL_BLOCK",
+		Uint64(block.NumberU64()),
+		err.Error(),
 	)
 }
 
@@ -208,6 +247,9 @@ func (ctx *Context) StartTransaction(tx types.Transaction, baseFee *big.Int) {
 		maxFeePerGas(tx),
 		maxPriorityFeePerGas(tx),
 		tx.Type(),
+		tx.GetGas(),
+		tx.BlobGasFeeCap(),
+		tx.BlobHashes(),
 	)
 }
 
@@ -276,12 +318,19 @@ func (ctx *Context) StartTransactionRaw(
 	maxFeePerGas *big.Int,
 	maxPriorityFeePerGas *big.Int,
 	txType uint8,
+	// The data gas used is actually computed for the transaction and there is no execution,
+	// so it's known already at that point.
+	blobDataGasUsed uint64,
+	maxFeePerDataGas *big.Int,
+	blobHashes []libcommon.Hash,
 ) {
 	if ctx == nil {
 		return
 	}
 
-	ctx.openTransaction()
+	if !ctx.inTransaction.CompareAndSwap(false, true) {
+		panic("entering a transaction while already in a transaction scope")
+	}
 
 	// We start assuming the "null" value (i.e. a dot character), and update if `to` is set
 	toAsString := "."
@@ -299,6 +348,24 @@ func (ctx *Context) StartTransactionRaw(
 		maxPriorityFeePerGasAsString = Hex(maxPriorityFeePerGas.Bytes())
 	}
 
+	maxFeePerDataGasAsString := "."
+	if maxFeePerDataGas != nil {
+		maxFeePerDataGasAsString = Hex(maxFeePerDataGas.Bytes())
+	}
+
+	blobHashesAsString := "."
+	if len(blobHashes) > 0 {
+		stringHashses := make([]string, len(blobHashes))
+		for i, blobHash := range blobHashes {
+			stringHashses[i] = Hash(blobHash)
+		}
+
+		blobHashesAsString = strings.Join(stringHashses, ",")
+	}
+
+	// Fork is not active yet, so let's not modify the instrumentation just yet
+	_, _, _ = blobDataGasUsed, maxFeePerDataGasAsString, blobHashesAsString
+
 	ctx.printer.Print("BEGIN_APPLY_TRX",
 		Hash(hash),
 		toAsString,
@@ -315,13 +382,11 @@ func (ctx *Context) StartTransactionRaw(
 		maxPriorityFeePerGasAsString,
 		Uint8(txType),
 		Uint64(ctx.totalOrderingCounter.Inc()),
+		// Blob fields will go here once activated
+		// Uint64(blobDataGasUsed),
+		// maxFeePerDataGasAsString,
+		// blobHashesAsString,
 	)
-}
-
-func (ctx *Context) openTransaction() {
-	if !ctx.inTransaction.CompareAndSwap(false, true) {
-		panic("entering a transaction while already in a transaction scope")
-	}
 }
 
 func (ctx *Context) RecordTrxFrom(from libcommon.Address) {
@@ -339,26 +404,12 @@ func (ctx *Context) RecordTrxFrom(from libcommon.Address) {
 	)
 }
 
-func (ctx *Context) RecordFailedTransaction(err error) {
-	if ctx == nil {
-		return
-	}
-
-	ctx.printer.Print("FAILED_APPLY_TRX",
-		err.Error(),
-		Uint64(ctx.totalOrderingCounter.Inc()),
-	)
-	if !ctx.inTransaction.CompareAndSwap(true, false) {
-		panic("exiting a transaction while not already within a transaction scope")
-	}
-}
-
 func (ctx *Context) EndTransaction(receipt *types.Receipt) {
 	if ctx == nil {
 		return
 	}
 
-	if !ctx.inTransaction.CompareAndSwap(true, false) {
+	if !ctx.inTransaction.Load() {
 		panic("exiting a transaction while not already within a transaction scope")
 	}
 
@@ -381,10 +432,7 @@ func (ctx *Context) EndTransaction(receipt *types.Receipt) {
 		JSON(logItems),
 	)
 
-	ctx.nextCallIndex = 0
-	ctx.activeCallIndex = "0"
-	ctx.callIndexStack = &ExtendedStack{}
-	ctx.callIndexStack.Push(ctx.activeCallIndex)
+	ctx.resetTransaction()
 }
 
 // Call methods

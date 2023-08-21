@@ -455,3 +455,11 @@ func (tx *LegacyTx) Sender(signer Signer) (libcommon.Address, error) {
 	tx.from.Store(addr)
 	return addr, nil
 }
+
+func (tx *LegacyTx) BlobGas() uint64              { return 0 }
+func (tx *LegacyTx) BlobGasFeeCap() *big.Int      { return nil }
+func (tx *LegacyTx) BlobHashes() []libcommon.Hash { return nil }
+
+func (tx *LegacyTx) EffectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
+	return dst.Set(tx.GasPrice.ToBig())
+}
