@@ -15,6 +15,7 @@ import (
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/turbo/stages"
 	"github.com/ledgerwatch/erigon/turbo/trie"
 )
@@ -103,18 +104,18 @@ func TestAuRaSkipGasLimit(t *testing.T) {
 		return fakeVal, err
 	}
 	require.NotPanics(func() {
-		m.Engine.Initialize(chainConfig, &core.FakeChainReader{}, validPreMergeHeader, nil, nil, nil, syscallCustom)
+		m.Engine.Initialize(chainConfig, &core.FakeChainReader{}, validPreMergeHeader, nil, nil, nil, syscallCustom, firehose.NoOpContext)
 	})
 
 	invalidPreMergeHeader := validPreMergeHeader
 	invalidPreMergeHeader.GasLimit = 12_123456 //a different, wrong gasLimit
 	require.Panics(func() {
-		m.Engine.Initialize(chainConfig, &core.FakeChainReader{}, invalidPreMergeHeader, nil, nil, nil, syscallCustom)
+		m.Engine.Initialize(chainConfig, &core.FakeChainReader{}, invalidPreMergeHeader, nil, nil, nil, syscallCustom, firehose.NoOpContext)
 	})
 
 	invalidPostMergeHeader := invalidPreMergeHeader
 	invalidPostMergeHeader.Difficulty = big.NewInt(0) //zero difficulty detected as PoS
 	require.NotPanics(func() {
-		m.Engine.Initialize(chainConfig, &core.FakeChainReader{}, invalidPostMergeHeader, nil, nil, nil, syscallCustom)
+		m.Engine.Initialize(chainConfig, &core.FakeChainReader{}, invalidPostMergeHeader, nil, nil, nil, syscallCustom, firehose.NoOpContext)
 	})
 }

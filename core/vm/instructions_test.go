@@ -575,14 +575,14 @@ func BenchmarkOpMstore(bench *testing.B) {
 func TestOpTstore(t *testing.T) {
 	var (
 		state          = state.New(nil)
-		env            = NewEVM(evmtypes.BlockContext{}, evmtypes.TxContext{}, state, params.TestChainConfig, Config{})
+		env            = NewEVM(evmtypes.BlockContext{}, evmtypes.TxContext{}, state, params.TestChainConfig, Config{}, firehose.NoOpContext)
 		stack          = stack.New()
 		mem            = NewMemory()
 		evmInterpreter = NewEVMInterpreter(env, env.Config())
 		caller         = libcommon.Address{}
 		to             = libcommon.Address{1}
 		contractRef    = contractRef{caller}
-		contract       = NewContract(contractRef, AccountRef(to), u256.Num0, 0, false)
+		contract       = NewContract(contractRef, AccountRef(to), u256.Num0, 0, false, firehose.NoOpContext)
 		scopeContext   = ScopeContext{mem, stack, contract}
 		value          = common.Hex2Bytes("abcdef00000000000000abba000000000deaf000000c0de00100000000133700")
 	)
