@@ -10,15 +10,15 @@ import (
 	"strconv"
 	"strings"
 
-	types2 "github.com/ledgerwatch/erigon-lib/types"
-
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	types2 "github.com/ledgerwatch/erigon-lib/types"
+	"go.uber.org/atomic"
+
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	erigonmath "github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/common/u256"
 	"github.com/ledgerwatch/erigon/core/types"
-	"go.uber.org/atomic"
 )
 
 // NoOpContext can be used when no recording should happen for a given code path
@@ -384,7 +384,7 @@ func (ctx *Context) EndTransaction(receipt *types.Receipt) {
 		logItems[i] = logItem{
 			"address": log.Address,
 			"topics":  log.Topics,
-			"data":    hexutil.Bytes(log.Data),
+			"data":    log.Data,
 		}
 	}
 
