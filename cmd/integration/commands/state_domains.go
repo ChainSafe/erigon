@@ -38,6 +38,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/node/nodecfg"
 	erigoncli "github.com/ledgerwatch/erigon/turbo/cli"
 	"github.com/ledgerwatch/erigon/turbo/debug"
@@ -523,7 +524,8 @@ func (b *blockProcessor) applyBlock(
 	if daoFork {
 		ibs := state.New(b.reader)
 		// TODO Actually add tracing to the DAO related accounts
-		misc.ApplyDAOHardFork(ibs)
+		// TODO CS: confirm the firehose context
+		misc.ApplyDAOHardFork(ibs, firehose.NoOpContext)
 		if err := ibs.FinalizeTx(rules, b.writer); err != nil {
 			return nil, err
 		}
@@ -545,7 +547,7 @@ func (b *blockProcessor) applyBlock(
 			ibs.SetTxContext(tx.Hash(), block.Hash(), i)
 			ct := exec3.NewCallTracer()
 			b.vmConfig.Tracer = ct
-			receipt, _, err := core.ApplyTransaction(b.chainConfig, getHashFn, b.engine, nil, gp, ibs, b.writer, header, tx, usedGas, usedDataGas, b.vmConfig)
+			receipt, _, err := core.ApplyTransaction(b.chainConfig, getHashFn, b.engine, nil, gp, ibs, b.writer, header, tx, usedGas, usedDataGas, b.vmConfig, firehose.NoOpContext)
 			if err != nil {
 				return nil, fmt.Errorf("could not apply tx %d [%x] failed: %w", i, tx.Hash(), err)
 			}
@@ -602,7 +604,7 @@ func (b *blockProcessor) applyBlock(
 		}
 
 		// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-		if _, _, err := b.engine.Finalize(b.chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), nil, nil); err != nil {
+		if _, _, err := b.engine.Finalize(b.chainConfig, header, ibs, block.Transactions(), block.Uncles(), receipts, block.Withdrawals(), nil, nil, firehose.NoOpContext); err != nil {
 			return nil, fmt.Errorf("finalize of block %d failed: %w", block.NumberU64(), err)
 		}
 
