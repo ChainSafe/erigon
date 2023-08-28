@@ -7,8 +7,9 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/erigon/turbo/services"
 	"github.com/ledgerwatch/log/v3"
+
+	"github.com/ledgerwatch/erigon/turbo/services"
 
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -19,6 +20,20 @@ type ChainReaderImpl struct {
 	Cfg         chain.Config
 	Db          kv.Getter
 	BlockReader services.FullBlockReader
+}
+
+func (cr ChainReaderImpl) CurrentFinalizedHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceFinalized(cr.Db)
+	if hash == (libcommon.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.Db, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.Db, hash, *number)
 }
 
 // Config retrieves the blockchain's chain configuration.

@@ -898,7 +898,8 @@ func (api *TraceAPIImpl) callManyTransactions(
 	}
 	engine := api.engine()
 	consensusHeaderReader := stagedsync.NewChainReaderImpl(cfg, dbtx, nil)
-	err = core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, block.HeaderNoCopy(), block.Transactions(), block.Uncles(), cfg, initialState)
+	// TODO CS: confirm which firehose context to pass in hear
+	err = core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, block.HeaderNoCopy(), block.Transactions(), block.Uncles(), cfg, initialState, firehose.NoOpContext)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -919,7 +920,7 @@ func (api *TraceAPIImpl) callManyTransactions(
 		// gnosis might have a fee free account here
 		if msg.FeeCap().IsZero() && engine != nil {
 			syscall := func(contract common.Address, data []byte) ([]byte, error) {
-				return core.SysCallContract(contract, data, cfg, initialState, header, engine, true /* constCall */)
+				return core.SysCallContract(contract, data, cfg, initialState, header, engine, true /* constCall */, firehose.NoOpContext)
 			}
 			msg.SetIsFree(engine.IsServiceTransaction(msg.From(), syscall))
 		}
@@ -941,7 +942,7 @@ func (api *TraceAPIImpl) callManyTransactions(
 
 	syscall := func(contract common.Address, data []byte) ([]byte, error) {
 		constCall := false // this syscall is used for calculating rewards, which is not constant
-		return core.SysCallContract(contract, data, cfg, lastState, header, engine, constCall)
+		return core.SysCallContract(contract, data, cfg, lastState, header, engine, constCall, firehose.NoOpContext)
 	}
 
 	return traces, syscall, nil

@@ -23,6 +23,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/txpool/txpoolcfg"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
+
 	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/common"
@@ -257,7 +258,7 @@ func (st *StateTransition) buyGas(gasBailout bool) error {
 
 	if subBalance {
 		st.state.SubBalance(st.msg.From(), mgval, st.firehoseContext, firehose.BalanceChangeReason("gas_buy"))
-		// TODO CS: ohm check
+		// TODO CS: ohm confirm the reason
 		st.state.SubBalance(st.msg.From(), dgval, st.firehoseContext, firehose.BalanceChangeReason("gas_buy"))
 	}
 	return nil
@@ -447,7 +448,7 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 	}
 	amount := new(uint256.Int).SetUint64(st.gasUsed())
 	amount.Mul(amount, effectiveTip) // gasUsed * effectiveTip = how much goes to the block producer (miner, validator)
-	st.state.AddBalance(coinbase, amount,  false, st.firehoseContext, firehose.BalanceChangeReason("reward_transaction_fee"))
+	st.state.AddBalance(coinbase, amount, false, st.firehoseContext, firehose.BalanceChangeReason("reward_transaction_fee"))
 	if !msg.IsFree() && rules.IsLondon && rules.IsEip1559FeeCollector {
 		burntContractAddress := *st.evm.ChainConfig().Eip1559FeeCollector
 		burnAmount := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gasUsed()), st.evm.Context().BaseFee)

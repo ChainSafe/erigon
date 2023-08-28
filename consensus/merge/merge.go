@@ -145,7 +145,6 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 		return nil, nil, err
 	}
 	for _, r := range rewards {
-		// TODO CS: ohm check here.
 		switch r.Kind {
 		case consensus.RewardAuthor:
 			state.AddBalance(r.Beneficiary, &r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
