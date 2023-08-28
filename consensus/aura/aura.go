@@ -30,10 +30,8 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+
 	"github.com/ledgerwatch/erigon/firehose"
-	"github.com/ledgerwatch/log/v3"
-	"github.com/ledgerwatch/secp256k1"
-	"go.uber.org/atomic"
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/consensus"
@@ -689,7 +687,7 @@ func (c *AuRa) Initialize(config *chain.Config, chain consensus.ChainHeaderReade
 
 }
 
-func (c *AuRa) applyRewards(header *types.Header, state *state.IntraBlockState, syscall consensus.SystemCall) error {
+func (c *AuRa) applyRewards(header *types.Header, state *state.IntraBlockState, syscall consensus.SystemCall, firehoseContext *firehose.Context) error {
 	rewards, err := c.CalculateRewards(nil, header, nil, syscall)
 	if err != nil {
 		return err
@@ -699,11 +697,11 @@ func (c *AuRa) applyRewards(header *types.Header, state *state.IntraBlockState, 
 		// CS TODO: what message should be here?
 		switch r.Kind {
 		case consensus.RewardAuthor:
-			state.AddBalance(r.Beneficiary, r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
+			state.AddBalance(r.Beneficiary, &r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
 		case consensus.RewardUncle:
-			state.AddBalance(r.Beneficiary, r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_uncle"))
+			state.AddBalance(r.Beneficiary, &r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_uncle"))
 		default:
-			state.AddBalance(r.Beneficiary, r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_unknown"))
+			state.AddBalance(r.Beneficiary, &r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_unknown"))
 		}
 	}
 	return nil
@@ -850,8 +848,8 @@ func allHeadersUntil(chain consensus.ChainHeaderReader, from *types.Header, to l
 //}
 
 // FinalizeAndAssemble implements consensus.Engine
-func (c *AuRa) FinalizeAndAssemble(config *chain.Config, header *types.Header, state *state.IntraBlockState, txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call) (*types.Block, types.Transactions, types.Receipts, error) {
-	outTxs, outReceipts, err := c.Finalize(config, header, state, txs, uncles, receipts, withdrawals, chain, syscall, firehoseContext *firehose.Context,)
+func (c *AuRa) FinalizeAndAssemble(config *chain.Config, header *types.Header, state *state.IntraBlockState, txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal, chain consensus.ChainHeaderReader, syscall consensus.SystemCall, call consensus.Call, firehoseContext *firehose.Context) (*types.Block, types.Transactions, types.Receipts, error) {
+	outTxs, outReceipts, err := c.Finalize(config, header, state, txs, uncles, receipts, withdrawals, chain, syscall, firehoseContext)
 	if err != nil {
 		return nil, nil, nil, err
 	}

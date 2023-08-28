@@ -46,6 +46,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/params/networkname"
 	"github.com/ledgerwatch/erigon/turbo/trie"
@@ -522,7 +523,7 @@ func GenesisToBlock(g *types.Genesis, tmpDir string) (*types.Block, *state.Intra
 		}
 		// See https://github.com/NethermindEth/nethermind/blob/master/src/Nethermind/Nethermind.Consensus.AuRa/InitializationSteps/LoadGenesisBlockAuRa.cs
 		if hasConstructorAllocation && g.Config.Aura != nil {
-			statedb.CreateAccount(libcommon.Address{}, false)
+			statedb.CreateAccount(libcommon.Address{}, false, firehose.NoOpContext)
 		}
 
 		keys := sortedAllocKeys(g.Alloc)
@@ -534,23 +535,23 @@ func GenesisToBlock(g *types.Genesis, tmpDir string) (*types.Block, *state.Intra
 			if overflow {
 				panic("overflow at genesis allocs")
 			}
-			statedb.AddBalance(addr, balance)
-			statedb.SetCode(addr, account.Code)
-			statedb.SetNonce(addr, account.Nonce)
+			statedb.AddBalance(addr, balance, false, firehose.NoOpContext, firehose.BalanceChangeReason("genesis_balance"))
+			statedb.SetCode(addr, account.Code, firehose.NoOpContext)
+			statedb.SetNonce(addr, account.Nonce, firehose.NoOpContext)
 			for key, value := range account.Storage {
 				key := key
 				val := uint256.NewInt(0).SetBytes(value.Bytes())
-				statedb.SetState(addr, &key, *val)
+				statedb.SetState(addr, &key, *val, firehose.NoOpContext)
 			}
 
 			if len(account.Constructor) > 0 {
-				if _, err = SysCreate(addr, account.Constructor, *g.Config, statedb, head); err != nil {
+				if _, err = SysCreate(addr, account.Constructor, *g.Config, statedb, head, firehose.NoOpContext); err != nil {
 					return
 				}
 			}
 
 			if len(account.Code) > 0 || len(account.Storage) > 0 || len(account.Constructor) > 0 {
-				statedb.SetIncarnation(addr, state.FirstContractIncarnation)
+				statedb.SetIncarnation(addr, state.FirstContractIncarnation, firehose.NoOpContext)
 			}
 		}
 		if err = statedb.FinalizeTx(&chain.Rules{}, w); err != nil {

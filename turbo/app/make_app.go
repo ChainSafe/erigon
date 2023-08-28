@@ -6,9 +6,10 @@ import (
 	"strings"
 
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
-	"github.com/ledgerwatch/erigon/turbo/logging"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
+
+	"github.com/ledgerwatch/erigon/turbo/logging"
 
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/firehose"
@@ -17,7 +18,6 @@ import (
 	"github.com/ledgerwatch/erigon/params"
 	cli2 "github.com/ledgerwatch/erigon/turbo/cli"
 	"github.com/ledgerwatch/erigon/turbo/debug"
-	turboNode "github.com/ledgerwatch/erigon/turbo/node"
 )
 
 // MakeApp creates a cli application (based on `github.com/urlfave/cli` package).
@@ -48,12 +48,6 @@ func MakeApp(name string, action cli.ActionFunc, cliFlags []cli.Flag) *cli.App {
 	app.Flags = append(app.Flags, logging.Flags...)
 	app.Flags = append(app.Flags, debug.FirehoseFlags...)
 	app.Before = func(ctx *cli.Context) error {
-		nodeCfg := turboNode.NewNodConfigUrfave(ctx)
-		ethCfg := turboNode.NewEthConfigUrfave(ctx, nodeCfg)
-		if err := debug.Setup(ctx, ethCfg.Genesis); err != nil {
-			return err
-		}
-
 		firehose.MaybeSyncContext().InitVersion(
 			params.VersionWithCommit(params.GitCommit),
 			params.FirehoseVersion(),

@@ -17,8 +17,8 @@
 package debug
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof" //nolint:gosec
@@ -34,6 +34,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/common/fdlimit"
 	"github.com/ledgerwatch/erigon/core"
+	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/diagnostics"
 	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/metrics/exp"
@@ -109,7 +110,6 @@ var Flags = []cli.Flag{
 	&pprofFlag, &pprofAddrFlag, &pprofPortFlag,
 	&cpuprofileFlag, &traceFlag,
 }
-
 
 // FirehoseFlags holds all StreamingFast Firehose related command-line flags.
 var FirehoseFlags = []cli.Flag{
@@ -253,29 +253,23 @@ func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, error) {
 	}
 
 	var genesisProvenance string
-
-	if genesis != nil {
-		firehose.GenesisConfig = genesis
-		genesisProvenance = "Geth Specific Flag"
-	} else {
-		if genesisFilePath := ctx.String(firehoseGenesisFileFlag.Name); genesisFilePath != "" {
-			file, err := os.Open(genesisFilePath)
-			if err != nil {
-				return logger, fmt.Errorf("firehose open genesis file: %w", err)
-			}
-			defer file.Close()
-
-			genesis := &core.Genesis{}
-			if err := json.NewDecoder(file).Decode(genesis); err != nil {
-				return logger, fmt.Errorf("decode genesis file %q: %w", genesisFilePath, err)
-			}
-
-			firehose.GenesisConfig = genesis
-			genesisProvenance = "Flag " + firehoseGenesisFileFlag.Name
-		} else {
-			firehose.GenesisConfig = core.DefaultGenesisBlock()
-			genesisProvenance = "Geth Default"
+	if genesisFilePath := ctx.String(firehoseGenesisFileFlag.Name); genesisFilePath != "" {
+		file, err := os.Open(genesisFilePath)
+		if err != nil {
+			return logger, fmt.Errorf("firehose open genesis file: %w", err)
 		}
+		defer file.Close()
+
+		genesis := &types.Genesis{}
+		if err := json.NewDecoder(file).Decode(genesis); err != nil {
+			return logger, fmt.Errorf("decode genesis file %q: %w", genesisFilePath, err)
+		}
+
+		firehose.GenesisConfig = genesis
+		genesisProvenance = "Flag " + firehoseGenesisFileFlag.Name
+	} else {
+		firehose.GenesisConfig = core.MainnetGenesisBlock()
+		genesisProvenance = "Geth Default"
 	}
 
 	log.Info("Firehose initialized",
@@ -287,7 +281,6 @@ func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, error) {
 		"erigon_version", params.VersionWithMeta,
 		"chain_variant", params.Variant,
 	)
-
 
 	return logger, nil
 }

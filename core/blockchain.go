@@ -28,15 +28,10 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
-	"golang.org/x/crypto/sha3"
-	"golang.org/x/exp/slices"
 
-	"github.com/ledgerwatch/erigon/core/systemcontracts"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/rlp"
-
-	metrics2 "github.com/VictoriaMetrics/metrics"
 
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/common/u256"
@@ -45,8 +40,6 @@ import (
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
-	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
-	"github.com/ledgerwatch/erigon/rlp"
 )
 
 var (
@@ -114,7 +107,6 @@ func ExecuteBlockEphemerally(
 		firehoseContext.StartBlock(block)
 	}
 
-
 	if !vmConfig.ReadOnly {
 		if err := InitializeBlockExecution(engine, chainReader, block.Header(), block.Transactions(), block.Uncles(), chainConfig, ibs, firehoseContext); err != nil {
 			if firehoseContext.Enabled() {
@@ -134,7 +126,6 @@ func ExecuteBlockEphemerally(
 			firehoseContext.StartTransaction(tx, header.BaseFee)
 		}
 
-
 		ibs.SetTxContext(tx.Hash(), block.Hash(), i)
 		writeTrace := false
 		if vmConfig.Debug && vmConfig.Tracer == nil {
@@ -151,7 +142,7 @@ func ExecuteBlockEphemerally(
 			vmConfig.Tracer = tracer
 			writeTrace = true
 		}
-		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, usedDataGas, *vmConfig)
+		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, usedDataGas, *vmConfig, firehoseContext)
 		if writeTrace {
 			if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
 				ftracer.Flush(tx)
@@ -295,7 +286,6 @@ func ExecuteBlockEphemerally(
 			firehoseContext.EndBlock(block, nil, td)
 		}
 
-
 		stateSyncReceipt := &types.Receipt{}
 		if chainConfig.Consensus == chain.BorConsensus && len(blockLogs) > 0 {
 			slices.SortStableFunc(blockLogs, func(i, j *types.Log) bool { return i.Index < j.Index })
@@ -324,7 +314,7 @@ func rlpHash(x interface{}) (h libcommon.Hash) {
 
 func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool, firehoseContext *firehose.Context) (result []byte, err error) {
 	if chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(ib,firehoseContexts)
+		misc.ApplyDAOHardFork(ibs, firehoseContext)
 	}
 	msg := types.NewMessage(
 		state.SystemAddress,

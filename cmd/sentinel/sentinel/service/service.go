@@ -11,14 +11,15 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
 	sentinelrpc "github.com/ledgerwatch/erigon-lib/gointerfaces/sentinel"
+	"github.com/ledgerwatch/log/v3"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/ledgerwatch/erigon/cl/cltypes"
 	"github.com/ledgerwatch/erigon/cl/utils"
 	"github.com/ledgerwatch/erigon/cmd/sentinel/sentinel"
 	"github.com/ledgerwatch/erigon/cmd/sentinel/sentinel/communication"
 	"github.com/ledgerwatch/erigon/cmd/sentinel/sentinel/peers"
-	"github.com/ledgerwatch/log/v3"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 type SentinelServer struct {
@@ -99,17 +100,6 @@ func (s *SentinelServer) PublishGossip(_ context.Context, msg *sentinelrpc.Gossi
 		return &sentinelrpc.EmptyMessage{}, nil
 	}
 	return &sentinelrpc.EmptyMessage{}, subscription.Publish(compressedData)
-}
-
-//BanPeer(context.Context, *Peer) (*EmptyMessage, error)
-
-func (s *SentinelServer) BanPeer(_ context.Context, p *sentinelrpc.Peer) (*sentinelrpc.EmptyMessage, error) {
-	var pid peer.ID
-	if err := pid.UnmarshalText([]byte(p.Pid)); err != nil {
-		return nil, err
-	}
-	s.sentinel.Peers().BanBadPeer(pid)
-	return &sentinelrpc.EmptyMessage{}, nil
 }
 
 func (s *SentinelServer) SubscribeGossip(_ *sentinelrpc.EmptyMessage, stream sentinelrpc.Sentinel_SubscribeGossipServer) error {

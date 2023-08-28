@@ -58,7 +58,7 @@ type (
 
 // IntraBlockState is an EVM database for full state querying.
 type IntraBlockState interface {
-	CreateAccount(common.Address, bool,*firehose.Context)
+	CreateAccount(common.Address, bool, *firehose.Context)
 
 	SubBalance(common.Address, *uint256.Int, *firehose.Context, firehose.BalanceChangeReason)
 	AddBalance(common.Address, *uint256.Int, bool, *firehose.Context, firehose.BalanceChangeReason)
@@ -69,7 +69,7 @@ type IntraBlockState interface {
 
 	GetCodeHash(common.Address) common.Hash
 	GetCode(common.Address) []byte
-	SetCode(common.Address, []byte, firehose.Context)
+	SetCode(common.Address, []byte, *firehose.Context)
 	GetCodeSize(common.Address) int
 
 	AddRefund(uint64)

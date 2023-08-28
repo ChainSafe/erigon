@@ -10,6 +10,7 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
+
 	"github.com/ledgerwatch/erigon/firehose"
 
 	"github.com/ledgerwatch/erigon/consensus"
@@ -109,7 +110,7 @@ func (s *Merge) VerifyUncles(chain consensus.ChainReader, header *types.Header, 
 }
 
 // Prepare makes sure difficulty and nonce are correct
-func (s *Merge) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState) error {
+func (s *Merge) Prepare(chain consensus.ChainHeaderReader, header *types.Header, state *state.IntraBlockState, firehoseContext *firehose.Context) error {
 	reached, err := IsTTDReached(chain, header.ParentHash, header.Number.Uint64()-1)
 	if err != nil {
 		return err
@@ -145,7 +146,7 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 	}
 	for _, r := range rewards {
 		// TODO CS: ohm check here.
-		switch r.Kind{
+		switch r.Kind {
 		case consensus.RewardAuthor:
 			state.AddBalance(r.Beneficiary, &r.Amount, false, firehoseContext, firehose.BalanceChangeReason("reward_mine_block"))
 		case consensus.RewardUncle:
