@@ -140,7 +140,7 @@ func (ctx *Context) RecordGenesisBlock(block *types.Block, recordGenesisAlloc fu
 }
 
 func (ctx *Context) StartBlock(block *types.Block) {
-	log.Info("starting block---", block.Number())
+	log.Info("starting block---", "block_number", block.Number())
 	if !ctx.inBlock.CompareAndSwap(false, true) {
 		panic(fmt.Sprintf("entering a block while already in a block scope: new block: %d ", block.Number()))
 	}
