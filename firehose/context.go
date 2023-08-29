@@ -233,7 +233,7 @@ func maxFeePerGas(tx types.Transaction) *big.Int {
 	case types.LegacyTxType, types.AccessListTxType:
 		return nil
 
-	case types.DynamicFeeTxType:
+	case types.DynamicFeeTxType, types.BlobTxType:
 		// return tx.GasFeeCap()
 		return tx.GetFeeCap().ToBig()
 	}
@@ -246,7 +246,7 @@ func maxPriorityFeePerGas(tx types.Transaction) *big.Int {
 	case types.LegacyTxType, types.AccessListTxType:
 		return nil
 
-	case types.DynamicFeeTxType:
+	case types.DynamicFeeTxType, types.BlobTxType:
 		// May not be correct
 		// return tx.GasTipCap()
 		return tx.GetTip().ToBig()
@@ -260,7 +260,7 @@ func gasPrice(tx types.Transaction, baseFee *big.Int) *uint256.Int {
 	case types.LegacyTxType, types.AccessListTxType:
 		return tx.GetPrice()
 
-	case types.DynamicFeeTxType:
+	case types.DynamicFeeTxType, types.BlobTxType:
 		if baseFee == nil {
 			return tx.GetPrice()
 		}
