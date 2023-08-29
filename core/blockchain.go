@@ -133,8 +133,7 @@ func ExecuteBlockEphemerally(
 			if err != nil {
 				err := fmt.Errorf("could not obtain tracer: %w", err)
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 
 				return nil, err
@@ -154,8 +153,7 @@ func ExecuteBlockEphemerally(
 			if !vmConfig.StatelessExec {
 				err := fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
 				if firehoseContext.Enabled() {
-					firehoseContext.RecordFailedTransaction(err)
-					firehoseContext.ExitBlock()
+					firehoseContext.CancelBlock(block, err)
 				}
 
 				return nil, err

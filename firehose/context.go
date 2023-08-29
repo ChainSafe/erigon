@@ -153,10 +153,10 @@ func (ctx *Context) FinalizeBlock(block *types.Block) {
 	ctx.printer.Print("FINALIZE_BLOCK", Uint64(block.NumberU64()))
 }
 
-// ExitBlock is used when an abnormal condition is encountered while processing
+// exitBlock is used when an abnormal condition is encountered while processing
 // transactions and we must end the block processing right away, resetting the start
 // along the way.
-func (ctx *Context) ExitBlock() {
+func (ctx *Context) exitBlock() {
 	if !ctx.inBlock.CompareAndSwap(true, false) {
 		panic("exiting a block while not already within a block scope")
 	}
@@ -164,7 +164,7 @@ func (ctx *Context) ExitBlock() {
 }
 
 func (ctx *Context) EndBlock(block *types.Block, finalizedBlockHeader *types.Header, totalDifficulty *big.Int) {
-	ctx.ExitBlock()
+	ctx.exitBlock()
 
 	endData := map[string]interface{}{
 		"header":          block.Header(),
@@ -192,7 +192,7 @@ func (ctx *Context) CancelBlock(block *types.Block, err error) {
 		return
 	}
 
-	ctx.ExitBlock()
+	ctx.exitBlock()
 
 	ctx.printer.Print("CANCEL_BLOCK",
 		Uint64(block.NumberU64()),
