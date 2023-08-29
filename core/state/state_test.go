@@ -127,7 +127,7 @@ func (s *StateSuite) TearDownTest(c *checker.C) {
 
 func (s *StateSuite) TestNull(c *checker.C) {
 	address := common.HexToAddress("0x823140710bf13990e4500136726d8b55")
-	s.state.CreateAccount(address, true , firehose.NoOpContext)
+	s.state.CreateAccount(address, true, firehose.NoOpContext)
 	//value := common.FromHex("0x823140710bf13990e4500136726d8b55")
 	var value uint256.Int
 
@@ -161,7 +161,7 @@ func (s *StateSuite) TestTouchDelete(c *checker.C) {
 	s.state.Reset()
 
 	snapshot := s.state.Snapshot()
-	s.state.AddBalance(common.Address{}, new(uint256.Int), false,  firehose.NoOpContext, "test")
+	s.state.AddBalance(common.Address{}, new(uint256.Int), false, firehose.NoOpContext, "test")
 
 	if len(s.state.journal.dirties) != 1 {
 		c.Fatal("expected one dirty state object")
