@@ -15,6 +15,8 @@ import (
 	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"go.uber.org/atomic"
 
+	"github.com/ledgerwatch/log/v3"
+
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	erigonmath "github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/common/u256"
@@ -138,8 +140,9 @@ func (ctx *Context) RecordGenesisBlock(block *types.Block, recordGenesisAlloc fu
 }
 
 func (ctx *Context) StartBlock(block *types.Block) {
+	log.Info("starting block---", block.Number())
 	if !ctx.inBlock.CompareAndSwap(false, true) {
-		panic("entering a block while already in a block scope")
+		panic(fmt.Sprintf("entering a block while already in a block scope: new block: %d ", block.Number()))
 	}
 
 	ctx.seenBlock.Store(true)
