@@ -119,6 +119,7 @@ func (ctx *Context) FirehoseLog() []byte {
 // Block methods
 
 func (ctx *Context) RecordGenesisBlock(block *types.Block, recordGenesisAlloc func(ctx *Context)) {
+	log.Info("inside RecordGenesisBlock---", "block_number", block.Number())
 	if ctx == nil {
 		return
 	}

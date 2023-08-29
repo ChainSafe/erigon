@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 
 	metrics2 "github.com/VictoriaMetrics/metrics"
+	"github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/pelletier/go-toml"
 	"github.com/spf13/cobra"
@@ -289,6 +290,7 @@ func Setup(ctx *cli.Context, rootLogger bool, getGenesis GenesisGetter) (log.Log
 		"firehose_version", params.FirehoseVersion(),
 		"erigon_version", params.VersionWithMeta,
 		"chain_variant", params.Variant,
+		"stack", dbg.Stack(),
 	)
 
 	return logger, nil
