@@ -17,12 +17,14 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"sort"
 	"sync"
 
 	"github.com/c2h5oh/datasize"
@@ -39,6 +41,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
+	"github.com/ledgerwatch/erigon/common/u256"
 	"github.com/ledgerwatch/erigon/consensus/ethash"
 	"github.com/ledgerwatch/erigon/consensus/merge"
 	"github.com/ledgerwatch/erigon/core/rawdb"
@@ -284,6 +287,64 @@ func write(tx kv.RwTx, g *types.Genesis, tmpDir string) (*types.Block, *state.In
 	}
 	if err := rawdb.WriteChainConfig(tx, block.Hash(), config); err != nil {
 		return nil, nil, err
+	}
+
+	// log genesis block
+	if firehose.Enabled {
+		if block == nil {
+			panic(fmt.Errorf("expected to have genesis block here"))
+		}
+
+		if firehose.GenesisConfig == nil {
+			panic(fmt.Errorf("the genesis config is not set, there is something weird as all code path should generate the correct genesis config"))
+		}
+
+		genesis := firehose.GenesisConfig.(*types.Genesis)
+		if genesis == nil {
+			panic(fmt.Errorf("the genesis config is not set, there is something weird as all code path should generate the correct genesis config"))
+		}
+
+		recomputedGenesisBlock, _, _ := GenesisToBlock(genesis, "")
+		if block.Hash() != recomputedGenesisBlock.Hash() {
+			panic(fmt.Errorf("invalid Firehose genesis block and actual chain's stored genesis block, the actual genesis block's hash field extracted from Geth's database does not fit with hash of genesis block generated from Firehose determined genesis config, you might need to provide the correct 'genesis.json' file via --firehose-genesis-file"))
+		}
+
+		firehose.MaybeSyncContext().RecordGenesisBlock(block, func(ctx *firehose.Context) {
+			sortedAddrs := make([]libcommon.Address, len(genesis.Alloc))
+			i := 0
+			for addr := range genesis.Alloc {
+				sortedAddrs[i] = addr
+				i++
+			}
+
+			sort.Slice(sortedAddrs, func(i, j int) bool {
+				return bytes.Compare(sortedAddrs[i][:], sortedAddrs[j][:]) <= -1
+			})
+
+			for _, addr := range sortedAddrs {
+				account := genesis.Alloc[addr]
+
+				ctx.RecordNewAccount(addr)
+
+				acountBalance, overflow := uint256.FromBig(account.Balance)
+				if overflow {
+					panic("genesis account balance overflow on big int conversion")
+				}
+				ctx.RecordBalanceChange(addr, u256.Num0, acountBalance, firehose.BalanceChangeReason("genesis_balance"))
+				if len(account.Code) > 0 {
+					ctx.RecordCodeChange(addr, nil, nil, crypto.Keccak256Hash(account.Code), account.Code)
+				}
+
+				if account.Nonce > 0 {
+					ctx.RecordNonceChange(addr, 0, account.Nonce)
+				}
+
+				for key, value := range account.Storage {
+					val := uint256.NewInt(0).SetBytes(value.Bytes())
+					ctx.RecordStorageChange(addr, &key, u256.Num0, val)
+				}
+			}
+		})
 	}
 
 	// We support ethash/merge for issuance (for now)
