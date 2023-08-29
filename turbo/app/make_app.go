@@ -9,15 +9,13 @@ import (
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
 
-	"github.com/ledgerwatch/erigon/turbo/logging"
-
 	"github.com/ledgerwatch/erigon/cmd/utils"
-	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/node"
 	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
 	cli2 "github.com/ledgerwatch/erigon/turbo/cli"
 	"github.com/ledgerwatch/erigon/turbo/debug"
+	"github.com/ledgerwatch/erigon/turbo/logging"
 )
 
 // MakeApp creates a cli application (based on `github.com/urlfave/cli` package).
@@ -47,14 +45,6 @@ func MakeApp(name string, action cli.ActionFunc, cliFlags []cli.Flag) *cli.App {
 	app.Flags = append(app.Flags, utils.MetricFlags...)
 	app.Flags = append(app.Flags, logging.Flags...)
 	app.Flags = append(app.Flags, debug.FirehoseFlags...)
-	app.Before = func(ctx *cli.Context) error {
-		firehose.MaybeSyncContext().InitVersion(
-			params.VersionWithCommit(params.GitCommit),
-			params.FirehoseVersion(),
-			params.Variant,
-		)
-		return nil
-	}
 	app.After = func(ctx *cli.Context) error {
 		debug.Exit()
 		return nil

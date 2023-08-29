@@ -4,12 +4,18 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/ledgerwatch/erigon/core/types"
-	"github.com/ledgerwatch/erigon/turbo/debug"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
 
+	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/node/nodecfg"
+	"github.com/ledgerwatch/erigon/params"
+	"github.com/ledgerwatch/erigon/turbo/debug"
+	turboNode "github.com/ledgerwatch/erigon/turbo/node"
+
 	"github.com/ledgerwatch/erigon-lib/kv"
+
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/firehose"
@@ -38,9 +44,22 @@ It expects the genesis file as argument.`,
 func initGenesis(ctx *cli.Context) error {
 	var logger log.Logger
 	var err error
-	if logger, err = debug.Setup(ctx, true /* rootLogger */); err != nil {
+	var nodeCfg *nodecfg.Config
+	var ethCfg *ethconfig.Config
+	if logger, err = debug.Setup(ctx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		nodeCfg = turboNode.NewNodConfigUrfave(ctx, logger)
+		ethCfg = turboNode.NewEthConfigUrfave(ctx, nodeCfg, logger)
+		return ethCfg.Genesis
+	}); err != nil {
 		return err
 	}
+
+	firehose.MaybeSyncContext().InitVersion(
+		params.VersionWithCommit(params.GitCommit),
+		params.FirehoseVersion(),
+		params.Variant,
+	)
+
 	// Make sure we have a valid genesis JSON
 	genesisPath := ctx.Args().First()
 	if len(genesisPath) == 0 {

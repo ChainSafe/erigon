@@ -5,13 +5,18 @@ import (
 	"sync"
 
 	"github.com/c2h5oh/datasize"
+	"github.com/ledgerwatch/log/v3"
+	"github.com/urfave/cli/v2"
+
 	"github.com/ledgerwatch/erigon/cmd/devnet/args"
 	"github.com/ledgerwatch/erigon/cmd/devnet/requests"
+	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/firehose"
+	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/turbo/debug"
 	enode "github.com/ledgerwatch/erigon/turbo/node"
-	"github.com/ledgerwatch/log/v3"
-	"github.com/urfave/cli/v2"
 )
 
 type Node interface {
@@ -70,14 +75,23 @@ func (n *node) run(ctx *cli.Context) error {
 
 	defer n.done()
 
-	if logger, err = debug.Setup(ctx, false /* rootLogger */); err != nil {
+	var nodeCfg *nodecfg.Config
+	var ethCfg *ethconfig.Config
+	if logger, err = debug.Setup(ctx, false /* rootLogger */, debug.GenesisGetter(func(logger log.Logger) *types.Genesis {
+		nodeCfg = enode.NewNodConfigUrfave(ctx, logger)
+		ethCfg = enode.NewEthConfigUrfave(ctx, nodeCfg, logger)
+		return ethCfg.Genesis
+	})); err != nil {
 		return err
 	}
+	// init firehose
+	firehose.MaybeSyncContext().InitVersion(
+		params.VersionWithCommit(params.GitCommit),
+		params.FirehoseVersion(),
+		params.Variant,
+	)
 
 	logger.Info("Build info", "git_branch", params.GitBranch, "git_tag", params.GitTag, "git_commit", params.GitCommit)
-
-	nodeCfg := enode.NewNodConfigUrfave(ctx, logger)
-	ethCfg := enode.NewEthConfigUrfave(ctx, nodeCfg, logger)
 
 	nodeCfg.MdbxDBSizeLimit = 512 * datasize.MB
 

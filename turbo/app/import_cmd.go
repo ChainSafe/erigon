@@ -12,9 +12,14 @@ import (
 	"syscall"
 
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/erigon/turbo/services"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
+
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/firehose"
+	"github.com/ledgerwatch/erigon/node/nodecfg"
+	"github.com/ledgerwatch/erigon/params"
+	"github.com/ledgerwatch/erigon/turbo/services"
 
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/core"
@@ -54,14 +59,23 @@ func importChain(cliCtx *cli.Context) error {
 		utils.Fatalf("This command requires an argument.")
 	}
 
+	var nodeCfg *nodecfg.Config
+	var ethCfg *ethconfig.Config
 	var logger log.Logger
 	var err error
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		nodeCfg = turboNode.NewNodConfigUrfave(cliCtx, logger)
+		ethCfg = turboNode.NewEthConfigUrfave(cliCtx, nodeCfg, logger)
+		return ethCfg.Genesis
+	}); err != nil {
 		return err
 	}
 
-	nodeCfg := turboNode.NewNodConfigUrfave(cliCtx, logger)
-	ethCfg := turboNode.NewEthConfigUrfave(cliCtx, nodeCfg, logger)
+	firehose.MaybeSyncContext().InitVersion(
+		params.VersionWithCommit(params.GitCommit),
+		params.FirehoseVersion(),
+		params.Variant,
+	)
 
 	stack := makeConfigNode(nodeCfg, logger)
 	defer stack.Close()

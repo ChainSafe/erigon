@@ -24,6 +24,12 @@ import (
 	"github.com/ledgerwatch/erigon/cl/phase1/core"
 	"github.com/ledgerwatch/erigon/cl/phase1/core/state"
 	"github.com/ledgerwatch/erigon/cl/phase1/execution_client"
+	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/firehose"
+	"github.com/ledgerwatch/erigon/node/nodecfg"
+	"github.com/ledgerwatch/erigon/params"
+	enode "github.com/ledgerwatch/erigon/turbo/node"
 
 	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	"github.com/ledgerwatch/log/v3"
@@ -58,9 +64,22 @@ func runCaplinNode(cliCtx *cli.Context) error {
 	if err != nil {
 		log.Error("[Phase1] Could not initialize caplin", "err", err)
 	}
-	if _, err := debug.Setup(cliCtx, true /* root logger */); err != nil {
+	var nodeCfg *nodecfg.Config
+	var ethCfg *ethconfig.Config
+	if _, err = debug.Setup(cliCtx, true /* root logger */, func(logger log.Logger) *types.Genesis {
+		nodeCfg = enode.NewNodConfigUrfave(cliCtx, logger)
+		ethCfg = enode.NewEthConfigUrfave(cliCtx, nodeCfg, logger)
+		return ethCfg.Genesis
+	}); err != nil {
 		return err
 	}
+
+	firehose.MaybeSyncContext().InitVersion(
+		params.VersionWithCommit(params.GitCommit),
+		params.FirehoseVersion(),
+		params.Variant,
+	)
+
 	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(cfg.LogLvl), log.StderrHandler))
 	log.Info("[Phase1]", "chain", cliCtx.String(flags.Chain.Name))
 	log.Info("[Phase1] Running Caplin", "cfg", cfg)

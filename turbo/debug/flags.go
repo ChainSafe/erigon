@@ -189,9 +189,12 @@ func SetupCobra(cmd *cobra.Command, filePrefix string) (log.Logger, error) {
 	return logger, nil
 }
 
+// GenesisGetter will return the genesis block
+type GenesisGetter func(logger log.Logger) *types.Genesis
+
 // Setup initializes profiling and logging based on the CLI flags.
 // It should be called as early as possible in the program.
-func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, error) {
+func Setup(ctx *cli.Context, rootLogger bool, getGenesis GenesisGetter) (log.Logger, error) {
 	// ensure we've read in config file details before setting up metrics etc.
 	if err := SetFlagsFromConfigFile(ctx); err != nil {
 		log.Warn("failed setting config flags from yaml/toml file", "err", err)
@@ -253,23 +256,29 @@ func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, error) {
 	}
 
 	var genesisProvenance string
-	if genesisFilePath := ctx.String(firehoseGenesisFileFlag.Name); genesisFilePath != "" {
-		file, err := os.Open(genesisFilePath)
-		if err != nil {
-			return logger, fmt.Errorf("firehose open genesis file: %w", err)
-		}
-		defer file.Close()
-
-		genesis := &types.Genesis{}
-		if err := json.NewDecoder(file).Decode(genesis); err != nil {
-			return logger, fmt.Errorf("decode genesis file %q: %w", genesisFilePath, err)
-		}
-
+	genesis := getGenesis(logger)
+	if genesis != nil {
 		firehose.GenesisConfig = genesis
-		genesisProvenance = "Flag " + firehoseGenesisFileFlag.Name
+		genesisProvenance = "Geth Specific Flag"
 	} else {
-		firehose.GenesisConfig = core.MainnetGenesisBlock()
-		genesisProvenance = "Geth Default"
+		if genesisFilePath := ctx.String(firehoseGenesisFileFlag.Name); genesisFilePath != "" {
+			file, err := os.Open(genesisFilePath)
+			if err != nil {
+				return logger, fmt.Errorf("firehose open genesis file: %w", err)
+			}
+			defer file.Close()
+
+			genesis := &types.Genesis{}
+			if err := json.NewDecoder(file).Decode(genesis); err != nil {
+				return logger, fmt.Errorf("decode genesis file %q: %w", genesisFilePath, err)
+			}
+
+			firehose.GenesisConfig = genesis
+			genesisProvenance = "Flag " + firehoseGenesisFileFlag.Name
+		} else {
+			firehose.GenesisConfig = core.MainnetGenesisBlock()
+			genesisProvenance = "Geth Default"
+		}
 	}
 
 	log.Info("Firehose initialized",

@@ -25,18 +25,20 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
 	libstate "github.com/ledgerwatch/erigon-lib/state"
+	"github.com/ledgerwatch/log/v3"
+	"github.com/urfave/cli/v2"
+
 	"github.com/ledgerwatch/erigon/cmd/hack/tool/fromdb"
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/rawdb/blockio"
+	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
 	"github.com/ledgerwatch/erigon/eth/ethconfig/estimate"
 	"github.com/ledgerwatch/erigon/eth/stagedsync/stages"
 	"github.com/ledgerwatch/erigon/turbo/debug"
 	"github.com/ledgerwatch/erigon/turbo/logging"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync/freezeblocks"
-	"github.com/ledgerwatch/log/v3"
-	"github.com/urfave/cli/v2"
 )
 
 func joinFlags(lists ...[]cli.Flag) (res []cli.Flag) {
@@ -54,6 +56,12 @@ var snapshotCommand = cli.Command{
 			Name:   "index",
 			Action: doIndicesCommand,
 			Usage:  "Create all indices for snapshots",
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
 			Flags: joinFlags([]cli.Flag{
 				&utils.DataDirFlag,
 				&SnapshotFromFlag,
@@ -64,6 +72,12 @@ var snapshotCommand = cli.Command{
 			Name:   "retire",
 			Action: doRetireCommand,
 			Usage:  "erigon snapshots uncompress a.seg | erigon snapshots compress b.seg",
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
 			Flags: joinFlags([]cli.Flag{
 				&utils.DataDirFlag,
 				&SnapshotFromFlag,
@@ -75,26 +89,56 @@ var snapshotCommand = cli.Command{
 			Name:   "uncompress",
 			Action: doUncompress,
 			Usage:  "erigon snapshots uncompress a.seg | erigon snapshots compress b.seg",
-			Flags:  joinFlags([]cli.Flag{}, debug.Flags, logging.Flags),
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
+			Flags: joinFlags([]cli.Flag{}, debug.Flags, logging.Flags),
 		},
 		{
 			Name:   "compress",
 			Action: doCompress,
-			Flags:  joinFlags([]cli.Flag{&utils.DataDirFlag}, debug.Flags, logging.Flags),
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
+			Flags: joinFlags([]cli.Flag{&utils.DataDirFlag}, debug.Flags, logging.Flags),
 		},
 		{
 			Name:   "ram",
 			Action: doRam,
-			Flags:  joinFlags([]cli.Flag{&utils.DataDirFlag}, debug.Flags, logging.Flags),
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
+			Flags: joinFlags([]cli.Flag{&utils.DataDirFlag}, debug.Flags, logging.Flags),
 		},
 		{
 			Name:   "decompress_speed",
 			Action: doDecompressSpeed,
-			Flags:  joinFlags([]cli.Flag{&utils.DataDirFlag}, debug.Flags, logging.Flags),
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
+			Flags: joinFlags([]cli.Flag{&utils.DataDirFlag}, debug.Flags, logging.Flags),
 		},
 		{
 			Name:   "diff",
 			Action: doDiff,
+			Before: func(ctx *cli.Context) error {
+				_, err := debug.Setup(ctx, true, func(logger log.Logger) *types.Genesis {
+					return nil
+				})
+				return err
+			},
 			Flags: joinFlags([]cli.Flag{
 				&cli.PathFlag{
 					Name:     "src",
@@ -176,7 +220,9 @@ func doDiff(cliCtx *cli.Context) error {
 func doDecompressSpeed(cliCtx *cli.Context) error {
 	var logger log.Logger
 	var err error
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		return nil
+	}); err != nil {
 		return err
 	}
 	args := cliCtx.Args()
@@ -218,7 +264,9 @@ func doDecompressSpeed(cliCtx *cli.Context) error {
 func doRam(cliCtx *cli.Context) error {
 	var logger log.Logger
 	var err error
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		return nil
+	}); err != nil {
 		return err
 	}
 	args := cliCtx.Args()
@@ -244,7 +292,9 @@ func doRam(cliCtx *cli.Context) error {
 func doIndicesCommand(cliCtx *cli.Context) error {
 	var err error
 	var logger log.Logger
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		return nil
+	}); err != nil {
 		return err
 	}
 	ctx := cliCtx.Context
@@ -293,7 +343,9 @@ func doIndicesCommand(cliCtx *cli.Context) error {
 func doUncompress(cliCtx *cli.Context) error {
 	var logger log.Logger
 	var err error
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		return nil
+	}); err != nil {
 		return err
 	}
 	ctx := cliCtx.Context
@@ -347,7 +399,9 @@ func doUncompress(cliCtx *cli.Context) error {
 func doCompress(cliCtx *cli.Context) error {
 	var err error
 	var logger log.Logger
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		return nil
+	}); err != nil {
 		return err
 	}
 	ctx := cliCtx.Context
@@ -396,7 +450,9 @@ func doCompress(cliCtx *cli.Context) error {
 func doRetireCommand(cliCtx *cli.Context) error {
 	var logger log.Logger
 	var err error
-	if logger, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, err = debug.Setup(cliCtx, true /* rootLogger */, func(logger log.Logger) *types.Genesis {
+		return nil
+	}); err != nil {
 		return err
 	}
 	defer logger.Info("Retire Done")
