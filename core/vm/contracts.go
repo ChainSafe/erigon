@@ -33,8 +33,8 @@ import (
 	"github.com/ledgerwatch/erigon/crypto/blake2b"
 	"github.com/ledgerwatch/erigon/crypto/bls12381"
 	"github.com/ledgerwatch/erigon/crypto/bn256"
-	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/crypto/kzg"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
 
 	//lint:ignore SA1019 Needed for precompile
