@@ -239,11 +239,17 @@ func ExecuteBlockEphemerally(
 			td = new(big.Int).Add(difficulty, ptd)
 		}
 
-		finalizedBlock := chainReader.CurrentFinalizedHeader()
-		if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
-			// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
-			// we don't want to advertise a super old finalizedBlock when reprocessing.
+		var finalizedBlock *types.Header
+		if chainConfig.Bor != nil {
+			// The `finalizedBlock` argument **must** be `nil` on Bor because we still have an hard-coded -200 finalized block on Polygon
 			finalizedBlock = nil
+		} else {
+			finalizedBlock = chainReader.CurrentFinalizedHeader()
+			if finalizedBlock != nil && firehose.SyncingBehindFinalized() {
+				// if beaconFinalizedBlockNum is in the future, the 'finalizedBlock' will not progress until we reach it.
+				// we don't want to advertise a super old finalizedBlock when reprocessing.
+				finalizedBlock = nil
+			}
 		}
 
 		firehoseContext.EndBlock(block, finalizedBlock, td)
@@ -265,23 +271,6 @@ func ExecuteBlockEphemerally(
 		var logs []*types.Log
 		for _, receipt := range receipts {
 			logs = append(logs, receipt.Logs...)
-		}
-
-		if firehoseContext.Enabled() {
-			// Calculate the total difficulty of the block
-			ptd := chainReader.GetTd(block.ParentHash(), block.NumberU64()-1)
-			difficulty := block.Difficulty()
-			if difficulty == nil {
-				difficulty = big.NewInt(0)
-			}
-
-			td := ptd
-			if ptd != nil {
-				td = new(big.Int).Add(difficulty, ptd)
-			}
-
-			// The `finalizedBlock` argument **must** be `nil` on Bor because we still have an hard-coded -200 finalized block on Polygon
-			firehoseContext.EndBlock(block, nil, td)
 		}
 
 		stateSyncReceipt := &types.Receipt{}
