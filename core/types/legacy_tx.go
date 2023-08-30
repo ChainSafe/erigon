@@ -52,6 +52,10 @@ func (ct CommonTx) GetTo() *libcommon.Address {
 	return ct.To
 }
 
+func (ct CommonTx) GetDataFeeCap() *uint256.Int {
+	return uint256.NewInt(0)
+}
+
 func (ct CommonTx) GetDataGas() uint64 {
 	return 0
 }

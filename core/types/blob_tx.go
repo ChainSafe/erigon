@@ -37,6 +37,10 @@ func (stx BlobTx) copy() *BlobTx {
 
 func (stx BlobTx) Type() byte { return BlobTxType }
 
+func (stx BlobTx) GetDataFeeCap() *uint256.Int {
+	return stx.MaxFeePerDataGas
+}
+
 func (stx BlobTx) GetDataHashes() []libcommon.Hash {
 	return stx.BlobVersionedHashes
 }

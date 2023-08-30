@@ -299,6 +299,8 @@ func (txw *BlobTxWrapper) GetEffectiveGasTip(baseFee *uint256.Int) *uint256.Int 
 }
 func (txw *BlobTxWrapper) GetFeeCap() *uint256.Int { return txw.Tx.GetFeeCap() }
 
+func (txw *BlobTxWrapper) GetDataFeeCap() *uint256.Int { return txw.Tx.GetDataFeeCap() }
+
 func (txw *BlobTxWrapper) Cost() *uint256.Int { return txw.Tx.GetFeeCap() }
 
 func (txw *BlobTxWrapper) GetDataHashes() []libcommon.Hash { return txw.Tx.GetDataHashes() }
