@@ -289,7 +289,6 @@ func write(tx kv.RwTx, g *types.Genesis, tmpDir string) (*types.Block, *state.In
 		return nil, nil, err
 	}
 
-	log.Info("firehose enabled---", firehose.Enabled)
 	// log genesis block
 	if firehose.Enabled {
 		if block == nil {
