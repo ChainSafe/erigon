@@ -15,6 +15,7 @@ import (
 	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"go.uber.org/atomic"
 
+	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	erigonmath "github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/common/u256"
@@ -384,7 +385,7 @@ func (ctx *Context) EndTransaction(receipt *types.Receipt) {
 		logItems[i] = logItem{
 			"address": log.Address,
 			"topics":  log.Topics,
-			"data":    log.Data,
+			"data":    hexutility.Bytes(log.Data),
 		}
 	}
 
