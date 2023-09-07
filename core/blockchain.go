@@ -191,7 +191,12 @@ func ExecuteBlockEphemerally(
 	}
 
 	if header.DataGasUsed != nil && *usedDataGas != *header.DataGasUsed {
-		return nil, fmt.Errorf("data gas used by execution: %d, in header: %d", *usedDataGas, *header.DataGasUsed)
+		err := fmt.Errorf("data gas used by execution: %d, in header: %d", *usedDataGas, *header.DataGasUsed)
+		if firehoseContext.Enabled() {
+			firehoseContext.CancelBlock(block, err)
+		}
+
+		return nil, err
 	}
 
 	var bloom types.Bloom
