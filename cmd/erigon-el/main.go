@@ -16,10 +16,14 @@ import (
 
 	"github.com/ledgerwatch/erigon/cmd/erigon-el/backend"
 	"github.com/ledgerwatch/erigon/cmd/utils"
+	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/firehose"
+	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
 	erigonapp "github.com/ledgerwatch/erigon/turbo/app"
 	erigoncli "github.com/ledgerwatch/erigon/turbo/cli"
-	"github.com/ledgerwatch/erigon/turbo/logging"
+	"github.com/ledgerwatch/erigon/turbo/debug"
 	"github.com/ledgerwatch/erigon/turbo/node"
 )
 
@@ -34,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}()
 
-	app := erigonapp.MakeApp(runErigon, erigoncli.DefaultFlags)
+	app := erigonapp.MakeApp("erigon-el", runErigon, erigoncli.DefaultFlags)
 	if err := app.Run(os.Args); err != nil {
 		_, printErr := fmt.Fprintln(os.Stderr, err)
 		if printErr != nil {
@@ -52,22 +56,35 @@ func runErigon(cliCtx *cli.Context) error {
 		}
 	}
 
-	logger := logging.GetLoggerCtx("erigon", cliCtx)
+	var logger log.Logger
+	var nodeCfg *nodecfg.Config
+	var ethCfg *ethconfig.Config
+	var err error
+	if logger, err = debug.Setup(cliCtx, true /* root logger */, func(logger log.Logger) *types.Genesis {
+		nodeCfg = node.NewNodConfigUrfave(cliCtx, logger)
+		ethCfg = node.NewEthConfigUrfave(cliCtx, nodeCfg, logger)
+		return ethCfg.Genesis
+	}); err != nil {
+		return err
+	}
+
+	firehose.MaybeSyncContext().InitVersion(
+		params.VersionWithCommit(params.GitCommit),
+		params.FirehoseVersion(),
+		params.Variant,
+	)
 
 	// initializing the node and providing the current git commit there
 	logger.Info("Build info", "git_branch", params.GitBranch, "git_tag", params.GitTag, "git_commit", params.GitCommit)
 
-	nodeCfg := node.NewNodConfigUrfave(cliCtx)
-	ethCfg := node.NewEthConfigUrfave(cliCtx, nodeCfg)
-
 	ethNode, err := backend.NewNode(nodeCfg, ethCfg, logger)
 	if err != nil {
-		log.Error("Erigon startup", "err", err)
+		logger.Error("Erigon startup", "err", err)
 		return err
 	}
 	err = ethNode.Serve()
 	if err != nil {
-		log.Error("error while serving an Erigon node", "err", err)
+		logger.Error("error while serving an Erigon node", "err", err)
 	}
 	return err
 }

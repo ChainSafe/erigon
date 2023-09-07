@@ -31,10 +31,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ledgerwatch/erigon/firehose"
-	"github.com/ledgerwatch/erigon/turbo/stages"
-	"github.com/ledgerwatch/erigon/turbo/trie"
-
 	"github.com/ledgerwatch/erigon/accounts/abi/bind"
 	"github.com/ledgerwatch/erigon/accounts/abi/bind/backends"
 	"github.com/ledgerwatch/erigon/common"
@@ -45,7 +41,10 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/crypto"
+	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/params"
+	"github.com/ledgerwatch/erigon/turbo/stages"
+	"github.com/ledgerwatch/erigon/turbo/trie"
 )
 
 // Create revival problem
@@ -56,7 +55,7 @@ func TestCreate2Revive(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -65,8 +64,8 @@ func TestCreate2Revive(t *testing.T) {
 				ByzantiumBlock:        big.NewInt(1),
 				ConstantinopleBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 		signer = types.LatestSignerForChainID(nil)
@@ -126,7 +125,7 @@ func TestCreate2Revive(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -144,7 +143,7 @@ func TestCreate2Revive(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,7 +157,7 @@ func TestCreate2Revive(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 2
-	if err = m.InsertChain(chain.Slice(1, 2)); err != nil {
+	if err = m.InsertChain(chain.Slice(1, 2), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +179,7 @@ func TestCreate2Revive(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 3
-	if err = m.InsertChain(chain.Slice(2, 3)); err != nil {
+	if err = m.InsertChain(chain.Slice(2, 3), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -193,7 +192,7 @@ func TestCreate2Revive(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 4
-	if err = m.InsertChain(chain.Slice(3, 4)); err != nil {
+	if err = m.InsertChain(chain.Slice(3, 4), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -227,7 +226,7 @@ func TestCreate2Polymorth(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -236,8 +235,8 @@ func TestCreate2Polymorth(t *testing.T) {
 				ByzantiumBlock:        big.NewInt(1),
 				ConstantinopleBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 		signer = types.LatestSignerForChainID(nil)
@@ -331,7 +330,7 @@ func TestCreate2Polymorth(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -350,7 +349,7 @@ func TestCreate2Polymorth(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -365,7 +364,7 @@ func TestCreate2Polymorth(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 2
-	if err = m.InsertChain(chain.Slice(1, 2)); err != nil {
+	if err = m.InsertChain(chain.Slice(1, 2), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,7 +384,7 @@ func TestCreate2Polymorth(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 3
-	if err = m.InsertChain(chain.Slice(2, 3)); err != nil {
+	if err = m.InsertChain(chain.Slice(2, 3), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -398,7 +397,7 @@ func TestCreate2Polymorth(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 4
-	if err = m.InsertChain(chain.Slice(3, 4)); err != nil {
+	if err = m.InsertChain(chain.Slice(3, 4), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -418,7 +417,7 @@ func TestCreate2Polymorth(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 5
-	if err = m.InsertChain(chain.Slice(4, 5)); err != nil {
+	if err = m.InsertChain(chain.Slice(4, 5), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -444,7 +443,7 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -453,8 +452,8 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 				ByzantiumBlock:        big.NewInt(1),
 				ConstantinopleBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 	)
@@ -494,7 +493,7 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -517,7 +516,7 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackendLonger.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate long blocks")
 	}
@@ -535,7 +534,7 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 	})
 	require.NoError(t, err)
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -554,7 +553,7 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCKS 2 + 3
-	if err = m.InsertChain(chain.Slice(1, chain.Length())); err != nil {
+	if err = m.InsertChain(chain.Slice(1, chain.Length()), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -568,7 +567,7 @@ func TestReorgOverSelfDestruct(t *testing.T) {
 	require.NoError(t, err)
 
 	// REORG of block 2 and 3, and insert new (empty) BLOCK 2, 3, and 4
-	if err = m.InsertChain(longerChain.Slice(1, 4)); err != nil {
+	if err = m.InsertChain(longerChain.Slice(1, 4), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -592,7 +591,7 @@ func TestReorgOverStateChange(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -601,7 +600,7 @@ func TestReorgOverStateChange(t *testing.T) {
 				ByzantiumBlock:        big.NewInt(1),
 				ConstantinopleBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
+			Alloc: types.GenesisAlloc{
 				address: {Balance: funds},
 			},
 		}
@@ -636,7 +635,7 @@ func TestReorgOverStateChange(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -658,7 +657,7 @@ func TestReorgOverStateChange(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackendLonger.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate longer blocks: %v", err)
 	}
@@ -676,7 +675,7 @@ func TestReorgOverStateChange(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -695,12 +694,12 @@ func TestReorgOverStateChange(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 2
-	if err = m.InsertChain(chain.Slice(1, chain.Length())); err != nil {
+	if err = m.InsertChain(chain.Slice(1, chain.Length()), nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// REORG of block 2 and 3, and insert new (empty) BLOCK 2, 3, and 4
-	if err = m.InsertChain(longerChain.Slice(1, 3)); err != nil {
+	if err = m.InsertChain(longerChain.Slice(1, 3), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -742,7 +741,7 @@ func TestCreateOnExistingStorage(t *testing.T) {
 		// Address of the contract that will be deployed
 		contractAddr = libcommon.HexToAddress("0x3a220f351252089d385b29beca14e27f204c296a")
 		funds        = big.NewInt(1000000000)
-		gspec        = &core.Genesis{
+		gspec        = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -751,7 +750,7 @@ func TestCreateOnExistingStorage(t *testing.T) {
 				ByzantiumBlock:        big.NewInt(1),
 				ConstantinopleBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
+			Alloc: types.GenesisAlloc{
 				address: {Balance: funds},
 				// Pre-existing storage item in an account without code
 				contractAddr: {Balance: funds, Storage: map[libcommon.Hash]libcommon.Hash{{}: libcommon.HexToHash("0x42")}},
@@ -785,7 +784,7 @@ func TestCreateOnExistingStorage(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -803,7 +802,7 @@ func TestCreateOnExistingStorage(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -871,7 +870,7 @@ func TestEip2200Gas(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -882,7 +881,7 @@ func TestEip2200Gas(t *testing.T) {
 				ConstantinopleBlock:   big.NewInt(1),
 				IstanbulBlock:         big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
+			Alloc: types.GenesisAlloc{
 				address: {Balance: funds},
 			},
 		}
@@ -919,7 +918,7 @@ func TestEip2200Gas(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -939,7 +938,7 @@ func TestEip2200Gas(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -966,15 +965,15 @@ func TestWrongIncarnation(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
 				TangerineWhistleBlock: new(big.Int),
 				SpuriousDragonBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 	)
@@ -1007,7 +1006,7 @@ func TestWrongIncarnation(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -1025,7 +1024,7 @@ func TestWrongIncarnation(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1052,7 +1051,7 @@ func TestWrongIncarnation(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCKS 2
-	if err = m.InsertChain(chain.Slice(1, 2)); err != nil {
+	if err = m.InsertChain(chain.Slice(1, 2), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -1078,15 +1077,15 @@ func TestWrongIncarnation2(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
 				TangerineWhistleBlock: new(big.Int),
 				SpuriousDragonBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 		signer = types.LatestSignerForChainID(nil)
@@ -1125,7 +1124,7 @@ func TestWrongIncarnation2(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate blocks: %v", err)
 	}
@@ -1155,7 +1154,7 @@ func TestWrongIncarnation2(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackendLonger.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err != nil {
 		t.Fatalf("generate longer blocks: %v", err)
 	}
@@ -1170,12 +1169,12 @@ func TestWrongIncarnation2(t *testing.T) {
 	require.NoError(t, err)
 
 	// BLOCK 1
-	if err = m.InsertChain(chain.Slice(0, 1)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 1), nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// BLOCKS 2
-	if err = m.InsertChain(chain.Slice(1, chain.Length())); err != nil {
+	if err = m.InsertChain(chain.Slice(1, chain.Length()), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1200,7 +1199,7 @@ func TestWrongIncarnation2(t *testing.T) {
 	})
 	require.NoError(t, err)
 	// REORG of block 2 and 3, and insert new (empty) BLOCK 2, 3, and 4
-	if err = m.InsertChain(longerChain.Slice(1, longerChain.Length())); err != nil {
+	if err = m.InsertChain(longerChain.Slice(1, longerChain.Length()), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1338,10 +1337,10 @@ func TestRecreateAndRewind(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: params.TestChainConfig,
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 	)
@@ -1409,7 +1408,7 @@ func TestRecreateAndRewind(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackend.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err1 != nil {
 		t.Fatalf("generate blocks: %v", err1)
 	}
@@ -1467,13 +1466,13 @@ func TestRecreateAndRewind(t *testing.T) {
 			block.AddTx(tx)
 		}
 		contractBackendLonger.Commit()
-	}, false /* intermediateHashes */)
+	})
 	if err1 != nil {
 		t.Fatalf("generate longer blocks: %v", err1)
 	}
 
 	// BLOCKS 1 and 2
-	if err = m.InsertChain(chain.Slice(0, 2)); err != nil {
+	if err = m.InsertChain(chain.Slice(0, 2), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1494,7 +1493,7 @@ func TestRecreateAndRewind(t *testing.T) {
 	require.NoError(t, err)
 
 	// Block 3 and 4
-	if err = m.InsertChain(chain.Slice(2, chain.Length())); err != nil {
+	if err = m.InsertChain(chain.Slice(2, chain.Length()), nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -1513,7 +1512,7 @@ func TestRecreateAndRewind(t *testing.T) {
 	require.NoError(t, err)
 
 	// Reorg
-	if err = m.InsertChain(longerChain); err != nil {
+	if err = m.InsertChain(longerChain, nil); err != nil {
 		t.Fatal(err)
 	}
 	err = m.DB.View(context.Background(), func(tx kv.Tx) error {
@@ -1536,7 +1535,7 @@ func TestTxLookupUnwind(t *testing.T) {
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
 		funds   = big.NewInt(1000000000)
-		gspec   = &core.Genesis{
+		gspec   = &types.Genesis{
 			Config: &chain.Config{
 				ChainID:               big.NewInt(1),
 				HomesteadBlock:        new(big.Int),
@@ -1545,8 +1544,8 @@ func TestTxLookupUnwind(t *testing.T) {
 				ByzantiumBlock:        big.NewInt(1),
 				ConstantinopleBlock:   big.NewInt(1),
 			},
-			Alloc: core.GenesisAlloc{
-				address: core.GenesisAccount{Balance: funds},
+			Alloc: types.GenesisAlloc{
+				address: types.GenesisAccount{Balance: funds},
 			},
 		}
 		signer = types.LatestSignerForChainID(nil)
@@ -1564,19 +1563,19 @@ func TestTxLookupUnwind(t *testing.T) {
 			}
 			block.AddTx(tx)
 		}
-	}, false)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	chain2, err := core.GenerateChain(m.ChainConfig, m.Genesis, m.Engine, m.DB, 3, func(i int, block *core.BlockGen) {
-	}, false)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.InsertChain(chain1); err != nil {
+	if err = m.InsertChain(chain1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.InsertChain(chain2); err != nil {
+	if err = m.InsertChain(chain2, nil); err != nil {
 		t.Fatal(err)
 	}
 	var count uint64

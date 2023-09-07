@@ -2,19 +2,20 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
+	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
 
 	"github.com/ledgerwatch/erigon/cmd/utils"
-	"github.com/ledgerwatch/erigon/firehose"
 	"github.com/ledgerwatch/erigon/node"
 	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
 	cli2 "github.com/ledgerwatch/erigon/turbo/cli"
 	"github.com/ledgerwatch/erigon/turbo/debug"
-	turboNode "github.com/ledgerwatch/erigon/turbo/node"
+	"github.com/ledgerwatch/erigon/turbo/logging"
 )
 
 // MakeApp creates a cli application (based on `github.com/urlfave/cli` package).
@@ -22,30 +23,39 @@ import (
 // Parameters:
 // * action: the main function for the application. receives `*cli.Context` with parsed command-line flags.
 // * cliFlags: the list of flags `cli.Flag` that the app should set and parse. By default, use `DefaultFlags()`. If you want to specify your own flag, use `append(DefaultFlags(), myFlag)` for this parameter.
-func MakeApp(action cli.ActionFunc, cliFlags []cli.Flag) *cli.App {
-	app := cli2.NewApp(params.GitCommit, "erigon experimental cli")
-	app.Action = action
-	app.Flags = append(cliFlags, debug.Flags...) // debug flags are required
-	app.Flags = append(app.Flags, debug.FirehoseFlags...)
-	app.Before = func(ctx *cli.Context) error {
-		nodeCfg := turboNode.NewNodConfigUrfave(ctx)
-		ethCfg := turboNode.NewEthConfigUrfave(ctx, nodeCfg)
-		if err := debug.Setup(ctx, ethCfg.Genesis); err != nil {
-			return err
+func MakeApp(name string, action cli.ActionFunc, cliFlags []cli.Flag) *cli.App {
+	app := cli2.NewApp(params.GitCommit, "erigon")
+	app.Name = name
+	app.UsageText = app.Name + ` [command] [flags]`
+	app.Action = func(context *cli.Context) error {
+		// handle case: unknown sub-command
+		if context.Args().Present() {
+			var goodNames []string
+			for _, c := range app.VisibleCommands() {
+				goodNames = append(goodNames, c.Name)
+			}
+			log.Error(fmt.Sprintf("Command '%s' not found. Available commands: %s", context.Args().First(), goodNames))
+			cli.ShowAppHelpAndExit(context, 1)
 		}
 
-		firehose.MaybeSyncContext().InitVersion(
-			params.VersionWithCommit(params.GitCommit),
-			params.FirehoseVersion(),
-			params.Variant,
-		)
-		return nil
+		// run default action
+		return action(context)
 	}
+	app.Flags = append(cliFlags, debug.Flags...) // debug flags are required
+	app.Flags = append(app.Flags, utils.MetricFlags...)
+	app.Flags = append(app.Flags, logging.Flags...)
+	app.Flags = append(app.Flags, debug.FirehoseFlags...)
 	app.After = func(ctx *cli.Context) error {
 		debug.Exit()
 		return nil
 	}
-	app.Commands = []*cli.Command{&initCommand, &importCommand, &snapshotCommand, &supportCommand}
+	app.Commands = []*cli.Command{
+		&initCommand,
+		&importCommand,
+		&snapshotCommand,
+		&supportCommand,
+		//&backupCommand,
+	}
 	return app
 }
 
@@ -122,12 +132,12 @@ func NewNodeConfig(ctx *cli.Context) *nodecfg.Config {
 	return &nodeConfig
 }
 
-func MakeConfigNodeDefault(ctx *cli.Context) *node.Node {
-	return makeConfigNode(NewNodeConfig(ctx))
+func MakeConfigNodeDefault(ctx *cli.Context, logger log.Logger) *node.Node {
+	return makeConfigNode(NewNodeConfig(ctx), logger)
 }
 
-func makeConfigNode(config *nodecfg.Config) *node.Node {
-	stack, err := node.New(config)
+func makeConfigNode(config *nodecfg.Config, logger log.Logger) *node.Node {
+	stack, err := node.New(config, logger)
 	if err != nil {
 		utils.Fatalf("Failed to create Erigon node: %v", err)
 	}
