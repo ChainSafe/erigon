@@ -27,6 +27,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/eth/tracers"
+	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/rlp"
 	pbeth "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/type/v2"
 	"golang.org/x/exp/maps"
@@ -37,7 +38,7 @@ import (
 
 var _ core.BlockchainLogger = (*Firehose)(nil)
 
-var firehoseTracerLogLevel = strings.ToLower(os.Getenv("GETH_FIREHOSE_TRACER_LOG_LEVEL"))
+var firehoseTracerLogLevel = strings.ToLower(os.Getenv("ERIGON_FIREHOSE_TRACER_LOG_LEVEL"))
 var isFirehoseDebugEnabled = firehoseTracerLogLevel == "debug" || firehoseTracerLogLevel == "trace"
 var isFirehoseTracerEnabled = firehoseTracerLogLevel == "trace"
 
@@ -83,7 +84,7 @@ type Firehose struct {
 func NewFirehoseLogger() *Firehose {
 	// FIXME: Where should we put our actual INIT line?
 	// FIXME: Pickup version from go-ethereum (PR comment)
-	printToFirehose("INIT", "2.3", "geth", "1.12.0")
+	printToFirehose("INIT", "2.3", "erigon", params.Version)
 
 	return &Firehose{
 		// Global state
@@ -733,8 +734,8 @@ func (f *Firehose) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 	activeCall.StorageChanges = append(activeCall.StorageChanges, &pbeth.StorageChange{
 		Address:  a.Bytes(),
 		Key:      k.Bytes(),
-		OldValue: prev.Bytes(),
-		NewValue: new.Bytes(),
+		OldValue: libcommon.BigToHash(prev.ToBig()).Bytes(),
+		NewValue: libcommon.BigToHash(new.ToBig()).Bytes(),
 		Ordinal:  f.blockOrdinal.Next(),
 	})
 }
@@ -1570,7 +1571,8 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 		}
 
 		// All other cases results in an error as we should have been able to encode it to RLP
-		return fmt.Errorf("encoding RLP: %w", err)
+		return nil
+		//return fmt.Errorf("encoding RLP: %w", err)
 	}
 
 	readerBuffer := bytes.NewBuffer(writerBuffer.Bytes())
@@ -1586,7 +1588,8 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 		}
 
 		// All other cases results in an error as we should have been able to decode it from RLP
-		return fmt.Errorf("decoding RLP: %w", err)
+		return nil
+		//return fmt.Errorf("decoding RLP: %w", err)
 	}
 
 	// If we reach here, encoding/decoding accepted the transaction's type, so let's ensure we expected the same

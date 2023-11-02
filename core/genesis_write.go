@@ -555,7 +555,6 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, bcLogger BlockchainLogger) 
 
 		r, w := state.NewDbStateReader(tx), state.NewDbStateWriter(tx, 0)
 		statedb = state.New(r)
-		statedb.SetLogger(bcLogger)
 
 		hasConstructorAllocation := false
 		for _, account := range g.Alloc {
