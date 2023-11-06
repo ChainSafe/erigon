@@ -58,8 +58,6 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (tracers.Trace
 	return NewFirehoseLogger(), nil
 }
 
-type getPrecompileContract func(libcommon.Address) (vm.PrecompiledContract, bool)
-
 type Firehose struct {
 	// Global state
 	outputBuffer *bytes.Buffer
@@ -73,7 +71,7 @@ type Firehose struct {
 	// Transaction state
 	transaction         *pbeth.TransactionTrace
 	transactionLogIndex uint32
-	isPrecompiledAddr   getPrecompileContract
+	precompiledAddr     []libcommon.Address
 
 	// Call state
 	callStack               *CallStack
@@ -104,6 +102,19 @@ func NewFirehoseLogger() *Firehose {
 	}
 }
 
+func (f *Firehose) isPrecompileAddress(addr libcommon.Address) bool {
+	if len(f.precompiledAddr) == 0 {
+		return false
+	}
+
+	for i := range f.precompiledAddr {
+		if addr == f.precompiledAddr[i] {
+			return true
+		}
+	}
+	return false
+}
+
 // resetBlock resets the block state only, do not reset transaction or call state
 func (f *Firehose) resetBlock() {
 	f.block = nil
@@ -116,7 +127,7 @@ func (f *Firehose) resetBlock() {
 func (f *Firehose) resetTransaction() {
 	f.transaction = nil
 	f.transactionLogIndex = 0
-	f.isPrecompiledAddr = nil
+	f.precompiledAddr = nil
 
 	f.callStack.Reset()
 	f.latestCallStartSuicided = false
@@ -180,14 +191,15 @@ func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
 		to = *tx.GetTo()
 	}
 
-	f.captureTxStart(tx, tx.Hash(), from, to, evm.GetPrecompileContract)
+	precompiledAddr := vm.ActivePrecompiles(evm.ChainConfig().Rules(evm.Context().BlockNumber, evm.Context().Time))
+	f.captureTxStart(tx, tx.Hash(), from, to, precompiledAddr)
 }
 
 // captureTxStart is used internally a two places, in the normal "tracer" and in the "OnGenesisBlock",
 // we manually pass some override to the `tx` because genesis block has a different way of creating
 // the transaction that wraps the genesis block.
-func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, from, to libcommon.Address, isPrecompiledAddr getPrecompileContract) {
-	f.isPrecompiledAddr = isPrecompiledAddr
+func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, from, to libcommon.Address, precompiledAddr []libcommon.Address) {
+	f.precompiledAddr = precompiledAddr
 
 	v, r, s := tx.RawSignatureValues()
 
@@ -541,8 +553,7 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	// to false
 	//
 	// For precompiled address however, interpreter does not run so determine  there was a bug in Firehose instrumentation where we would
-	_, isPrecompiled := f.isPrecompiledAddr(libcommon.BytesToAddress(call.Address))
-	if call.ExecutedCode || isPrecompiled {
+	if call.ExecutedCode || f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)) {
 		// In this case, we are sure that some code executed. This translates in the old Firehose instrumentation
 		// that it would have **never** emitted an `account_without_code`.
 		//
@@ -594,7 +605,7 @@ func (f *Firehose) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {
 
 func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 	f.OnBlockStart(b, big.NewInt(0), nil, nil)
-	f.captureTxStart(&types.LegacyTx{}, emptyCommonHash, emptyCommonAddress, emptyCommonAddress, func(libcommon.Address) (vm.PrecompiledContract, bool) { return nil, false })
+	f.captureTxStart(&types.LegacyTx{}, emptyCommonHash, emptyCommonAddress, emptyCommonAddress, nil)
 	f.CaptureStart(emptyCommonAddress, emptyCommonAddress, false, false, nil, 0, nil, nil)
 
 	for _, addr := range sortedKeys(alloc) {
@@ -771,7 +782,7 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		return
 	}
 
-	if _, isPrecompiled := f.isPrecompiledAddr(a); isPrecompiled {
+	if f.isPrecompileAddress(a) {
 		return
 	}
 
