@@ -142,7 +142,7 @@ func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.He
 	f.block = &pbeth.Block{
 		Hash:   b.Hash().Bytes(),
 		Number: b.Number().Uint64(),
-		Header: newBlockHeaderFromChainBlock(b, firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))),
+		Header: newBlockHeaderFromChainHeader(b.Header(), firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))),
 		Size:   uint64(b.Size()),
 		// Known Firehose issue: If you fix all known Firehose issue for a new chain, don't forget to bump `Ver` to `4`!
 		Ver: 3,
@@ -150,7 +150,7 @@ func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.He
 
 	for _, uncle := range b.Uncles() {
 		// TODO: check if td should be part of uncles
-		f.block.Uncles = append(f.block.Uncles, newBlockHeaderFromHeader(uncle, firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))))
+		f.block.Uncles = append(f.block.Uncles, newBlockHeaderFromChainHeader(uncle, nil))
 	}
 
 	if f.block.Header.BaseFeePerGas != nil {
@@ -229,7 +229,7 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 }
 
 func (f *Firehose) CaptureTxEnd(receipt *types.Receipt, err error) {
-	firehoseDebug("trx ending")
+	firehoseDebug("trx ending. receipt=%v error=%s", receipt, err)
 	f.ensureInBlockAndInTrx()
 
 	f.block.TransactionTraces = append(f.block.TransactionTraces, f.completeTransaction(receipt))
@@ -996,36 +996,7 @@ func flushToFirehose(in []byte, writer io.Writer) {
 }
 
 // FIXME: Create a unit test that is going to fail as soon as any header is added in
-func newBlockHeaderFromChainBlock(b *types.Block, td *pbeth.BigInt) *pbeth.BlockHeader {
-	var withdrawalsHashBytes []byte
-	if hash := b.Header().WithdrawalsHash; hash != nil {
-		withdrawalsHashBytes = hash.Bytes()
-	}
-
-	return &pbeth.BlockHeader{
-		Hash:             b.Hash().Bytes(),
-		Number:           b.NumberU64(),
-		ParentHash:       b.ParentHash().Bytes(),
-		UncleHash:        b.UncleHash().Bytes(),
-		Coinbase:         b.Coinbase().Bytes(),
-		StateRoot:        b.Root().Bytes(),
-		TransactionsRoot: b.TxHash().Bytes(),
-		ReceiptRoot:      b.ReceiptHash().Bytes(),
-		LogsBloom:        b.Bloom().Bytes(),
-		Difficulty:       firehoseBigIntFromNative(b.Difficulty()),
-		TotalDifficulty:  td,
-		GasLimit:         b.GasLimit(),
-		GasUsed:          b.GasUsed(),
-		Timestamp:        timestamppb.New(time.Unix(int64(b.Time()), 0)),
-		ExtraData:        b.Extra(),
-		MixHash:          b.MixDigest().Bytes(),
-		Nonce:            b.Nonce().Uint64(),
-		BaseFeePerGas:    firehoseBigIntFromNative(b.BaseFee()),
-		WithdrawalsRoot:  withdrawalsHashBytes,
-	}
-}
-
-func newBlockHeaderFromHeader(h *types.Header, td *pbeth.BigInt) *pbeth.BlockHeader {
+func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.BlockHeader {
 	var withdrawalsHashBytes []byte
 	if hash := h.WithdrawalsHash; hash != nil {
 		withdrawalsHashBytes = hash.Bytes()
