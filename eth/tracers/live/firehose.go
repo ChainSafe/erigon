@@ -148,6 +148,11 @@ func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.He
 		Ver: 3,
 	}
 
+	for _, uncle := range b.Uncles() {
+		// TODO: check if td should be part of uncles
+		f.block.Uncles = append(f.block.Uncles, newBlockHeaderFromHeader(uncle, firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))))
+	}
+
 	if f.block.Header.BaseFeePerGas != nil {
 		f.blockBaseFee = f.block.Header.BaseFeePerGas.Native()
 	}
@@ -779,6 +784,7 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		// transaction active. In that case, we do not track the account creation because
 		// the "old" Firehose didn't but mainly because we don't have `AccountCreation` at
 		// the block level so what can we do...
+		f.blockOrdinal.Next()
 		return
 	}
 
@@ -1015,6 +1021,35 @@ func newBlockHeaderFromChainBlock(b *types.Block, td *pbeth.BigInt) *pbeth.Block
 		MixHash:          b.MixDigest().Bytes(),
 		Nonce:            b.Nonce().Uint64(),
 		BaseFeePerGas:    firehoseBigIntFromNative(b.BaseFee()),
+		WithdrawalsRoot:  withdrawalsHashBytes,
+	}
+}
+
+func newBlockHeaderFromHeader(h *types.Header, td *pbeth.BigInt) *pbeth.BlockHeader {
+	var withdrawalsHashBytes []byte
+	if hash := h.WithdrawalsHash; hash != nil {
+		withdrawalsHashBytes = hash.Bytes()
+	}
+
+	return &pbeth.BlockHeader{
+		Hash:             h.Hash().Bytes(),
+		Number:           h.Number.Uint64(),
+		ParentHash:       h.ParentHash.Bytes(),
+		UncleHash:        h.UncleHash.Bytes(),
+		Coinbase:         h.Coinbase.Bytes(),
+		StateRoot:        h.Root.Bytes(),
+		TransactionsRoot: h.TxHash.Bytes(),
+		ReceiptRoot:      h.ReceiptHash.Bytes(),
+		LogsBloom:        h.Bloom.Bytes(),
+		Difficulty:       firehoseBigIntFromNative(h.Difficulty),
+		TotalDifficulty:  td,
+		GasLimit:         h.GasLimit,
+		GasUsed:          h.GasUsed,
+		Timestamp:        timestamppb.New(time.Unix(int64(h.Time), 0)),
+		ExtraData:        h.Extra,
+		MixHash:          h.MixDigest.Bytes(),
+		Nonce:            h.Nonce.Uint64(),
+		BaseFeePerGas:    firehoseBigIntFromNative(h.BaseFee),
 		WithdrawalsRoot:  withdrawalsHashBytes,
 	}
 }
