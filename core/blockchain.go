@@ -100,6 +100,8 @@ func ExecuteBlockEphemerally(
 	logger log.Logger,
 ) (res *EphemeralExecResult, executeBlockErr error) {
 
+	logger.Info(fmt.Sprintf("ExecuteBlockEphemerally block=%d", block.NumberU64()))
+
 	var bcLogger BlockchainLogger
 	if vmConfig.Tracer != nil {
 		l, ok := vmConfig.Tracer.(BlockchainLogger)
@@ -153,6 +155,7 @@ func ExecuteBlockEphemerally(
 		}
 		logger.Info(fmt.Sprintf("Applying Trx for block=%d vmConfig.NoReceipt=%v", block.NumberU64(), vmConfig.NoReceipts))
 		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, usedBlobGas, *vmConfig)
+		logger.Info(fmt.Sprintf("Applied Trx for block=%d receipt=%v, err=%v", block.NumberU64(), receipt, err))
 		if writeTrace {
 			if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
 				ftracer.Flush(tx)
@@ -160,7 +163,6 @@ func ExecuteBlockEphemerally(
 
 			vmConfig.Tracer = nil
 		}
-		logger.Info(fmt.Sprintf("Applied Trx for block=%d receipt=%v, err=%v", block.NumberU64(), receipt, err))
 		if err != nil {
 			if !vmConfig.StatelessExec {
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)

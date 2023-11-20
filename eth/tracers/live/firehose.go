@@ -793,6 +793,10 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 	}
 
 	activeCall := f.callStack.Peek()
+	if activeCall == nil {
+		return
+	}
+
 	activeCall.AccountCreations = append(activeCall.AccountCreations, &pbeth.AccountCreation{
 		Account: a.Bytes(),
 		Ordinal: f.blockOrdinal.Next(),
