@@ -207,6 +207,16 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 	f.precompiledAddr = precompiledAddr
 
 	v, r, s := tx.RawSignatureValues()
+	var vBytes, rBytes, sBytes []byte
+	if len(v.Bytes()) != 0 {
+		vBytes = v.PaddedBytes(32)
+	}
+	if len(r.Bytes()) != 0 {
+		rBytes = r.PaddedBytes(32)
+	}
+	if len(s.Bytes()) != 0 {
+		sBytes = r.PaddedBytes(32)
+	}
 
 	f.transaction = &pbeth.TransactionTrace{
 		BeginOrdinal:         f.blockOrdinal.Next(),
@@ -218,9 +228,9 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 		GasPrice:             gasPrice(tx, f.blockBaseFee),
 		Value:                firehoseBigIntFromNative(tx.GetValue().ToBig()),
 		Input:                tx.GetData(),
-		V:                    emptyBytesToNil(v.PaddedBytes(32)),
-		R:                    emptyBytesToNil(r.PaddedBytes(32)),
-		S:                    emptyBytesToNil(s.PaddedBytes(32)),
+		V:                    emptyBytesToNil(vBytes),
+		R:                    emptyBytesToNil(rBytes),
+		S:                    emptyBytesToNil(sBytes),
 		Type:                 transactionTypeFromChainTxType(tx.Type()),
 		AccessList:           newAccessListFromChain(tx.GetAccessList()),
 		MaxFeePerGas:         maxFeePerGas(tx),
