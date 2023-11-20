@@ -420,12 +420,14 @@ var opCodeToGasChangeReasonMap = map[vm.OpCode]pbeth.GasChange_Reason{
 
 // CaptureFault implements the EVMLogger interface to trace an execution fault.
 func (f *Firehose) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, depth int, err error) {
+	firehoseDebug("capture Fault opCode=%s", op.String())
 	if activeCall := f.callStack.Peek(); activeCall != nil {
 		f.captureInterpreterStep(activeCall, pc, op, gas, cost, scope, nil, depth, err)
 	}
 }
 
 func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op vm.OpCode, gas, cost uint64, _ *vm.ScopeContext, rData []byte, depth int, err error) {
+	firehoseDebug("call Interpreter Step index=%d opCode=%s", activeCall.Index, op.String())
 	if !activeCall.ExecutedCode {
 		firehoseTrace("setting active call executed code to true")
 		activeCall.ExecutedCode = true
@@ -433,6 +435,7 @@ func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op 
 }
 
 func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+	firehoseDebug("call Enter opCode=%s isPrecompine=%v type=%s input=%s value=%s", typ.String(), precompile, inputView(input), value.String())
 	f.ensureInBlockAndInTrx()
 
 	// The invokation for vm.SELFDESTRUCT is called while already in another call, so we must not check that we are not in a call here
@@ -541,6 +544,7 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 		call.ReturnData = bytes.Clone(output)
 	}
 
+	firehoseDebug("call end address=%s isPrecompile=%v executedCode=%v calcExecCode=%v", call.Address, f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)), call.ExecutedCode, call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0)
 	// Known Firehose issue: How we computed `executed_code` before was not working for contract's that only
 	// deal with ETH transfer through Solidity `receive()` built-in since those call have `len(input) == 0`
 	//
@@ -778,6 +782,7 @@ func (f *Firehose) OnLog(l *types.Log) {
 }
 
 func (f *Firehose) OnNewAccount(a libcommon.Address) {
+	firehoseTrace("on new account addr=%s trx=%v isPrecompile=%v", a.String(), f.transaction == nil, f.isPrecompileAddress(a))
 	f.ensureInBlockOrTrx()
 	if f.transaction == nil {
 		// We receive OnNewAccount on finalization of the block which means there is no
@@ -794,6 +799,7 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 
 	activeCall := f.callStack.Peek()
 	if activeCall == nil {
+		firehoseTrace("active call is nil")
 		return
 	}
 
