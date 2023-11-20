@@ -215,7 +215,7 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 		rBytes = r.PaddedBytes(32)
 	}
 	if len(s.Bytes()) != 0 {
-		sBytes = r.PaddedBytes(32)
+		sBytes = s.PaddedBytes(32)
 	}
 
 	f.transaction = &pbeth.TransactionTrace{
