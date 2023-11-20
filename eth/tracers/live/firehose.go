@@ -219,8 +219,8 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 		Value:                firehoseBigIntFromNative(tx.GetValue().ToBig()),
 		Input:                tx.GetData(),
 		V:                    emptyBytesToNil(v.Bytes()),
-		R:                    emptyBytesToNil(r.Bytes()),
-		S:                    emptyBytesToNil(s.Bytes()),
+		R:                    emptyBytesToNil(normalizeSignaturePoint(r.Bytes())),
+		S:                    emptyBytesToNil(normalizeSignaturePoint(s.Bytes())),
 		Type:                 transactionTypeFromChainTxType(tx.Type()),
 		AccessList:           newAccessListFromChain(tx.GetAccessList()),
 		MaxFeePerGas:         maxFeePerGas(tx),
@@ -1487,6 +1487,23 @@ func emptyBytesToNil(in []byte) []byte {
 	}
 
 	return in
+}
+
+func normalizeSignaturePoint(value []byte) []byte {
+	if len(value) == 0 {
+		return value
+	}
+
+	if len(value) < 32 {
+		offset := 32 - len(value)
+
+		out := make([]byte, 32)
+		copy(out[offset:32], value)
+
+		return out
+	}
+
+	return value[0:32]
 }
 
 func firehoseBigIntFromNative(in *big.Int) *pbeth.BigInt {
