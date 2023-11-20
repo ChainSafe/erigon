@@ -435,7 +435,7 @@ func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op 
 }
 
 func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	firehoseDebug("call Enter opCode=%s isPrecompine=%v type=%s input=%s value=%s", typ.String(), precompile, inputView(input), value.String())
+	firehoseDebug("call Enter opCode=%s isPrecompine=%v type=%s input=%s value=%s", typ.String(), precompile, inputView(input), string(value.Bytes()))
 	f.ensureInBlockAndInTrx()
 
 	// The invokation for vm.SELFDESTRUCT is called while already in another call, so we must not check that we are not in a call here
