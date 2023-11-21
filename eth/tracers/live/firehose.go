@@ -374,7 +374,7 @@ func (f *Firehose) assignOrdinalToReceiptLogs() {
 
 // CaptureStart implements the EVMLogger interface to initialize the tracing operation.
 func (f *Firehose) CaptureStart(from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	f.callStart("root", rootCallType(create), from, to, input, gas, value)
+	f.callStart("root", rootCallType(create), from, to, precompile, input, gas, value, code)
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
@@ -428,14 +428,15 @@ func (f *Firehose) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope
 
 func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op vm.OpCode, gas, cost uint64, _ *vm.ScopeContext, rData []byte, depth int, err error) {
 	firehoseDebug("call Interpreter Step index=%d opCode=%s", activeCall.Index, op.String())
-	if !activeCall.ExecutedCode {
-		firehoseTrace("setting active call executed code to true")
-		activeCall.ExecutedCode = true
-	}
+	// if !activeCall.ExecutedCode {
+	// 	firehoseTrace("setting active call executed code to true")
+	// 	activeCall.ExecutedCode = true
+	// }
 }
 
 func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	firehoseDebug("call Enter opCode=%s isPrecompine=%v type=%s input=%s value=%s", typ.String(), precompile, inputView(input), string(value.Bytes()))
+	firehoseDebug("call Enter opCode=%s isPrecompine=%v type=%s input=%s", typ.String(), precompile, inputView(input))
+
 	f.ensureInBlockAndInTrx()
 
 	// The invokation for vm.SELFDESTRUCT is called while already in another call, so we must not check that we are not in a call here
@@ -457,7 +458,7 @@ func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcom
 		panic(fmt.Errorf("unexpected call type, received OpCode %s but only call related opcode (CALL, CREATE, CREATE2, STATIC, DELEGATECALL and CALLCODE) or SELFDESTRUCT is accepted", typ))
 	}
 
-	f.callStart("child", callType, from, to, input, gas, value)
+	f.callStart("child", callType, from, to, precompile, input, gas, value, code)
 }
 
 // CaptureExit is called when EVM exits a scope, even if the scope didn't
@@ -466,7 +467,7 @@ func (f *Firehose) CaptureExit(output []byte, gasUsed uint64, err error) {
 	f.callEnd("child", output, gasUsed, err)
 }
 
-func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, input []byte, gas uint64, value *uint256.Int) {
+func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, precompile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	firehoseDebug("call start source=%s index=%d type=%s input=%s", source, f.callStack.NextIndex(), callType, inputView(input))
 	f.ensureInBlockAndInTrx()
 
@@ -492,6 +493,15 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		Input:    bytes.Clone(input),
 		Value:    firehoseBigIntFromNative(value.ToBig()),
 		GasLimit: gas,
+	}
+
+	if !precompile {
+		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+	} else if len(code) == 0 && callType == pbeth.CallType_CALL {
+		// call without code situation
+		call.ExecutedCode = false
+	} else {
+		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 	}
 
 	// Known Firehose issue: The BeginOrdinal of the genesis block root call is never actually
@@ -562,19 +572,19 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	// to false
 	//
 	// For precompiled address however, interpreter does not run so determine  there was a bug in Firehose instrumentation where we would
-	if call.ExecutedCode || f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)) {
-		// In this case, we are sure that some code executed. This translates in the old Firehose instrumentation
-		// that it would have **never** emitted an `account_without_code`.
-		//
-		// When no `account_without_code` was executed in the previous Firehose instrumentation,
-		// the `call.ExecutedCode` defaulted to the condition below
-		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
-	} else {
-		// In all other cases, we are sure that no code executed. This translates in the old Firehose instrumentation
-		// that it would have emitted an `account_without_code` and it would have then forced set the `call.ExecutedCode`
-		// to `false`.
-		call.ExecutedCode = false
-	}
+	// if call.ExecutedCode || f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)) {
+	// 	// In this case, we are sure that some code executed. This translates in the old Firehose instrumentation
+	// 	// that it would have **never** emitted an `account_without_code`.
+	// 	//
+	// 	// When no `account_without_code` was executed in the previous Firehose instrumentation,
+	// 	// the `call.ExecutedCode` defaulted to the condition below
+	// 	call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+	// } else {
+	// 	// In all other cases, we are sure that no code executed. This translates in the old Firehose instrumentation
+	// 	// that it would have emitted an `account_without_code` and it would have then forced set the `call.ExecutedCode`
+	// 	// to `false`.
+	// 	call.ExecutedCode = false
+	// }
 
 	if err != nil {
 		call.FailureReason = err.Error()
@@ -797,16 +807,18 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		return
 	}
 
+	accountCreation := &pbeth.AccountCreation{
+		Account: a.Bytes(),
+		Ordinal: f.blockOrdinal.Next(),
+	}
+
 	activeCall := f.callStack.Peek()
 	if activeCall == nil {
-		firehoseTrace("active call is nil")
+		f.deferredCallState.accountCreation = append(f.deferredCallState.accountCreation, accountCreation)
 		return
 	}
 
-	activeCall.AccountCreations = append(activeCall.AccountCreations, &pbeth.AccountCreation{
-		Account: a.Bytes(),
-		Ordinal: f.blockOrdinal.Next(),
-	})
+	activeCall.AccountCreations = append(activeCall.AccountCreations, accountCreation)
 }
 
 func (f *Firehose) OnGasChange(old, new uint64, reason vm.GasChangeReason) {
@@ -1382,9 +1394,10 @@ func (s *CallStack) Peek() *pbeth.Call {
 // that is recorded before the Call has been started. This happens on the "starting"
 // portion of the call/created.
 type DeferredCallState struct {
-	balanceChanges []*pbeth.BalanceChange
-	gasChanges     []*pbeth.GasChange
-	nonceChanges   []*pbeth.NonceChange
+	balanceChanges  []*pbeth.BalanceChange
+	gasChanges      []*pbeth.GasChange
+	nonceChanges    []*pbeth.NonceChange
+	accountCreation []*pbeth.AccountCreation
 }
 
 func NewDeferredCallState() *DeferredCallState {
@@ -1404,6 +1417,7 @@ func (d *DeferredCallState) MaybePopulateCallAndReset(source string, call *pbeth
 	call.BalanceChanges = append(call.BalanceChanges, d.balanceChanges...)
 	call.GasChanges = append(call.GasChanges, d.gasChanges...)
 	call.NonceChanges = append(call.NonceChanges, d.nonceChanges...)
+	call.AccountCreations = append(call.AccountCreations, d.accountCreation...)
 
 	d.Reset()
 
@@ -1418,6 +1432,7 @@ func (d *DeferredCallState) Reset() {
 	d.balanceChanges = nil
 	d.gasChanges = nil
 	d.nonceChanges = nil
+	d.accountCreation = nil
 }
 
 func errorView(err error) _errorView {
