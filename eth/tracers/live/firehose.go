@@ -495,7 +495,7 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		GasLimit: gas,
 	}
 
-	if !precompile {
+	if precompile {
 		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 	} else if len(code) == 0 && callType == pbeth.CallType_CALL {
 		// call without code situation
