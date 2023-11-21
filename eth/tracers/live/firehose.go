@@ -480,6 +480,14 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		input = nil
 	}
 
+	v := firehoseBigIntFromNative(value.ToBig())
+	if callType == pbeth.CallType_DELEGATE {
+		// If it's a delegate call, the there should be a call in the stack
+		parent := f.callStack.Peek()
+		// In DELEGATE CALL, value from parent is used
+		v = parent.Value
+	}
+
 	call := &pbeth.Call{
 		// Known Firehose issue: Ref 042a2ff03fd623f151d7726314b8aad6 (see below)
 		//
@@ -491,7 +499,7 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		Address:  to.Bytes(),
 		// We need to clone `input` received by the tracer as it's re-used within Geth!
 		Input:    bytes.Clone(input),
-		Value:    firehoseBigIntFromNative(value.ToBig()),
+		Value:    v,
 		GasLimit: gas,
 	}
 
