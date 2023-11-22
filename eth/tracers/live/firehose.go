@@ -356,6 +356,7 @@ func (f *Firehose) assignOrdinalToReceiptLogs() {
 		callLog := callLogs[i]
 		receiptsLog := receiptsLogs[i]
 
+		firehoseDebug("assignOrdinalToReceiptLogs cIndex=%d rIndex=%d cAddress=%s rIndex=%s", callLog.Index, receiptsLog.Index, callLog.Address, receiptsLog.Address)
 		result := &validationResult{}
 		// Ordinal must **not** be checked as we are assigning it here below after the validations
 		validateBytesField(result, "Address", callLog.Address, receiptsLog.Address)
