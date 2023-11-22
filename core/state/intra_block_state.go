@@ -554,11 +554,12 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 	newobj.setNonce(0) // sets the object to dirty
 	if previous == nil {
 		sdb.journal.append(createObjectChange{account: &addr})
-		if sdb.logger != nil {
-			sdb.logger.OnNewAccount(addr)
-		}
 	} else {
 		sdb.journal.append(resetObjectChange{account: &addr, prev: previous})
+	}
+
+	if sdb.logger != nil {
+		sdb.logger.OnNewAccount(addr)
 	}
 	newobj.newlyCreated = true
 	sdb.setStateObject(addr, newobj)
