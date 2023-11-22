@@ -630,7 +630,11 @@ func (f *Firehose) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {
 		activeCall.KeccakPreimages = make(map[string]string)
 	}
 
-	activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = hex.EncodeToString(data)
+	if len(data) == 0 {
+		activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = "."
+	} else {
+		activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = hex.EncodeToString(data)
+	}
 }
 
 func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
@@ -1058,7 +1062,7 @@ func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.Blo
 	}
 
 	if pbHead.Difficulty == nil {
-		pbHead.Difficulty = &pbeth.BigInt{Bytes: []byte("0x0")}
+		pbHead.Difficulty = &pbeth.BigInt{Bytes: []byte{0}}
 	}
 
 	return pbHead
