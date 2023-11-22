@@ -504,11 +504,14 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	}
 
 	if precompile {
+		firehoseDebug("executed code isprecompile callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
 		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 	} else if len(code) == 0 && callType == pbeth.CallType_CALL {
 		// call without code situation
+		firehoseDebug("executed code call_witnout_code")
 		call.ExecutedCode = false
 	} else {
+		firehoseDebug("executed code else callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
 		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 	}
 
@@ -1032,7 +1035,7 @@ func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.Blo
 		withdrawalsHashBytes = hash.Bytes()
 	}
 
-	return &pbeth.BlockHeader{
+	pbHead := &pbeth.BlockHeader{
 		Hash:             h.Hash().Bytes(),
 		Number:           h.Number.Uint64(),
 		ParentHash:       h.ParentHash.Bytes(),
@@ -1053,6 +1056,12 @@ func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.Blo
 		BaseFeePerGas:    firehoseBigIntFromNative(h.BaseFee),
 		WithdrawalsRoot:  withdrawalsHashBytes,
 	}
+
+	if pbHead.Difficulty == nil {
+		pbHead.Difficulty = &pbeth.BigInt{Bytes: []byte("0x0")}
+	}
+
+	return pbHead
 }
 
 // FIXME: Bring back Firehose test that ensures no new tx type are missed
