@@ -427,7 +427,6 @@ func (f *Firehose) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope
 }
 
 func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op vm.OpCode, gas, cost uint64, _ *vm.ScopeContext, rData []byte, depth int, err error) {
-	firehoseDebug("call Interpreter Step index=%d opCode=%s", activeCall.Index, op.String())
 	// if !activeCall.ExecutedCode {
 	// 	firehoseTrace("setting active call executed code to true")
 	// 	activeCall.ExecutedCode = true
@@ -786,6 +785,7 @@ func (f *Firehose) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 }
 
 func (f *Firehose) OnLog(l *types.Log) {
+	firehoseTrace("on log addr=%s index=%d", l.Address.Bytes(), f.transactionLogIndex)
 	f.ensureInBlockAndInTrxAndInCall()
 
 	topics := make([][]byte, len(l.Topics))
@@ -814,11 +814,13 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		// transaction active. In that case, we do not track the account creation because
 		// the "old" Firehose didn't but mainly because we don't have `AccountCreation` at
 		// the block level so what can we do...
+		firehoseTrace("on new account trx is nil")
 		f.blockOrdinal.Next()
 		return
 	}
 
 	if f.isPrecompileAddress(a) {
+		firehoseTrace("on new account isprecompile")
 		return
 	}
 
@@ -829,10 +831,12 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 
 	activeCall := f.callStack.Peek()
 	if activeCall == nil {
+		firehoseTrace("on new account active call is nil")
 		f.deferredCallState.accountCreation = append(f.deferredCallState.accountCreation, accountCreation)
 		return
 	}
 
+	firehoseTrace("on new account adding to active call")
 	activeCall.AccountCreations = append(activeCall.AccountCreations, accountCreation)
 }
 
