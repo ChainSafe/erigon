@@ -69,6 +69,7 @@ type Firehose struct {
 	blockFinality *FinalityStatus
 
 	// Transaction state
+	evm                 *vm.EVM
 	transaction         *pbeth.TransactionTrace
 	transactionLogIndex uint32
 	precompiledAddr     []libcommon.Address
@@ -126,6 +127,7 @@ func (f *Firehose) resetBlock() {
 // resetTransaction resets the transaction state and the call state in one shot
 func (f *Firehose) resetTransaction() {
 	f.transaction = nil
+	f.evm = nil
 	f.transactionLogIndex = 0
 	f.precompiledAddr = nil
 
@@ -503,17 +505,7 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		GasLimit: gas,
 	}
 
-	if precompile {
-		firehoseDebug("executed code isprecompile callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
-		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
-	} else if len(code) == 0 && callType == pbeth.CallType_CALL {
-		// call without code situation
-		firehoseDebug("executed code call_witnout_code")
-		call.ExecutedCode = false
-	} else {
-		firehoseDebug("executed code else callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
-		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
-	}
+	call.ExecutedCode = getExecutedCode(f.evm, precompile, call, code)
 
 	// Known Firehose issue: The BeginOrdinal of the genesis block root call is never actually
 	// incremented and it's always 0.
@@ -539,6 +531,30 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	}
 
 	f.callStack.Push(call)
+}
+
+func getExecutedCode(evm *vm.EVM, precompile bool, call *pbeth.Call, code []byte) bool {
+	if evm != nil && call.CallType == pbeth.CallType_CALL {
+		if !evm.IntraBlockState().Exist(libcommon.BytesToAddress(call.Address)) &&
+			!precompile && evm.ChainRules().IsSpuriousDragon &&
+			call.Value != nil && call.Value.Native().Sign() == 0 {
+			firehoseDebug("executed code IsSpuriousDragon callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
+			return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+		}
+	}
+
+	if precompile {
+		firehoseDebug("executed code isprecompile callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
+		return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+	}
+
+	if len(code) == 0 && call.CallType == pbeth.CallType_CALL {
+		firehoseDebug("executed code call_witnout_code")
+		return false
+	}
+
+	firehoseDebug("executed code default callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
+	return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 }
 
 func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err error) {
