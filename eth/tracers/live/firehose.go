@@ -183,7 +183,7 @@ func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
 	firehoseDebug("trx start hash=%s type=%d gas=%d input=%s txLogIndex=%d", tx.Hash(), tx.Type(), tx.GetGas(), inputView(tx.GetData()), f.transactionLogIndex)
 
 	f.ensureInBlockAndNotInTrxAndNotInCall()
-
+	f.evm = evm
 	signer := types.MakeSigner(evm.ChainConfig(), evm.Context().BlockNumber, evm.Context().Time)
 
 	from, err := tx.Sender(*signer)
