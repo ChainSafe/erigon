@@ -785,7 +785,7 @@ func (f *Firehose) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 }
 
 func (f *Firehose) OnLog(l *types.Log) {
-	firehoseTrace("on log addr=%s index=%d", l.Address.Hex(), f.transactionLogIndex)
+	firehoseTrace("on log addr=%s index=%d logIndex=%d", l.Address.Hex(), f.transactionLogIndex, l.Index)
 	f.ensureInBlockAndInTrxAndInCall()
 
 	topics := make([][]byte, len(l.Topics))
