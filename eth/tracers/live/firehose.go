@@ -178,7 +178,7 @@ func (f *Firehose) OnBlockEnd(err error) {
 }
 
 func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
-	firehoseDebug("trx start hash=%s type=%d gas=%d input=%s", tx.Hash(), tx.Type(), tx.GetGas(), inputView(tx.GetData()))
+	firehoseDebug("trx start hash=%s type=%d gas=%d input=%s txLogIndex=%d", tx.Hash(), tx.Type(), tx.GetGas(), inputView(tx.GetData()), f.transactionLogIndex)
 
 	f.ensureInBlockAndNotInTrxAndNotInCall()
 
@@ -468,7 +468,7 @@ func (f *Firehose) CaptureExit(output []byte, gasUsed uint64, err error) {
 }
 
 func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, precompile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	firehoseDebug("call start source=%s index=%d type=%s input=%s", source, f.callStack.NextIndex(), callType, inputView(input))
+	firehoseDebug("call start source=%s index=%d type=%s input=%s txLogIndex=%d", source, f.callStack.NextIndex(), callType, inputView(input), f.transactionLogIndex)
 	f.ensureInBlockAndInTrx()
 
 	// Known Firehose issue: Contract creation call's input is always `nil` in old Firehose patch
@@ -542,7 +542,7 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 }
 
 func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err error) {
-	firehoseDebug("call end source=%s index=%d output=%s gasUsed=%d err=%s", source, f.callStack.ActiveIndex(), outputView(output), gasUsed, errorView(err))
+	firehoseDebug("call end source=%s index=%d output=%s gasUsed=%d err=%s txLogIndex=%d", source, f.callStack.ActiveIndex(), outputView(output), gasUsed, errorView(err), f.transactionLogIndex)
 
 	if f.latestCallStartSuicided {
 		if source != "child" {
@@ -565,7 +565,6 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 		call.ReturnData = bytes.Clone(output)
 	}
 
-	firehoseDebug("call end address=%s isPrecompile=%v executedCode=%v calcExecCode=%v", call.Address, f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)), call.ExecutedCode, call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0)
 	// Known Firehose issue: How we computed `executed_code` before was not working for contract's that only
 	// deal with ETH transfer through Solidity `receive()` built-in since those call have `len(input) == 0`
 	//
@@ -786,7 +785,7 @@ func (f *Firehose) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 }
 
 func (f *Firehose) OnLog(l *types.Log) {
-	firehoseTrace("on log addr=%s index=%d", l.Address.Bytes(), f.transactionLogIndex)
+	firehoseTrace("on log addr=%s index=%d", l.Address.Hex(), f.transactionLogIndex)
 	f.ensureInBlockAndInTrxAndInCall()
 
 	topics := make([][]byte, len(l.Topics))
