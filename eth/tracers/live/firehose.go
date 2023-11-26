@@ -537,7 +537,7 @@ func getExecutedCode(evm *vm.EVM, precompile bool, call *pbeth.Call, code []byte
 	if evm != nil && call.CallType == pbeth.CallType_CALL {
 		if !evm.IntraBlockState().Exist(libcommon.BytesToAddress(call.Address)) &&
 			!precompile && evm.ChainRules().IsSpuriousDragon &&
-			call.Value != nil && call.Value.Native().Sign() == 0 {
+			(call.Value == nil || call.Value.Native().Sign() == 0) {
 			firehoseDebug("executed code IsSpuriousDragon callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
 			return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 		}
