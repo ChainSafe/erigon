@@ -437,11 +437,18 @@ func (sdb *IntraBlockState) Selfdestruct(addr libcommon.Address) bool {
 	if stateObject == nil || stateObject.deleted {
 		return false
 	}
+
+	prevBalance := *stateObject.Balance()
 	sdb.journal.append(selfdestructChange{
 		account:     &addr,
 		prev:        stateObject.selfdestructed,
-		prevbalance: *stateObject.Balance(),
+		prevbalance: prevBalance,
 	})
+
+	if sdb.logger != nil && !prevBalance.IsZero() {
+		sdb.logger.OnBalanceChange(addr, &prevBalance, uint256.NewInt(0), evmtypes.BalanceChangeSuicideWithdraw)
+	}
+
 	stateObject.markSelfdestructed()
 	stateObject.createdContract = false
 	stateObject.data.Balance.Clear()
