@@ -280,7 +280,7 @@ func (f *Firehose) completeTransaction(receipt *types.Receipt) *pbeth.Transactio
 	// Order is important, we must populate the state reverted before we remove the log block index and re-assign ordinals
 	f.populateStateReverted()
 	f.removeLogBlockIndexOnStateRevertedCalls()
-	f.assignOrdinalToReceiptLogs()
+	f.assignOrdinalAndIndexToReceiptLogs()
 
 	// Known Firehose issue: This field has never been populated in the old Firehose instrumentation, so it's the same thing for now
 	// f.transaction.ReturnData = rootCall.ReturnData
@@ -322,7 +322,7 @@ func (f *Firehose) removeLogBlockIndexOnStateRevertedCalls() {
 	}
 }
 
-func (f *Firehose) assignOrdinalToReceiptLogs() {
+func (f *Firehose) assignOrdinalAndIndexToReceiptLogs() {
 	trx := f.transaction
 
 	receiptsLogs := trx.Receipt.Logs
@@ -362,7 +362,6 @@ func (f *Firehose) assignOrdinalToReceiptLogs() {
 		result := &validationResult{}
 		// Ordinal must **not** be checked as we are assigning it here below after the validations
 		validateBytesField(result, "Address", callLog.Address, receiptsLog.Address)
-		// validateUint32Field(result, "Index", callLog.Index, receiptsLog.Index)
 		validateUint32Field(result, "BlockIndex", callLog.BlockIndex, receiptsLog.BlockIndex)
 		validateBytesField(result, "Data", callLog.Data, receiptsLog.Data)
 		validateArrayOfBytesField(result, "Topics", callLog.Topics, receiptsLog.Topics)
@@ -371,6 +370,7 @@ func (f *Firehose) assignOrdinalToReceiptLogs() {
 			result.panicOnAnyFailures("mismatch between Firehose call log and Ethereum transaction receipt log at index %d", i)
 		}
 
+		receiptsLog.Index = callLog.Index
 		receiptsLog.Ordinal = callLog.Ordinal
 	}
 }
