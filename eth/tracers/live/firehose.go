@@ -69,6 +69,7 @@ type Firehose struct {
 	blockFinality *FinalityStatus
 
 	// Transaction state
+	evm                 *vm.EVM
 	transaction         *pbeth.TransactionTrace
 	transactionLogIndex uint32
 	precompiledAddr     []libcommon.Address
@@ -126,6 +127,7 @@ func (f *Firehose) resetBlock() {
 // resetTransaction resets the transaction state and the call state in one shot
 func (f *Firehose) resetTransaction() {
 	f.transaction = nil
+	f.evm = nil
 	f.transactionLogIndex = 0
 	f.precompiledAddr = nil
 
@@ -142,10 +144,15 @@ func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.He
 	f.block = &pbeth.Block{
 		Hash:   b.Hash().Bytes(),
 		Number: b.Number().Uint64(),
-		Header: newBlockHeaderFromChainBlock(b, firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))),
+		Header: newBlockHeaderFromChainHeader(b.Header(), firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))),
 		Size:   uint64(b.Size()),
 		// Known Firehose issue: If you fix all known Firehose issue for a new chain, don't forget to bump `Ver` to `4`!
 		Ver: 3,
+	}
+
+	for _, uncle := range b.Uncles() {
+		// TODO: check if td should be part of uncles
+		f.block.Uncles = append(f.block.Uncles, newBlockHeaderFromChainHeader(uncle, nil))
 	}
 
 	if f.block.Header.BaseFeePerGas != nil {
@@ -177,6 +184,7 @@ func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
 
 	f.ensureInBlockAndNotInTrxAndNotInCall()
 
+	f.evm = evm
 	signer := types.MakeSigner(evm.ChainConfig(), evm.Context().BlockNumber, evm.Context().Time)
 
 	from, err := tx.Sender(*signer)
@@ -214,8 +222,8 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 		Value:                firehoseBigIntFromNative(tx.GetValue().ToBig()),
 		Input:                tx.GetData(),
 		V:                    emptyBytesToNil(v.Bytes()),
-		R:                    emptyBytesToNil(r.Bytes()),
-		S:                    emptyBytesToNil(s.Bytes()),
+		R:                    emptyBytesToNil(normalizeSignaturePoint(r.Bytes())),
+		S:                    emptyBytesToNil(normalizeSignaturePoint(s.Bytes())),
 		Type:                 transactionTypeFromChainTxType(tx.Type()),
 		AccessList:           newAccessListFromChain(tx.GetAccessList()),
 		MaxFeePerGas:         maxFeePerGas(tx),
@@ -273,7 +281,7 @@ func (f *Firehose) completeTransaction(receipt *types.Receipt) *pbeth.Transactio
 	// Order is important, we must populate the state reverted before we remove the log block index and re-assign ordinals
 	f.populateStateReverted()
 	f.removeLogBlockIndexOnStateRevertedCalls()
-	f.assignOrdinalToReceiptLogs()
+	f.assignOrdinalAndIndexToReceiptLogs()
 
 	// Known Firehose issue: This field has never been populated in the old Firehose instrumentation, so it's the same thing for now
 	// f.transaction.ReturnData = rootCall.ReturnData
@@ -315,7 +323,7 @@ func (f *Firehose) removeLogBlockIndexOnStateRevertedCalls() {
 	}
 }
 
-func (f *Firehose) assignOrdinalToReceiptLogs() {
+func (f *Firehose) assignOrdinalAndIndexToReceiptLogs() {
 	trx := f.transaction
 
 	receiptsLogs := trx.Receipt.Logs
@@ -354,7 +362,6 @@ func (f *Firehose) assignOrdinalToReceiptLogs() {
 		result := &validationResult{}
 		// Ordinal must **not** be checked as we are assigning it here below after the validations
 		validateBytesField(result, "Address", callLog.Address, receiptsLog.Address)
-		validateUint32Field(result, "Index", callLog.Index, receiptsLog.Index)
 		validateUint32Field(result, "BlockIndex", callLog.BlockIndex, receiptsLog.BlockIndex)
 		validateBytesField(result, "Data", callLog.Data, receiptsLog.Data)
 		validateArrayOfBytesField(result, "Topics", callLog.Topics, receiptsLog.Topics)
@@ -363,13 +370,14 @@ func (f *Firehose) assignOrdinalToReceiptLogs() {
 			result.panicOnAnyFailures("mismatch between Firehose call log and Ethereum transaction receipt log at index %d", i)
 		}
 
+		receiptsLog.Index = callLog.Index
 		receiptsLog.Ordinal = callLog.Ordinal
 	}
 }
 
 // CaptureStart implements the EVMLogger interface to initialize the tracing operation.
 func (f *Firehose) CaptureStart(from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	f.callStart("root", rootCallType(create), from, to, input, gas, value)
+	f.callStart("root", rootCallType(create), from, to, precompile, input, gas, value, code)
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
@@ -421,10 +429,10 @@ func (f *Firehose) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope
 }
 
 func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op vm.OpCode, gas, cost uint64, _ *vm.ScopeContext, rData []byte, depth int, err error) {
-	if !activeCall.ExecutedCode {
-		firehoseTrace("setting active call executed code to true")
-		activeCall.ExecutedCode = true
-	}
+	// if !activeCall.ExecutedCode {
+	// 	firehoseTrace("setting active call executed code to true")
+	// 	activeCall.ExecutedCode = true
+	// }
 }
 
 func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
@@ -434,10 +442,6 @@ func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcom
 	if typ == vm.SELFDESTRUCT {
 		f.ensureInCall()
 		f.callStack.Peek().Suicide = true
-
-		if value.Sign() != 0 {
-			f.OnBalanceChange(from, value, uint256.NewInt(0), evmtypes.BalanceChangeSuicideWithdraw)
-		}
 
 		// The next CaptureExit must be ignored, this variable will make the next CaptureExit to be ignored
 		f.latestCallStartSuicided = true
@@ -449,7 +453,7 @@ func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcom
 		panic(fmt.Errorf("unexpected call type, received OpCode %s but only call related opcode (CALL, CREATE, CREATE2, STATIC, DELEGATECALL and CALLCODE) or SELFDESTRUCT is accepted", typ))
 	}
 
-	f.callStart("child", callType, from, to, input, gas, value)
+	f.callStart("child", callType, from, to, precompile, input, gas, value, code)
 }
 
 // CaptureExit is called when EVM exits a scope, even if the scope didn't
@@ -458,7 +462,7 @@ func (f *Firehose) CaptureExit(output []byte, gasUsed uint64, err error) {
 	f.callEnd("child", output, gasUsed, err)
 }
 
-func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, input []byte, gas uint64, value *uint256.Int) {
+func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, precompile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	firehoseDebug("call start source=%s index=%d type=%s input=%s", source, f.callStack.NextIndex(), callType, inputView(input))
 	f.ensureInBlockAndInTrx()
 
@@ -469,6 +473,14 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	// New chain integration should remove this `if` statement completely.
 	if callType == pbeth.CallType_CREATE {
 		input = nil
+	}
+
+	v := firehoseBigIntFromNative(value.ToBig())
+	if callType == pbeth.CallType_DELEGATE {
+		// If it's a delegate call, the there should be a call in the stack
+		parent := f.callStack.Peek()
+		// In DELEGATE CALL, value from parent is used
+		v = parent.Value
 	}
 
 	call := &pbeth.Call{
@@ -482,9 +494,11 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		Address:  to.Bytes(),
 		// We need to clone `input` received by the tracer as it's re-used within Geth!
 		Input:    bytes.Clone(input),
-		Value:    firehoseBigIntFromNative(value.ToBig()),
+		Value:    v,
 		GasLimit: gas,
 	}
+
+	call.ExecutedCode = getExecutedCode(f.evm, precompile, call, code)
 
 	// Known Firehose issue: The BeginOrdinal of the genesis block root call is never actually
 	// incremented and it's always 0.
@@ -510,6 +524,30 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	}
 
 	f.callStack.Push(call)
+}
+
+func getExecutedCode(evm *vm.EVM, precompile bool, call *pbeth.Call, code []byte) bool {
+	if evm != nil && call.CallType == pbeth.CallType_CALL {
+		if !evm.IntraBlockState().Exist(libcommon.BytesToAddress(call.Address)) &&
+			!precompile && evm.ChainRules().IsSpuriousDragon &&
+			(call.Value == nil || call.Value.Native().Sign() == 0) {
+			firehoseDebug("executed code IsSpuriousDragon callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
+			return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+		}
+	}
+
+	if precompile {
+		firehoseDebug("executed code isprecompile callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
+		return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+	}
+
+	if len(code) == 0 && call.CallType == pbeth.CallType_CALL {
+		firehoseDebug("executed code call_witnout_code")
+		return false
+	}
+
+	firehoseDebug("executed code default callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
+	return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 }
 
 func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err error) {
@@ -553,19 +591,19 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	// to false
 	//
 	// For precompiled address however, interpreter does not run so determine  there was a bug in Firehose instrumentation where we would
-	if call.ExecutedCode || f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)) {
-		// In this case, we are sure that some code executed. This translates in the old Firehose instrumentation
-		// that it would have **never** emitted an `account_without_code`.
-		//
-		// When no `account_without_code` was executed in the previous Firehose instrumentation,
-		// the `call.ExecutedCode` defaulted to the condition below
-		call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
-	} else {
-		// In all other cases, we are sure that no code executed. This translates in the old Firehose instrumentation
-		// that it would have emitted an `account_without_code` and it would have then forced set the `call.ExecutedCode`
-		// to `false`.
-		call.ExecutedCode = false
-	}
+	// if call.ExecutedCode || f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)) {
+	// 	// In this case, we are sure that some code executed. This translates in the old Firehose instrumentation
+	// 	// that it would have **never** emitted an `account_without_code`.
+	// 	//
+	// 	// When no `account_without_code` was executed in the previous Firehose instrumentation,
+	// 	// the `call.ExecutedCode` defaulted to the condition below
+	// 	call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
+	// } else {
+	// 	// In all other cases, we are sure that no code executed. This translates in the old Firehose instrumentation
+	// 	// that it would have emitted an `account_without_code` and it would have then forced set the `call.ExecutedCode`
+	// 	// to `false`.
+	// 	call.ExecutedCode = false
+	// }
 
 	if err != nil {
 		call.FailureReason = err.Error()
@@ -600,7 +638,11 @@ func (f *Firehose) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {
 		activeCall.KeccakPreimages = make(map[string]string)
 	}
 
-	activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = hex.EncodeToString(data)
+	if len(data) == 0 {
+		activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = "."
+	} else {
+		activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = hex.EncodeToString(data)
+	}
 }
 
 func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
@@ -779,6 +821,7 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		// transaction active. In that case, we do not track the account creation because
 		// the "old" Firehose didn't but mainly because we don't have `AccountCreation` at
 		// the block level so what can we do...
+		f.blockOrdinal.Next()
 		return
 	}
 
@@ -786,11 +829,18 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		return
 	}
 
-	activeCall := f.callStack.Peek()
-	activeCall.AccountCreations = append(activeCall.AccountCreations, &pbeth.AccountCreation{
+	accountCreation := &pbeth.AccountCreation{
 		Account: a.Bytes(),
 		Ordinal: f.blockOrdinal.Next(),
-	})
+	}
+
+	activeCall := f.callStack.Peek()
+	if activeCall == nil {
+		f.deferredCallState.accountCreation = append(f.deferredCallState.accountCreation, accountCreation)
+		return
+	}
+
+	activeCall.AccountCreations = append(activeCall.AccountCreations, accountCreation)
 }
 
 func (f *Firehose) OnGasChange(old, new uint64, reason vm.GasChangeReason) {
@@ -990,33 +1040,39 @@ func flushToFirehose(in []byte, writer io.Writer) {
 }
 
 // FIXME: Create a unit test that is going to fail as soon as any header is added in
-func newBlockHeaderFromChainBlock(b *types.Block, td *pbeth.BigInt) *pbeth.BlockHeader {
+func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.BlockHeader {
 	var withdrawalsHashBytes []byte
-	if hash := b.Header().WithdrawalsHash; hash != nil {
+	if hash := h.WithdrawalsHash; hash != nil {
 		withdrawalsHashBytes = hash.Bytes()
 	}
 
-	return &pbeth.BlockHeader{
-		Hash:             b.Hash().Bytes(),
-		Number:           b.NumberU64(),
-		ParentHash:       b.ParentHash().Bytes(),
-		UncleHash:        b.UncleHash().Bytes(),
-		Coinbase:         b.Coinbase().Bytes(),
-		StateRoot:        b.Root().Bytes(),
-		TransactionsRoot: b.TxHash().Bytes(),
-		ReceiptRoot:      b.ReceiptHash().Bytes(),
-		LogsBloom:        b.Bloom().Bytes(),
-		Difficulty:       firehoseBigIntFromNative(b.Difficulty()),
+	pbHead := &pbeth.BlockHeader{
+		Hash:             h.Hash().Bytes(),
+		Number:           h.Number.Uint64(),
+		ParentHash:       h.ParentHash.Bytes(),
+		UncleHash:        h.UncleHash.Bytes(),
+		Coinbase:         h.Coinbase.Bytes(),
+		StateRoot:        h.Root.Bytes(),
+		TransactionsRoot: h.TxHash.Bytes(),
+		ReceiptRoot:      h.ReceiptHash.Bytes(),
+		LogsBloom:        h.Bloom.Bytes(),
+		Difficulty:       firehoseBigIntFromNative(h.Difficulty),
 		TotalDifficulty:  td,
-		GasLimit:         b.GasLimit(),
-		GasUsed:          b.GasUsed(),
-		Timestamp:        timestamppb.New(time.Unix(int64(b.Time()), 0)),
-		ExtraData:        b.Extra(),
-		MixHash:          b.MixDigest().Bytes(),
-		Nonce:            b.Nonce().Uint64(),
-		BaseFeePerGas:    firehoseBigIntFromNative(b.BaseFee()),
+		GasLimit:         h.GasLimit,
+		GasUsed:          h.GasUsed,
+		Timestamp:        timestamppb.New(time.Unix(int64(h.Time), 0)),
+		ExtraData:        h.Extra,
+		MixHash:          h.MixDigest.Bytes(),
+		Nonce:            h.Nonce.Uint64(),
+		BaseFeePerGas:    firehoseBigIntFromNative(h.BaseFee),
 		WithdrawalsRoot:  withdrawalsHashBytes,
 	}
+
+	if pbHead.Difficulty == nil {
+		pbHead.Difficulty = &pbeth.BigInt{Bytes: []byte{0}}
+	}
+
+	return pbHead
 }
 
 // FIXME: Bring back Firehose test that ensures no new tx type are missed
@@ -1366,9 +1422,10 @@ func (s *CallStack) Peek() *pbeth.Call {
 // that is recorded before the Call has been started. This happens on the "starting"
 // portion of the call/created.
 type DeferredCallState struct {
-	balanceChanges []*pbeth.BalanceChange
-	gasChanges     []*pbeth.GasChange
-	nonceChanges   []*pbeth.NonceChange
+	balanceChanges  []*pbeth.BalanceChange
+	gasChanges      []*pbeth.GasChange
+	nonceChanges    []*pbeth.NonceChange
+	accountCreation []*pbeth.AccountCreation
 }
 
 func NewDeferredCallState() *DeferredCallState {
@@ -1388,6 +1445,7 @@ func (d *DeferredCallState) MaybePopulateCallAndReset(source string, call *pbeth
 	call.BalanceChanges = append(call.BalanceChanges, d.balanceChanges...)
 	call.GasChanges = append(call.GasChanges, d.gasChanges...)
 	call.NonceChanges = append(call.NonceChanges, d.nonceChanges...)
+	call.AccountCreations = append(call.AccountCreations, d.accountCreation...)
 
 	d.Reset()
 
@@ -1402,6 +1460,7 @@ func (d *DeferredCallState) Reset() {
 	d.balanceChanges = nil
 	d.gasChanges = nil
 	d.nonceChanges = nil
+	d.accountCreation = nil
 }
 
 func errorView(err error) _errorView {
@@ -1477,6 +1536,23 @@ func emptyBytesToNil(in []byte) []byte {
 	}
 
 	return in
+}
+
+func normalizeSignaturePoint(value []byte) []byte {
+	if len(value) == 0 {
+		return value
+	}
+
+	if len(value) < 32 {
+		offset := 32 - len(value)
+
+		out := make([]byte, 32)
+		copy(out[offset:32], value)
+
+		return out
+	}
+
+	return value[0:32]
 }
 
 func firehoseBigIntFromNative(in *big.Int) *pbeth.BigInt {
