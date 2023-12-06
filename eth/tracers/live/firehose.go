@@ -222,8 +222,8 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 		Value:                firehoseBigIntFromNative(tx.GetValue().ToBig()),
 		Input:                tx.GetData(),
 		V:                    emptyBytesToNil(v.Bytes()),
-		R:                    emptyBytesToNil(normalizeSignaturePoint(r.Bytes())),
-		S:                    emptyBytesToNil(normalizeSignaturePoint(s.Bytes())),
+		R:                    normalizeSignaturePoint(r.Bytes()),
+		S:                    normalizeSignaturePoint(s.Bytes()),
 		Type:                 transactionTypeFromChainTxType(tx.Type()),
 		AccessList:           newAccessListFromChain(tx.GetAccessList()),
 		MaxFeePerGas:         maxFeePerGas(tx),
@@ -836,7 +836,7 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 
 	activeCall := f.callStack.Peek()
 	if activeCall == nil {
-		f.deferredCallState.accountCreation = append(f.deferredCallState.accountCreation, accountCreation)
+		f.deferredCallState.accountCreations = append(f.deferredCallState.accountCreations, accountCreation)
 		return
 	}
 
@@ -1422,10 +1422,10 @@ func (s *CallStack) Peek() *pbeth.Call {
 // that is recorded before the Call has been started. This happens on the "starting"
 // portion of the call/created.
 type DeferredCallState struct {
-	balanceChanges  []*pbeth.BalanceChange
-	gasChanges      []*pbeth.GasChange
-	nonceChanges    []*pbeth.NonceChange
-	accountCreation []*pbeth.AccountCreation
+	accountCreations []*pbeth.AccountCreation
+	balanceChanges   []*pbeth.BalanceChange
+	gasChanges       []*pbeth.GasChange
+	nonceChanges     []*pbeth.NonceChange
 }
 
 func NewDeferredCallState() *DeferredCallState {
@@ -1442,10 +1442,10 @@ func (d *DeferredCallState) MaybePopulateCallAndReset(source string, call *pbeth
 	}
 
 	// We must happen because it's populated at beginning of the call as well as at the very end
+	call.AccountCreations = append(call.AccountCreations, d.accountCreations...)
 	call.BalanceChanges = append(call.BalanceChanges, d.balanceChanges...)
 	call.GasChanges = append(call.GasChanges, d.gasChanges...)
 	call.NonceChanges = append(call.NonceChanges, d.nonceChanges...)
-	call.AccountCreations = append(call.AccountCreations, d.accountCreation...)
 
 	d.Reset()
 
@@ -1453,14 +1453,14 @@ func (d *DeferredCallState) MaybePopulateCallAndReset(source string, call *pbeth
 }
 
 func (d *DeferredCallState) IsEmpty() bool {
-	return len(d.balanceChanges) == 0 && len(d.gasChanges) == 0 && len(d.nonceChanges) == 0
+	return len(d.accountCreations) == 0 && len(d.balanceChanges) == 0 && len(d.gasChanges) == 0 && len(d.nonceChanges) == 0
 }
 
 func (d *DeferredCallState) Reset() {
+	d.accountCreations = nil
 	d.balanceChanges = nil
 	d.gasChanges = nil
 	d.nonceChanges = nil
-	d.accountCreation = nil
 }
 
 func errorView(err error) _errorView {
@@ -1540,7 +1540,7 @@ func emptyBytesToNil(in []byte) []byte {
 
 func normalizeSignaturePoint(value []byte) []byte {
 	if len(value) == 0 {
-		return value
+		return nil
 	}
 
 	if len(value) < 32 {
