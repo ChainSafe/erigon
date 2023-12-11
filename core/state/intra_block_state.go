@@ -329,7 +329,7 @@ func (sdb *IntraBlockState) HasSelfdestructed(addr libcommon.Address) bool {
 
 // AddBalance adds amount to the account associated with addr.
 // DESCRIBED: docs/programmers_guide/guide.md#address---identifier-of-an-account
-func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.Int, reason evmtypes.BalanceChangeReason) {
+func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.Int, checkPrecompile bool, reason evmtypes.BalanceChangeReason) {
 	if sdb.trace {
 		fmt.Printf("AddBalance %x, %d\n", addr, amount)
 	}
@@ -356,7 +356,7 @@ func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.I
 		}
 	}
 
-	stateObject := sdb.getOrNewStateObject(addr, true)
+	stateObject := sdb.getOrNewStateObject(addr, checkPrecompile)
 	stateObject.AddBalance(amount, reason)
 }
 
