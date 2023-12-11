@@ -356,7 +356,7 @@ func (sdb *IntraBlockState) AddBalance(addr libcommon.Address, amount *uint256.I
 		}
 	}
 
-	stateObject := sdb.GetOrNewStateObject(addr)
+	stateObject := sdb.getOrNewStateObject(addr, true)
 	stateObject.AddBalance(amount, reason)
 }
 
@@ -509,7 +509,7 @@ func (sdb *IntraBlockState) getStateObject(addr libcommon.Address) (stateObject 
 	// Load the object from the database.
 	if _, ok := sdb.nilAccounts[addr]; ok {
 		if bi, ok := sdb.balanceInc[addr]; ok && !bi.transferred {
-			return sdb.createObject(addr, nil)
+			return sdb.createObject(addr, nil, false)
 		}
 		return nil
 	}
@@ -521,7 +521,7 @@ func (sdb *IntraBlockState) getStateObject(addr libcommon.Address) (stateObject 
 	if account == nil {
 		sdb.nilAccounts[addr] = struct{}{}
 		if bi, ok := sdb.balanceInc[addr]; ok && !bi.transferred {
-			return sdb.createObject(addr, nil)
+			return sdb.createObject(addr, nil, false)
 		}
 		return nil
 	}
@@ -543,16 +543,20 @@ func (sdb *IntraBlockState) setStateObject(addr libcommon.Address, object *state
 
 // Retrieve a state object or create a new state object if nil.
 func (sdb *IntraBlockState) GetOrNewStateObject(addr libcommon.Address) *stateObject {
+	return sdb.getOrNewStateObject(addr, false)
+}
+
+func (sdb *IntraBlockState) getOrNewStateObject(addr libcommon.Address, checkPrecompile bool) *stateObject {
 	stateObject := sdb.getStateObject(addr)
 	if stateObject == nil || stateObject.deleted {
-		stateObject = sdb.createObject(addr, stateObject /* previous */)
+		stateObject = sdb.createObject(addr, stateObject /* previous */, checkPrecompile)
 	}
 	return stateObject
 }
 
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten.
-func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *stateObject) (newobj *stateObject) {
+func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *stateObject, checkPrecompile bool) (newobj *stateObject) {
 	account := new(accounts.Account)
 	var original *accounts.Account
 	if previous == nil {
@@ -572,7 +576,11 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 	if sdb.logger != nil {
 		// Precompiled contracts are touched during a call.
 		// Make sure we avoid emitting a new account event for them.
-		if _, ok := sdb.precompiles[addr]; !ok {
+		if checkPrecompile {
+			if _, ok := sdb.precompiles[addr]; !ok {
+				sdb.logger.OnNewAccount(addr)
+			}
+		} else {
 			sdb.logger.OnNewAccount(addr)
 		}
 	}
@@ -606,7 +614,7 @@ func (sdb *IntraBlockState) CreateAccount(addr libcommon.Address, contractCreati
 		}
 	}
 
-	newObj := sdb.createObject(addr, previous)
+	newObj := sdb.createObject(addr, previous, false)
 	if previous != nil && !previous.selfdestructed {
 		newObj.data.Balance.Set(&previous.data.Balance)
 	}
