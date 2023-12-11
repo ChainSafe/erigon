@@ -577,6 +577,8 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, bcLogger BlockchainLogger) 
 			if overflow {
 				panic("overflow at genesis allocs")
 			}
+			// This is not actually logged via tracer because OnGenesisBlock
+			// already captures the allocations.
 			statedb.AddBalance(addr, balance, evmtypes.BalanceChangeGenesisBalance)
 			statedb.SetCode(addr, account.Code)
 			statedb.SetNonce(addr, account.Nonce)
