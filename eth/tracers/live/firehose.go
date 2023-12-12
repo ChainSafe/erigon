@@ -616,8 +616,8 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 		// because they do not cost any gas.
 		call.StatusReverted = errors.Is(err, vm.ErrExecutionReverted) || errors.Is(err, vm.ErrInsufficientBalance) || errors.Is(err, vm.ErrDepth)
 
-		if !call.ExecutedCode {
-			call.ExecutedCode = errors.Is(err, vm.ErrInsufficientBalance) || errors.Is(err, vm.ErrDepth)
+		if !call.ExecutedCode && (errors.Is(err, vm.ErrInsufficientBalance) || errors.Is(err, vm.ErrDepth)) {
+			call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 		}
 	}
 
