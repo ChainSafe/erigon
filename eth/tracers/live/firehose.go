@@ -825,10 +825,6 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		return
 	}
 
-	if f.isPrecompileAddress(a) {
-		return
-	}
-
 	accountCreation := &pbeth.AccountCreation{
 		Account: a.Bytes(),
 		Ordinal: f.blockOrdinal.Next(),

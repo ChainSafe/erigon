@@ -82,7 +82,7 @@ type IntraBlockState interface {
 	CreateAccount(common.Address, bool)
 
 	SubBalance(common.Address, *uint256.Int, BalanceChangeReason)
-	AddBalance(common.Address, *uint256.Int, BalanceChangeReason)
+	AddBalance(common.Address, *uint256.Int, bool, BalanceChangeReason)
 	GetBalance(common.Address) *uint256.Int
 
 	GetNonce(common.Address) uint64

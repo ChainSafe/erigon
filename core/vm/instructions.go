@@ -902,7 +902,7 @@ func opSelfdestruct(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext
 	callerAddr := scope.Contract.Address()
 	beneficiaryAddr := libcommon.Address(beneficiary.Bytes20())
 	balance := *interpreter.evm.IntraBlockState().GetBalance(callerAddr)
-	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance, evmtypes.BalanceChangeSuicideRefund)
+	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance, false, evmtypes.BalanceChangeSuicideRefund)
 	interpreter.evm.IntraBlockState().Selfdestruct(callerAddr)
 	if interpreter.evm.Config().Tracer != nil {
 		interpreter.cfg.Tracer.CaptureEnter(SELFDESTRUCT, callerAddr, beneficiaryAddr, false /* precompile */, false /* create */, []byte{}, 0, &balance, nil /* code */)
@@ -920,7 +920,7 @@ func opSelfdestruct6780(pc *uint64, interpreter *EVMInterpreter, scope *ScopeCon
 	beneficiaryAddr := libcommon.Address(beneficiary.Bytes20())
 	balance := *interpreter.evm.IntraBlockState().GetBalance(callerAddr)
 	interpreter.evm.IntraBlockState().SubBalance(callerAddr, &balance, evmtypes.BalanceChangeSuicideWithdraw)
-	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance, evmtypes.BalanceChangeSuicideRefund)
+	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance, false, evmtypes.BalanceChangeSuicideRefund)
 	interpreter.evm.IntraBlockState().Selfdestruct6780(callerAddr)
 	if interpreter.evm.Config().Tracer != nil {
 		interpreter.cfg.Tracer.CaptureEnter(SELFDESTRUCT, callerAddr, beneficiaryAddr, false /* precompile */, false /* create */, []byte{}, 0, &balance, nil /* code */)

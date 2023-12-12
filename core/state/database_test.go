@@ -851,7 +851,7 @@ func TestReproduceCrash(t *testing.T) {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
 	// Start the 3rd transaction
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), 0x0)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, 0x0)
 	intraBlockState.SetState(contract, &storageKey2, *value2)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
@@ -1232,7 +1232,7 @@ func TestChangeAccountCodeBetweenBlocks(t *testing.T) {
 	oldCode := []byte{0x01, 0x02, 0x03, 0x04}
 
 	intraBlockState.SetCode(contract, oldCode)
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), 0x0)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, 0x0)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, tsw); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
@@ -1270,7 +1270,7 @@ func TestCacheCodeSizeSeparately(t *testing.T) {
 	code := []byte{0x01, 0x02, 0x03, 0x04}
 
 	intraBlockState.SetCode(contract, code)
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), 0x0)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, 0x0)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, w); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
@@ -1303,7 +1303,7 @@ func TestCacheCodeSizeInTrie(t *testing.T) {
 	code := []byte{0x01, 0x02, 0x03, 0x04}
 
 	intraBlockState.SetCode(contract, code)
-	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), 0x0)
+	intraBlockState.AddBalance(contract, uint256.NewInt(1000000000), false, 0x0)
 	if err := intraBlockState.FinalizeTx(&chain.Rules{}, w); err != nil {
 		t.Errorf("error finalising 1st tx: %v", err)
 	}
