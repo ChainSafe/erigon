@@ -805,6 +805,11 @@ func (f *Firehose) OnLog(l *types.Log) {
 		topics[i] = topic.Bytes()
 	}
 
+	// backward compatibility with old firehose
+	if len(topics) == 0 {
+		topics = make([][]byte, 1)
+	}
+
 	activeCall := f.callStack.Peek()
 	activeCall.Logs = append(activeCall.Logs, &pbeth.Log{
 		Address:    l.Address.Bytes(),
