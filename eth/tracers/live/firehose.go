@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
 	"github.com/ledgerwatch/erigon/common"
@@ -136,7 +137,7 @@ func (f *Firehose) resetTransaction() {
 	f.deferredCallState.Reset()
 }
 
-func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.Header, safe *types.Header) {
+func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.Header, safe *types.Header, _ *chain.Config) {
 	firehoseDebug("block start number=%d hash=%s", b.NumberU64(), b.Hash())
 
 	f.ensureNotInBlock()
@@ -650,7 +651,7 @@ func (f *Firehose) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {
 }
 
 func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
-	f.OnBlockStart(b, big.NewInt(0), nil, nil)
+	f.OnBlockStart(b, big.NewInt(0), nil, nil, nil)
 	f.captureTxStart(&types.LegacyTx{}, emptyCommonHash, emptyCommonAddress, emptyCommonAddress, nil)
 	f.CaptureStart(emptyCommonAddress, emptyCommonAddress, false, false, nil, 0, nil, nil)
 
@@ -684,6 +685,10 @@ func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 	}, nil)
 	f.OnBlockEnd(nil)
 }
+
+func (f *Firehose) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (f *Firehose) OnBeaconBlockRootEnd() {}
 
 type bytesGetter interface {
 	comparable
@@ -1187,20 +1192,20 @@ func newAccessListFromChain(accessList types2.AccessList) (out []*pbeth.AccessTu
 }
 
 var balanceChangeReasonToPb = map[evmtypes.BalanceChangeReason]pbeth.BalanceChange_Reason{
-	evmtypes.BalanceChangeRewardMineUncle:      pbeth.BalanceChange_REASON_REWARD_MINE_UNCLE,
-	evmtypes.BalanceChangeRewardMineBlock:      pbeth.BalanceChange_REASON_REWARD_MINE_BLOCK,
-	evmtypes.BalanceChangeDaoRefundContract:    pbeth.BalanceChange_REASON_DAO_REFUND_CONTRACT,
-	evmtypes.BalanceChangeDaoAdjustBalance:     pbeth.BalanceChange_REASON_DAO_ADJUST_BALANCE,
-	evmtypes.BalanceChangeTransfer:             pbeth.BalanceChange_REASON_TRANSFER,
-	evmtypes.BalanceChangeGenesisBalance:       pbeth.BalanceChange_REASON_GENESIS_BALANCE,
-	evmtypes.BalanceChangeGasBuy:               pbeth.BalanceChange_REASON_GAS_BUY,
-	evmtypes.BalanceChangeRewardTransactionFee: pbeth.BalanceChange_REASON_REWARD_TRANSACTION_FEE,
-	evmtypes.BalanceChangeGasRefund:            pbeth.BalanceChange_REASON_GAS_REFUND,
-	evmtypes.BalanceChangeTouchAccount:         pbeth.BalanceChange_REASON_TOUCH_ACCOUNT,
-	evmtypes.BalanceChangeSuicideRefund:        pbeth.BalanceChange_REASON_SUICIDE_REFUND,
-	evmtypes.BalanceChangeSuicideWithdraw:      pbeth.BalanceChange_REASON_SUICIDE_WITHDRAW,
-	evmtypes.BalanceChangeBurn:                 pbeth.BalanceChange_REASON_BURN,
-	evmtypes.BalanceChangeWithdrawal:           pbeth.BalanceChange_REASON_WITHDRAWAL,
+	evmtypes.BalanceIncreaseRewardMineUncle:      pbeth.BalanceChange_REASON_REWARD_MINE_UNCLE,
+	evmtypes.BalanceIncreaseRewardMineBlock:      pbeth.BalanceChange_REASON_REWARD_MINE_BLOCK,
+	evmtypes.BalanceIncreaseDaoContract:          pbeth.BalanceChange_REASON_DAO_REFUND_CONTRACT,
+	evmtypes.BalanceDecreaseDaoAccount:           pbeth.BalanceChange_REASON_DAO_ADJUST_BALANCE,
+	evmtypes.BalanceChangeTransfer:               pbeth.BalanceChange_REASON_TRANSFER,
+	evmtypes.BalanceIncreaseGenesisBalance:       pbeth.BalanceChange_REASON_GENESIS_BALANCE,
+	evmtypes.BalanceDecreaseGasBuy:               pbeth.BalanceChange_REASON_GAS_BUY,
+	evmtypes.BalanceIncreaseRewardTransactionFee: pbeth.BalanceChange_REASON_REWARD_TRANSACTION_FEE,
+	evmtypes.BalanceIncreaseGasReturn:            pbeth.BalanceChange_REASON_GAS_REFUND,
+	evmtypes.BalanceChangeTouchAccount:           pbeth.BalanceChange_REASON_TOUCH_ACCOUNT,
+	evmtypes.BalanceIncreaseSelfdestruct:         pbeth.BalanceChange_REASON_SUICIDE_REFUND,
+	evmtypes.BalanceDecreaseSelfdestruct:         pbeth.BalanceChange_REASON_SUICIDE_WITHDRAW,
+	evmtypes.BalanceDecreaseSelfdestructBurn:     pbeth.BalanceChange_REASON_BURN,
+	evmtypes.BalanceIncreaseWithdrawal:           pbeth.BalanceChange_REASON_WITHDRAWAL,
 
 	evmtypes.BalanceChangeUnspecified: pbeth.BalanceChange_REASON_UNKNOWN,
 }

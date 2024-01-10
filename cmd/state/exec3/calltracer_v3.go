@@ -5,6 +5,7 @@ import (
 	"math/big"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
@@ -52,7 +53,7 @@ func (ct *CallTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 func (ct *CallTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 }
 
-func (ct *CallTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header) {
+func (ct *CallTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
 }
 
 func (ct *CallTracer) OnBlockEnd(err error) {
@@ -60,6 +61,10 @@ func (ct *CallTracer) OnBlockEnd(err error) {
 
 func (ct *CallTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 }
+
+func (ct *CallTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (ct *CallTracer) OnBeaconBlockRootEnd() {}
 
 func (ct *CallTracer) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
 

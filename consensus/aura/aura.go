@@ -632,7 +632,7 @@ func (c *AuRa) Prepare(chain consensus.ChainHeaderReader, header *types.Header, 
 }
 
 func (c *AuRa) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, header *types.Header,
-	state *state.IntraBlockState, syscallCustom consensus.SysCallCustom, logger log.Logger,
+	state *state.IntraBlockState, syscallCustom consensus.SysCallCustom, logger log.Logger, eLogger consensus.EngineLogger,
 ) {
 	blockNum := header.Number.Uint64()
 
@@ -693,7 +693,7 @@ func (c *AuRa) applyRewards(header *types.Header, state *state.IntraBlockState, 
 		return err
 	}
 	for _, r := range rewards {
-		state.AddBalance(r.Beneficiary, &r.Amount, false, evmtypes.BalanceChangeRewardMineBlock)
+		state.AddBalance(r.Beneficiary, &r.Amount, false, evmtypes.BalanceIncreaseRewardMineBlock)
 	}
 	return nil
 }

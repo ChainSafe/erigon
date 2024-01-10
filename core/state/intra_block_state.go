@@ -450,7 +450,7 @@ func (sdb *IntraBlockState) Selfdestruct(addr libcommon.Address) bool {
 	})
 
 	if sdb.logger != nil && !prevBalance.IsZero() {
-		sdb.logger.OnBalanceChange(addr, &prevBalance, uint256.NewInt(0), evmtypes.BalanceChangeSuicideWithdraw)
+		sdb.logger.OnBalanceChange(addr, &prevBalance, uint256.NewInt(0), evmtypes.BalanceDecreaseSelfdestruct)
 	}
 
 	stateObject.markSelfdestructed()
@@ -659,9 +659,14 @@ func (sdb *IntraBlockState) GetRefund() uint64 {
 	return sdb.refund
 }
 
-func updateAccount(EIP161Enabled bool, isAura bool, stateWriter StateWriter, addr libcommon.Address, stateObject *stateObject, isDirty bool) error {
+func updateAccount(EIP161Enabled bool, isAura bool, stateWriter StateWriter, addr libcommon.Address, stateObject *stateObject, isDirty bool, logger StateLogger) error {
 	emptyRemoval := EIP161Enabled && stateObject.empty() && (!isAura || addr != SystemAddress)
 	if stateObject.selfdestructed || (isDirty && emptyRemoval) {
+		// If ether was sent to account post-selfdestruct it is burnt.
+		if logger != nil && !stateObject.Balance().IsZero() {
+			logger.OnBalanceChange(stateObject.address, stateObject.Balance(), uint256.NewInt(0), evmtypes.BalanceDecreaseSelfdestructBurn)
+		}
+
 		if err := stateWriter.DeleteAccount(addr, &stateObject.original); err != nil {
 			return err
 		}
@@ -732,7 +737,7 @@ func (sdb *IntraBlockState) FinalizeTx(chainRules *chain.Rules, stateWriter Stat
 			continue
 		}
 
-		if err := updateAccount(chainRules.IsSpuriousDragon, chainRules.IsAura, stateWriter, addr, so, true); err != nil {
+		if err := updateAccount(chainRules.IsSpuriousDragon, chainRules.IsAura, stateWriter, addr, so, true, sdb.logger); err != nil {
 			return err
 		}
 		so.newlyCreated = false
@@ -770,7 +775,7 @@ func (sdb *IntraBlockState) MakeWriteSet(chainRules *chain.Rules, stateWriter St
 	}
 	for addr, stateObject := range sdb.stateObjects {
 		_, isDirty := sdb.stateObjectsDirty[addr]
-		if err := updateAccount(chainRules.IsSpuriousDragon, chainRules.IsAura, stateWriter, addr, stateObject, isDirty); err != nil {
+		if err := updateAccount(chainRules.IsSpuriousDragon, chainRules.IsAura, stateWriter, addr, stateObject, isDirty, sdb.logger); err != nil {
 			return err
 		}
 	}

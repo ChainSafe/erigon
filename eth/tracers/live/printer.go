@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -81,7 +82,7 @@ func (p *Printer) CaptureTxEnd(receipt *types.Receipt, err error) {
 	fmt.Printf("CaptureTxEnd: receipt=%s\n", buf)
 }
 
-func (p *Printer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header) {
+func (p *Printer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
 	if finalized != nil && safe != nil {
 		fmt.Printf("OnBlockStart: b=%v, td=%v, finalized=%v, safe=%v\n", b.NumberU64(), td, finalized.Number.Uint64(), safe.Number.Uint64())
 	} else {
@@ -95,6 +96,14 @@ func (p *Printer) OnBlockEnd(err error) {
 
 func (p *Printer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 	fmt.Printf("OnGenesisBlock: b=%v, allocLength=%d\n", b.NumberU64(), len(alloc))
+}
+
+func (p *Printer) OnBeaconBlockRootStart(root libcommon.Hash) {
+	fmt.Printf("OnBeaconBlockRootStart: b=%v", root)
+}
+
+func (p *Printer) OnBeaconBlockRootEnd() {
+	fmt.Printf("OnBeaconBlockRootEnd:")
 }
 
 func (p *Printer) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, reason evmtypes.BalanceChangeReason) {

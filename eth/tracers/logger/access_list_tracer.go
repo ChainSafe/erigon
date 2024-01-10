@@ -21,6 +21,7 @@ import (
 	"math/big"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
 
@@ -227,7 +228,7 @@ func (a *AccessListTracer) CaptureEnd(output []byte, gasUsed uint64, err error) 
 
 func (a *AccessListTracer) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
 
-func (a *AccessListTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header) {
+func (a *AccessListTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
 }
 
 func (a *AccessListTracer) OnBlockEnd(err error) {
@@ -235,6 +236,10 @@ func (a *AccessListTracer) OnBlockEnd(err error) {
 
 func (a *AccessListTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 }
+
+func (a *AccessListTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (a *AccessListTracer) OnBeaconBlockRootEnd() {}
 
 func (a *AccessListTracer) OnGasChange(old, new uint64, reason vm.GasChangeReason) {}
 

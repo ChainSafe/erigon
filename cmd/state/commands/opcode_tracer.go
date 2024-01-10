@@ -392,7 +392,7 @@ func (ot *opcodeTracer) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, 
 
 }
 
-func (ot *opcodeTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header) {
+func (ot *opcodeTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain2.Config) {
 }
 
 func (ot *opcodeTracer) OnBlockEnd(err error) {
@@ -400,6 +400,10 @@ func (ot *opcodeTracer) OnBlockEnd(err error) {
 
 func (ot *opcodeTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 }
+
+func (ot *opcodeTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (ot *opcodeTracer) OnBeaconBlockRootEnd() {}
 
 func (ot *opcodeTracer) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
 
@@ -753,7 +757,7 @@ func runBlock(engine consensus.Engine, ibs *state.IntraBlockState, txnWriter sta
 	usedGas := new(uint64)
 	usedBlobGas := new(uint64)
 	var receipts types.Receipts
-	core.InitializeBlockExecution(engine, nil, header, chainConfig, ibs, logger)
+	core.InitializeBlockExecution(engine, nil, header, chainConfig, ibs, logger, nil)
 	rules := chainConfig.Rules(block.NumberU64(), block.Time())
 	for i, tx := range block.Transactions() {
 		ibs.SetTxContext(tx.Hash(), block.Hash(), i)

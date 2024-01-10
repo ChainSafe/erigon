@@ -551,7 +551,7 @@ func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.H
 }
 
 func (ethash *Ethash) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, header *types.Header,
-	state *state.IntraBlockState, syscall consensus.SysCallCustom, logger log.Logger) {
+	state *state.IntraBlockState, syscall consensus.SysCallCustom, logger log.Logger, eLogger consensus.EngineLogger) {
 	if config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(state)
 	}
@@ -666,8 +666,8 @@ func accumulateRewards(config *chain.Config, state *state.IntraBlockState, heade
 	minerReward, uncleRewards := AccumulateRewards(config, header, uncles)
 	for i, uncle := range uncles {
 		if i < len(uncleRewards) {
-			state.AddBalance(uncle.Coinbase, &uncleRewards[i], false, evmtypes.BalanceChangeRewardMineUncle)
+			state.AddBalance(uncle.Coinbase, &uncleRewards[i], false, evmtypes.BalanceIncreaseRewardMineUncle)
 		}
 	}
-	state.AddBalance(header.Coinbase, &minerReward, false, evmtypes.BalanceChangeRewardMineBlock)
+	state.AddBalance(header.Coinbase, &minerReward, false, evmtypes.BalanceIncreaseRewardMineBlock)
 }

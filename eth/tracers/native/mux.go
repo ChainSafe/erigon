@@ -21,6 +21,7 @@ import (
 	"math/big"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 
 	"github.com/ledgerwatch/erigon/core/types"
@@ -131,9 +132,9 @@ func (t *muxTracer) CaptureTxEnd(receipt *types.Receipt, err error) {
 	}
 }
 
-func (t *muxTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header) {
+func (t *muxTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
 	for _, t := range t.tracers {
-		t.OnBlockStart(b, td, finalized, safe)
+		t.OnBlockStart(b, td, finalized, safe, chainConfig)
 	}
 }
 
@@ -146,6 +147,18 @@ func (t *muxTracer) OnBlockEnd(err error) {
 func (t *muxTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 	for _, t := range t.tracers {
 		t.OnGenesisBlock(b, alloc)
+	}
+}
+
+func (t *muxTracer) OnBeaconBlockRootStart(root libcommon.Hash) {
+	for _, t := range t.tracers {
+		t.OnBeaconBlockRootStart(root)
+	}
+}
+
+func (t *muxTracer) OnBeaconBlockRootEnd() {
+	for _, t := range t.tracers {
+		t.OnBeaconBlockRootEnd()
 	}
 }
 
