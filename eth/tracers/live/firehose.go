@@ -477,12 +477,6 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	}
 
 	v := firehoseBigIntFromNative(value.ToBig())
-	if callType == pbeth.CallType_DELEGATE {
-		// If it's a delegate call, the there should be a call in the stack
-		parent := f.callStack.Peek()
-		// In DELEGATE CALL, value from parent is used
-		v = parent.Value
-	}
 
 	call := &pbeth.Call{
 		// Known Firehose issue: Ref 042a2ff03fd623f151d7726314b8aad6 (see below)
