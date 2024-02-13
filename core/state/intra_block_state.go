@@ -51,7 +51,6 @@ type StateLogger interface {
 	OnCodeChange(addr libcommon.Address, prevCodeHash libcommon.Hash, prevCode []byte, codeHash libcommon.Hash, code []byte)
 	OnStorageChange(addr libcommon.Address, slot *libcommon.Hash, prev, new uint256.Int)
 	OnLog(log *types.Log)
-	OnNewAccount(addr libcommon.Address)
 }
 
 // SystemAddress - sender address for internal state updates.
@@ -98,9 +97,6 @@ type IntraBlockState struct {
 	// Transient storage
 	transientStorage transientStorage
 
-	// Enabled precompile contracts
-	precompiles map[libcommon.Address]struct{}
-
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
 	journal        *journal
@@ -119,7 +115,6 @@ func New(stateReader StateReader) *IntraBlockState {
 		stateObjectsDirty: map[libcommon.Address]struct{}{},
 		nilAccounts:       map[libcommon.Address]struct{}{},
 		logs:              map[libcommon.Hash][]*types.Log{},
-		precompiles:       make(map[libcommon.Address]struct{}),
 		journal:           newJournal(),
 		accessList:        newAccessList(),
 		transientStorage:  newTransientStorage(),
@@ -573,19 +568,6 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 		sdb.journal.append(resetObjectChange{account: &addr, prev: previous})
 	}
 
-	if sdb.logger != nil {
-		// Precompiled contracts are touched during a call.
-		// Make sure we avoid emitting a new account event for them.
-		// checkPrecompile is added to make the tracer backward compatible with old firehose merged blocks
-		if checkPrecompile {
-			if _, ok := sdb.precompiles[addr]; !ok {
-				sdb.logger.OnNewAccount(addr)
-			}
-		} else {
-			sdb.logger.OnNewAccount(addr)
-		}
-	}
-
 	newobj.newlyCreated = true
 	sdb.setStateObject(addr, newobj)
 	return newobj
@@ -663,7 +645,7 @@ func updateAccount(EIP161Enabled bool, isAura bool, stateWriter StateWriter, add
 	emptyRemoval := EIP161Enabled && stateObject.empty() && (!isAura || addr != SystemAddress)
 	if stateObject.selfdestructed || (isDirty && emptyRemoval) {
 		// If ether was sent to account post-selfdestruct it is burnt.
-		if logger != nil && !stateObject.Balance().IsZero() {
+		if logger != nil && !stateObject.Balance().IsZero() && stateObject.selfdestructed {
 			logger.OnBalanceChange(stateObject.address, stateObject.Balance(), uint256.NewInt(0), evmtypes.BalanceDecreaseSelfdestructBurn)
 		}
 
@@ -851,14 +833,6 @@ func (sdb *IntraBlockState) Prepare(rules *chain.Rules, sender, coinbase libcomm
 	}
 	// Reset transient storage at the beginning of transaction execution
 	sdb.transientStorage = newTransientStorage()
-}
-
-// PrepareBlock prepares the statedb for execution of a block. It tracks
-// the addresses of enabled precompiles for debugging purposes.
-func (sdb *IntraBlockState) PrepareBlock(precompiles []libcommon.Address) {
-	for _, addr := range precompiles {
-		sdb.precompiles[addr] = struct{}{}
-	}
 }
 
 // AddAddressToAccessList adds the given address to the access list

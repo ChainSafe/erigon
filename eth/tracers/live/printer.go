@@ -31,7 +31,7 @@ func (p *Printer) CaptureStart(from libcommon.Address, to libcommon.Address, pre
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
-func (p *Printer) CaptureEnd(output []byte, gasUsed uint64, err error) {
+func (p *Printer) CaptureEnd(output []byte, gasUsed uint64, err error, reverted bool) {
 	fmt.Printf("CaptureEnd: output=%s, gasUsed=%v, err=%v\n", hexutility.Bytes(output), gasUsed, err)
 }
 
@@ -55,7 +55,7 @@ func (p *Printer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcomm
 
 // CaptureExit is called when EVM exits a scope, even if the scope didn't
 // execute any code.
-func (p *Printer) CaptureExit(output []byte, gasUsed uint64, err error) {
+func (p *Printer) CaptureExit(output []byte, gasUsed uint64, err error, reverted bool) {
 	fmt.Printf("CaptureExit: output=%s, gasUsed=%v, err=%v\n", hexutility.Bytes(output), gasUsed, err)
 }
 
@@ -129,10 +129,6 @@ func (p *Printer) OnLog(l *types.Log) {
 		return
 	}
 	fmt.Printf("OnLog: l=%s\n", buf)
-}
-
-func (p *Printer) OnNewAccount(a libcommon.Address) {
-	fmt.Printf("OnNewAccount: a=%v\n", a)
 }
 
 func (p *Printer) OnGasChange(old, new uint64, reason vm.GasChangeReason) {

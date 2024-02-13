@@ -241,11 +241,11 @@ func (ot *opcodeTracer) captureEndOrExit(err error) {
 	}
 }
 
-func (ot *opcodeTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
+func (ot *opcodeTracer) CaptureEnd(output []byte, usedGas uint64, err error, reverted bool) {
 	ot.captureEndOrExit(err)
 }
 
-func (ot *opcodeTracer) CaptureExit(output []byte, usedGas uint64, err error) {
+func (ot *opcodeTracer) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 	ot.captureEndOrExit(err)
 	ot.depth--
 }
@@ -421,8 +421,6 @@ func (ot *opcodeTracer) OnStorageChange(a libcommon.Address, k *libcommon.Hash, 
 }
 
 func (ot *opcodeTracer) OnLog(log *types.Log) {}
-
-func (ot *opcodeTracer) OnNewAccount(a libcommon.Address) {}
 
 // GetResult returns an empty json object.
 func (ot *opcodeTracer) GetResult() (json.RawMessage, error) {

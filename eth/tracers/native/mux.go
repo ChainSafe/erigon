@@ -71,9 +71,9 @@ func (t *muxTracer) CaptureStart(from libcommon.Address, to libcommon.Address, p
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
-func (t *muxTracer) CaptureEnd(output []byte, gasUsed uint64, err error) {
+func (t *muxTracer) CaptureEnd(output []byte, gasUsed uint64, err error, reverted bool) {
 	for _, t := range t.tracers {
-		t.CaptureEnd(output, gasUsed, err)
+		t.CaptureEnd(output, gasUsed, err, reverted)
 	}
 }
 
@@ -114,9 +114,9 @@ func (t *muxTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libco
 
 // CaptureExit is called when EVM exits a scope, even if the scope didn't
 // execute any code.
-func (t *muxTracer) CaptureExit(output []byte, gasUsed uint64, err error) {
+func (t *muxTracer) CaptureExit(output []byte, gasUsed uint64, err error, reverted bool) {
 	for _, t := range t.tracers {
-		t.CaptureExit(output, gasUsed, err)
+		t.CaptureExit(output, gasUsed, err, reverted)
 	}
 }
 
@@ -206,12 +206,6 @@ func (t *muxTracer) GetResult() (json.RawMessage, error) {
 func (t *muxTracer) OnLog(log *types.Log) {
 	for _, t := range t.tracers {
 		t.OnLog(log)
-	}
-}
-
-func (t *muxTracer) OnNewAccount(a libcommon.Address) {
-	for _, t := range t.tracers {
-		t.OnNewAccount(a)
 	}
 }
 
