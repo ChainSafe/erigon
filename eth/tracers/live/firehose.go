@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/holiman/uint256"
@@ -62,6 +63,7 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (tracers.Trace
 type Firehose struct {
 	// Global state
 	outputBuffer *bytes.Buffer
+	initSent     *atomic.Bool
 
 	// Block state
 	block         *pbeth.Block
@@ -81,6 +83,8 @@ type Firehose struct {
 	latestCallStartSuicided bool
 }
 
+const FirehoseProtocolVersion = "3.0"
+
 func NewFirehoseLogger() *Firehose {
 	// FIXME: Where should we put our actual INIT line?
 	// FIXME: Pickup version from go-ethereum (PR comment)
@@ -89,6 +93,7 @@ func NewFirehoseLogger() *Firehose {
 	return &Firehose{
 		// Global state
 		outputBuffer: bytes.NewBuffer(make([]byte, 0, 100*1024*1024)),
+		initSent:     new(atomic.Bool),
 
 		// Block state
 		blockOrdinal:  &Ordinal{},
@@ -968,6 +973,10 @@ func (f *Firehose) panicNotInState(msg string) string {
 //
 // It flushes this through [flushToFirehose] to the `os.Stdout` writer.
 func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *FinalityStatus) {
+	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
+		printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
+	}
+
 	marshalled, err := proto.Marshal(block)
 	if err != nil {
 		panic(fmt.Errorf("failed to marshal block: %w", err))
