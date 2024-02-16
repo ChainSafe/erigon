@@ -146,11 +146,11 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 	for _, r := range rewards {
 		switch r.Kind {
 		case consensus.RewardAuthor:
-			state.AddBalance(r.Beneficiary, &r.Amount, false, evmtypes.BalanceIncreaseRewardMineBlock)
+			state.AddBalance(r.Beneficiary, &r.Amount, evmtypes.BalanceIncreaseRewardMineBlock)
 		case consensus.RewardUncle:
-			state.AddBalance(r.Beneficiary, &r.Amount, false, evmtypes.BalanceIncreaseRewardMineUncle)
+			state.AddBalance(r.Beneficiary, &r.Amount, evmtypes.BalanceIncreaseRewardMineUncle)
 		default:
-			state.AddBalance(r.Beneficiary, &r.Amount, false, evmtypes.BalanceChangeUnspecified)
+			state.AddBalance(r.Beneficiary, &r.Amount, evmtypes.BalanceChangeUnspecified)
 		}
 	}
 
@@ -162,7 +162,7 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 		} else {
 			for _, w := range withdrawals {
 				amountInWei := new(uint256.Int).Mul(uint256.NewInt(w.Amount), uint256.NewInt(params.GWei))
-				state.AddBalance(w.Address, amountInWei, false, evmtypes.BalanceIncreaseWithdrawal)
+				state.AddBalance(w.Address, amountInWei, evmtypes.BalanceIncreaseWithdrawal)
 			}
 		}
 	}

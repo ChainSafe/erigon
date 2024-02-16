@@ -66,7 +66,7 @@ type BlockchainLogger interface {
 	// `td` is the total difficulty prior to `block`.
 	OnBlockStart(block *types.Block, td *big.Int, finalized *types.Header, safe *types.Header, chainConfig *chain.Config)
 	OnBlockEnd(err error)
-	OnGenesisBlock(genesis *types.Block, alloc types.GenesisAlloc)
+	OnGenesisBlock(genesis *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config)
 }
 
 type RejectedTx struct {

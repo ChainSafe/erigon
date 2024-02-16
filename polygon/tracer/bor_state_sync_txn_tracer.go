@@ -170,9 +170,9 @@ func (bsstt *borStateSyncTxnTracer) OnBlockEnd(err error) {
 	}
 }
 
-func (bsstt *borStateSyncTxnTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (bsstt *borStateSyncTxnTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 	if tracer, ok := bsstt.EVMLogger.(tracers.Tracer); ok {
-		tracer.OnGenesisBlock(b, alloc)
+		tracer.OnGenesisBlock(b, alloc, chainConfig)
 	} else {
 		panic("unexpected usage - borStateSyncTxnTracer.OnGenesisBlock called on a wrapped tracer which does not support it")
 	}
@@ -223,6 +223,14 @@ func (bsstt *borStateSyncTxnTracer) OnStorageChange(a libcommon.Address, k *libc
 		tracer.OnStorageChange(a, k, prev, new)
 	} else {
 		panic("unexpected usage - borStateSyncTxnTracer.OnStorageChange called on a wrapped tracer which does not support it")
+	}
+}
+
+func (bsstt *borStateSyncTxnTracer) OnNewAccount(a libcommon.Address) {
+	if tracer, ok := bsstt.EVMLogger.(tracers.Tracer); ok {
+		tracer.OnNewAccount(a)
+	} else {
+		panic("unexpected usage - borStateSyncTxnTracer.OnNewAccount called on a wrapped tracer which does not support it")
 	}
 }
 

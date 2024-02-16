@@ -638,7 +638,7 @@ func (ot *OeTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *t
 func (ot *OeTracer) OnBlockEnd(err error) {
 }
 
-func (ot *OeTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (ot *OeTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 }
 
 func (ot *OeTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -661,6 +661,8 @@ func (ot *OeTracer) OnStorageChange(addr libcommon.Address, k *libcommon.Hash, p
 }
 
 func (ot *OeTracer) OnLog(log *types.Log) {}
+
+func (ot *OeTracer) OnNewAccount(a libcommon.Address) {}
 
 func (ot *OeTracer) GetResult() (json.RawMessage, error) {
 	return json.RawMessage{}, nil

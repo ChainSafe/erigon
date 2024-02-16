@@ -129,7 +129,7 @@ func Transfer(db evmtypes.IntraBlockState, sender, recipient libcommon.Address, 
 	if !bailout {
 		db.SubBalance(sender, amount, evmtypes.BalanceChangeTransfer)
 	}
-	db.AddBalance(recipient, amount, false, evmtypes.BalanceChangeTransfer)
+	db.AddBalance(recipient, amount, evmtypes.BalanceChangeTransfer)
 }
 
 // BorTransfer transfer in Bor
@@ -141,7 +141,7 @@ func BorTransfer(db evmtypes.IntraBlockState, sender, recipient libcommon.Addres
 	if !bailout {
 		db.SubBalance(sender, amount, evmtypes.BalanceChangeTransfer)
 	}
-	db.AddBalance(recipient, amount, false, evmtypes.BalanceChangeTransfer)
+	db.AddBalance(recipient, amount, evmtypes.BalanceChangeTransfer)
 
 	// get outputs after
 	output1 := db.GetBalance(sender).Clone()

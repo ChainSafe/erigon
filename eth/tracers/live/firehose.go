@@ -30,8 +30,8 @@ import (
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/params"
+	pbeth "github.com/ledgerwatch/erigon/pb/sf/ethereum/type/v2"
 	"github.com/ledgerwatch/erigon/rlp"
-	pbeth "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/type/v2"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/proto"
@@ -70,12 +70,13 @@ type Firehose struct {
 	blockBaseFee  *big.Int
 	blockOrdinal  *Ordinal
 	blockFinality *FinalityStatus
+	blockRules    *chain.Rules
 
 	// Transaction state
-	evm                 *vm.EVM
-	transaction         *pbeth.TransactionTrace
-	transactionLogIndex uint32
-	precompiledAddr     []libcommon.Address
+	evm                    *vm.EVM
+	transaction            *pbeth.TransactionTrace
+	transactionLogIndex    uint32
+	blockIsPrecompiledAddr func(addr libcommon.Address) bool
 
 	// Call state
 	callStack               *CallStack
@@ -109,25 +110,14 @@ func NewFirehoseLogger() *Firehose {
 	}
 }
 
-func (f *Firehose) isPrecompileAddress(addr libcommon.Address) bool {
-	if len(f.precompiledAddr) == 0 {
-		return false
-	}
-
-	for i := range f.precompiledAddr {
-		if addr == f.precompiledAddr[i] {
-			return true
-		}
-	}
-	return false
-}
-
 // resetBlock resets the block state only, do not reset transaction or call state
 func (f *Firehose) resetBlock() {
 	f.block = nil
 	f.blockBaseFee = nil
 	f.blockOrdinal.Reset()
 	f.blockFinality.Reset()
+	f.blockIsPrecompiledAddr = nil
+	f.blockRules = nil
 }
 
 // resetTransaction resets the transaction state and the call state in one shot
@@ -135,17 +125,18 @@ func (f *Firehose) resetTransaction() {
 	f.transaction = nil
 	f.evm = nil
 	f.transactionLogIndex = 0
-	f.precompiledAddr = nil
 
 	f.callStack.Reset()
 	f.latestCallStartSuicided = false
 	f.deferredCallState.Reset()
 }
 
-func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.Header, safe *types.Header, _ *chain.Config) {
+func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.Header, safe *types.Header, chainConfig *chain.Config) {
 	firehoseDebug("block start number=%d hash=%s", b.NumberU64(), b.Hash())
 
 	f.ensureNotInBlock()
+	f.blockRules = chainConfig.Rules(b.Number().Uint64(), b.Time())
+	f.blockIsPrecompiledAddr = getActivePrecompilesChecker(f.blockRules)
 
 	f.block = &pbeth.Block{
 		Hash:   b.Hash().Bytes(),
@@ -166,6 +157,20 @@ func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.He
 	}
 
 	f.blockFinality.populateFromChain(finalized)
+}
+
+func getActivePrecompilesChecker(rules *chain.Rules) func(addr libcommon.Address) bool {
+	activePrecompiles := vm.ActivePrecompiles(rules)
+
+	activePrecompilesMap := make(map[libcommon.Address]bool, len(activePrecompiles))
+	for _, addr := range activePrecompiles {
+		activePrecompilesMap[addr] = true
+	}
+
+	return func(addr libcommon.Address) bool {
+		_, found := activePrecompilesMap[addr]
+		return found
+	}
 }
 
 func (f *Firehose) OnBlockEnd(err error) {
@@ -213,8 +218,6 @@ func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
 // we manually pass some override to the `tx` because genesis block has a different way of creating
 // the transaction that wraps the genesis block.
 func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, from, to libcommon.Address, precompiledAddr []libcommon.Address) {
-	f.precompiledAddr = precompiledAddr
-
 	v, r, s := tx.RawSignatureValues()
 
 	f.transaction = &pbeth.TransactionTrace{
@@ -498,7 +501,7 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		GasLimit: gas,
 	}
 
-	call.ExecutedCode = getExecutedCode(f.evm, precompile, call, code)
+	call.ExecutedCode = f.getExecutedCode(f.evm, call, code)
 
 	// Known Firehose issue: The BeginOrdinal of the genesis block root call is never actually
 	// incremented and it's always 0.
@@ -526,10 +529,12 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	f.callStack.Push(call)
 }
 
-func getExecutedCode(evm *vm.EVM, precompile bool, call *pbeth.Call, code []byte) bool {
+func (f *Firehose) getExecutedCode(evm *vm.EVM, call *pbeth.Call, code []byte) bool {
+	precompile := f.blockIsPrecompiledAddr(libcommon.BytesToAddress(call.Address))
+
 	if evm != nil && call.CallType == pbeth.CallType_CALL {
 		if !evm.IntraBlockState().Exist(libcommon.BytesToAddress(call.Address)) &&
-			!precompile && evm.ChainRules().IsSpuriousDragon &&
+			!precompile && f.blockRules.IsSpuriousDragon &&
 			(call.Value == nil || call.Value.Native().Sign() == 0) {
 			firehoseDebug("executed code IsSpuriousDragon callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
 			return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
@@ -649,8 +654,8 @@ func (f *Firehose) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {
 	}
 }
 
-func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
-	f.OnBlockStart(b, big.NewInt(0), nil, nil, nil)
+func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
+	f.OnBlockStart(b, big.NewInt(0), nil, nil, chainConfig)
 	f.captureTxStart(&types.LegacyTx{}, emptyCommonHash, emptyCommonAddress, emptyCommonAddress, nil)
 	f.CaptureStart(emptyCommonAddress, emptyCommonAddress, false, false, nil, 0, nil, nil)
 
@@ -830,6 +835,11 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 		// the "old" Firehose didn't but mainly because we don't have `AccountCreation` at
 		// the block level so what can we do...
 		f.blockOrdinal.Next()
+		return
+	}
+
+	if call := f.callStack.Peek(); call != nil && call.CallType == pbeth.CallType_STATIC && f.blockIsPrecompiledAddr(libcommon.Address(call.Address)) {
+		// Old Firehose ignore those, we do the same
 		return
 	}
 

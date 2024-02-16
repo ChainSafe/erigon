@@ -288,7 +288,7 @@ func write(tx kv.RwTx, g *types.Genesis, tmpDir string, logger log.Logger, bcLog
 	}
 
 	if bcLogger != nil {
-		bcLogger.OnGenesisBlock(block, g.Alloc)
+		bcLogger.OnGenesisBlock(block, g.Alloc, config)
 	}
 
 	// We support ethash/merge for issuance (for now)
@@ -595,7 +595,7 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger, bcLogger
 			}
 			// This is not actually logged via tracer because OnGenesisBlock
 			// already captures the allocations.
-			statedb.AddBalance(addr, balance, false, evmtypes.BalanceIncreaseGenesisBalance)
+			statedb.AddBalance(addr, balance, evmtypes.BalanceIncreaseGenesisBalance)
 			statedb.SetCode(addr, account.Code)
 			statedb.SetNonce(addr, account.Nonce)
 			for key, value := range account.Storage {

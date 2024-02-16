@@ -231,7 +231,7 @@ func (l *StructLogger) OnBlockStart(b *types.Block, td *big.Int, finalized, safe
 func (l *StructLogger) OnBlockEnd(err error) {
 }
 
-func (l *StructLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (l *StructLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 }
 
 func (l *StructLogger) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -254,6 +254,8 @@ func (l *StructLogger) OnStorageChange(a libcommon.Address, k *libcommon.Hash, p
 }
 
 func (l *StructLogger) OnLog(log *types.Log) {}
+
+func (l *StructLogger) OnNewAccount(a libcommon.Address) {}
 
 // CaptureExit is called after the internal call finishes to finalize the tracing.
 func (l *StructLogger) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
@@ -463,7 +465,7 @@ func (t *mdLogger) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *ty
 func (t *mdLogger) OnBlockEnd(err error) {
 }
 
-func (t *mdLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (t *mdLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 }
 
 func (t *mdLogger) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -486,6 +488,8 @@ func (t *mdLogger) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 }
 
 func (t *mdLogger) OnLog(log *types.Log) {}
+
+func (t *mdLogger) OnNewAccount(a libcommon.Address) {}
 
 func (t *mdLogger) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 	t.captureEndOrExit(output, usedGas, err)

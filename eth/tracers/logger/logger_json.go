@@ -114,7 +114,7 @@ func (l *JSONLogger) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *
 func (l *JSONLogger) OnBlockEnd(err error) {
 }
 
-func (l *JSONLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (l *JSONLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 }
 
 func (l *JSONLogger) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -137,6 +137,8 @@ func (l *JSONLogger) OnStorageChange(a libcommon.Address, k *libcommon.Hash, pre
 }
 
 func (l *JSONLogger) OnLog(log *types.Log) {}
+
+func (l *JSONLogger) OnNewAccount(a libcommon.Address) {}
 
 func (l *JSONLogger) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 }
