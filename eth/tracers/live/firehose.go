@@ -191,7 +191,7 @@ func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
 	f.ensureInBlockAndNotInTrxAndNotInCall()
 
 	f.evm = evm
-	signer := types.MakeSigner(evm.ChainConfig(), evm.Context().BlockNumber, evm.Context().Time)
+	signer := types.MakeSigner(evm.ChainConfig(), evm.Context.BlockNumber, evm.Context.Time)
 
 	from, err := tx.Sender(*signer)
 	if err != nil {
@@ -205,7 +205,7 @@ func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
 		to = *tx.GetTo()
 	}
 
-	precompiledAddr := vm.ActivePrecompiles(evm.ChainConfig().Rules(evm.Context().BlockNumber, evm.Context().Time))
+	precompiledAddr := vm.ActivePrecompiles(evm.ChainConfig().Rules(evm.Context.BlockNumber, evm.Context.Time))
 	f.captureTxStart(tx, tx.Hash(), from, to, precompiledAddr)
 }
 
@@ -387,7 +387,7 @@ func (f *Firehose) CaptureStart(from libcommon.Address, to libcommon.Address, pr
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
-func (f *Firehose) CaptureEnd(output []byte, gasUsed uint64, err error) {
+func (f *Firehose) CaptureEnd(output []byte, gasUsed uint64, err error, reverted bool) {
 	f.callEnd("root", output, gasUsed, err)
 }
 
@@ -464,7 +464,7 @@ func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcom
 
 // CaptureExit is called when EVM exits a scope, even if the scope didn't
 // execute any code.
-func (f *Firehose) CaptureExit(output []byte, gasUsed uint64, err error) {
+func (f *Firehose) CaptureExit(output []byte, gasUsed uint64, err error, reverted bool) {
 	f.callEnd("child", output, gasUsed, err)
 }
 
@@ -677,7 +677,7 @@ func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 		}
 	}
 
-	f.CaptureEnd(nil, 0, nil)
+	f.CaptureEnd(nil, 0, nil, false)
 	f.CaptureTxEnd(&types.Receipt{
 		PostState: b.Root().Bytes(),
 		Status:    types.ReceiptStatusSuccessful,

@@ -445,13 +445,8 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 	if !msg.IsFree() && rules.IsLondon {
 		burntContractAddress := st.evm.ChainConfig().GetBurntContract(st.evm.Context.BlockNumber)
 		if burntContractAddress != nil {
-<<<<<<< HEAD
-			burnAmount := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gasUsed()), st.evm.Context().BaseFee)
-			st.state.AddBalance(*burntContractAddress, burnAmount, false, evmtypes.BalanceChangeUnspecified)
-=======
 			burnAmount := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gasUsed()), st.evm.Context.BaseFee)
-			st.state.AddBalance(*burntContractAddress, burnAmount, evmtypes.BalanceChangeUnspecified)
->>>>>>> feature/erigon-live-tracer-port
+			st.state.AddBalance(*burntContractAddress, burnAmount, false, evmtypes.BalanceChangeUnspecified)
 		}
 	}
 	if st.isBor {
