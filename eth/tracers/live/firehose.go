@@ -87,10 +87,6 @@ type Firehose struct {
 const FirehoseProtocolVersion = "3.0"
 
 func NewFirehoseLogger() *Firehose {
-	// FIXME: Where should we put our actual INIT line?
-	// FIXME: Pickup version from go-ethereum (PR comment)
-	printToFirehose("INIT", "2.3", "erigon", params.Version)
-
 	return &Firehose{
 		// Global state
 		outputBuffer: bytes.NewBuffer(make([]byte, 0, 100*1024*1024)),
@@ -984,7 +980,7 @@ func (f *Firehose) panicNotInState(msg string) string {
 // It flushes this through [flushToFirehose] to the `os.Stdout` writer.
 func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *FinalityStatus) {
 	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
-		printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
+		printToFirehose("INIT", FirehoseProtocolVersion, "erigon", params.Version)
 	}
 
 	marshalled, err := proto.Marshal(block)
