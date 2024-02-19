@@ -3,7 +3,7 @@ package live
 import (
 	"testing"
 
-	pbeth "github.com/ledgerwatch/erigon/pb/sf/ethereum/type/v2"
+	pbeth "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/type/v2"
 	"github.com/stretchr/testify/require"
 )
 
