@@ -1007,13 +1007,8 @@ func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *Fina
 		}
 	}
 
-	blockTime, err := block.Time()
-	if err != nil {
-		panic(fmt.Errorf("failed to get block time: %w", err))
-	}
-
 	// **Important* The final space in the Sprintf template is mandatory!
-	f.outputBuffer.WriteString(fmt.Sprintf("FIRE BLOCK %d %s %d %s %d %d ", block.Number, hex.EncodeToString(block.Hash), previousNum, previousHash, libNum, blockTime.UnixNano()))
+	f.outputBuffer.WriteString(fmt.Sprintf("FIRE BLOCK %d %s %d %s %d %d ", block.Number, hex.EncodeToString(block.Hash), previousNum, previousHash, libNum, block.Time().UnixNano()))
 
 	encoder := base64.NewEncoder(base64.StdEncoding, f.outputBuffer)
 	if _, err = encoder.Write(marshalled); err != nil {
