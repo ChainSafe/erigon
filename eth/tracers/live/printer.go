@@ -94,7 +94,7 @@ func (p *Printer) OnBlockEnd(err error) {
 	fmt.Printf("OnBlockEnd: err=%v\n", err)
 }
 
-func (p *Printer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (p *Printer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 	fmt.Printf("OnGenesisBlock: b=%v, allocLength=%d\n", b.NumberU64(), len(alloc))
 }
 
@@ -130,6 +130,8 @@ func (p *Printer) OnLog(l *types.Log) {
 	}
 	fmt.Printf("OnLog: l=%s\n", buf)
 }
+
+func (p *Printer) OnNewAccount(a libcommon.Address) {}
 
 func (p *Printer) OnGasChange(old, new uint64, reason vm.GasChangeReason) {
 	fmt.Printf("OnGasChange: old=%v, new=%v, diff=%v\n", old, new, new-old)

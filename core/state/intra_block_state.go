@@ -50,6 +50,7 @@ type StateLogger interface {
 	OnNonceChange(addr libcommon.Address, prev, new uint64)
 	OnCodeChange(addr libcommon.Address, prevCodeHash libcommon.Hash, prevCode []byte, codeHash libcommon.Hash, code []byte)
 	OnStorageChange(addr libcommon.Address, slot *libcommon.Hash, prev, new uint256.Int)
+	OnNewAccount(addr libcommon.Address)
 	OnLog(log *types.Log)
 }
 
@@ -562,6 +563,10 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 		sdb.journal.append(createObjectChange{account: &addr})
 	} else {
 		sdb.journal.append(resetObjectChange{account: &addr, prev: previous})
+	}
+
+	if sdb.logger != nil {
+		sdb.logger.OnNewAccount(addr)
 	}
 
 	newobj.newlyCreated = true

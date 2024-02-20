@@ -258,7 +258,7 @@ func (a *AccessListTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, 
 func (a *AccessListTracer) OnBlockEnd(err error) {
 }
 
-func (a *AccessListTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (a *AccessListTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 }
 
 func (a *AccessListTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -279,6 +279,8 @@ func (a *AccessListTracer) OnStorageChange(addr libcommon.Address, k *libcommon.
 }
 
 func (a *AccessListTracer) OnLog(log *types.Log) {}
+
+func (a *AccessListTracer) OnNewAccount(addr libcommon.Address) {}
 
 func (a *AccessListTracer) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 }

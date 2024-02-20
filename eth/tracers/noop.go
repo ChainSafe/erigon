@@ -83,7 +83,7 @@ func (*NoopTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *ty
 func (*NoopTracer) OnBlockEnd(err error) {
 }
 
-func (*NoopTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (*NoopTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
 }
 
 func (*NoopTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -101,6 +101,8 @@ func (*NoopTracer) OnCodeChange(a libcommon.Address, prevCodeHash libcommon.Hash
 func (*NoopTracer) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev, new uint256.Int) {}
 
 func (*NoopTracer) OnLog(log *types.Log) {}
+
+func (*NoopTracer) OnNewAccount(a libcommon.Address) {}
 
 // GetResult returns an empty json object.
 func (t *NoopTracer) GetResult() (json.RawMessage, error) {

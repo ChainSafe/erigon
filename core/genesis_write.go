@@ -288,7 +288,7 @@ func write(tx kv.RwTx, g *types.Genesis, tmpDir string, logger log.Logger, bcLog
 	}
 
 	if bcLogger != nil {
-		bcLogger.OnGenesisBlock(block, g.Alloc)
+		bcLogger.OnGenesisBlock(block, g.Alloc, config)
 	}
 
 	// We support ethash/merge for issuance (for now)

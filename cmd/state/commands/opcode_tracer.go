@@ -398,7 +398,7 @@ func (ot *opcodeTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, saf
 func (ot *opcodeTracer) OnBlockEnd(err error) {
 }
 
-func (ot *opcodeTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+func (ot *opcodeTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain2.Config) {
 }
 
 func (ot *opcodeTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
@@ -421,6 +421,8 @@ func (ot *opcodeTracer) OnStorageChange(a libcommon.Address, k *libcommon.Hash, 
 }
 
 func (ot *opcodeTracer) OnLog(log *types.Log) {}
+
+func (ot *opcodeTracer) OnNewAccount(a libcommon.Address) {}
 
 // GetResult returns an empty json object.
 func (ot *opcodeTracer) GetResult() (json.RawMessage, error) {

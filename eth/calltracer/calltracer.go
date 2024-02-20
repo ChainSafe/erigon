@@ -67,7 +67,8 @@ func (ct *CallTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe 
 
 func (ct *CallTracer) OnBlockEnd(err error) {}
 
-func (ct *CallTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {}
+func (ct *CallTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
+}
 
 func (ct *CallTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
 
@@ -89,6 +90,8 @@ func (ct *CallTracer) OnStorageChange(addr libcommon.Address, k *libcommon.Hash,
 }
 
 func (ct *CallTracer) OnLog(log *types.Log) {}
+
+func (ct *CallTracer) OnNewAccount(a libcommon.Address) {}
 
 func (ct *CallTracer) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 }
