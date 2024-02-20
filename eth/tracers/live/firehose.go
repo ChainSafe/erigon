@@ -710,6 +710,15 @@ func (f *Firehose) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, 
 		return
 	}
 
+	// Known Firehose issue: It's possible to burn Ether by sending some ether to a suicided account. In those case,
+	// at theend of block producing, StateDB finalize the block by burning ether from the account. This is something
+	// we were not tracking in the old Firehose instrumentation.
+	//
+	// New chain integration should remove this `if` statement all along.
+	if reason == evmtypes.BalanceDecreaseSelfdestructBurn {
+		return
+	}
+
 	f.ensureInBlockOrTrx()
 
 	change := f.newBalanceChange("tracer", a, prev.ToBig(), new.ToBig(), balanceChangeReasonFromChain(reason))
