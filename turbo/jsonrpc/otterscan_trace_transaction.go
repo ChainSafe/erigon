@@ -2,8 +2,9 @@ package jsonrpc
 
 import (
 	"context"
-	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"math/big"
+
+	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 
 	"github.com/holiman/uint256"
 
@@ -93,7 +94,7 @@ func (t *TransactionTracer) captureStartOrEnter(typ vm.OpCode, from, to common.A
 	}
 }
 
-func (t *TransactionTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+func (t *TransactionTracer) CaptureStart(from common.Address, to common.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	t.depth = 0
 	t.captureStartOrEnter(vm.CALL, from, to, precompile, input, value)
 }
@@ -103,6 +104,6 @@ func (t *TransactionTracer) CaptureEnter(typ vm.OpCode, from common.Address, to 
 	t.captureStartOrEnter(typ, from, to, precompile, input, value)
 }
 
-func (t *TransactionTracer) CaptureExit(output []byte, usedGas uint64, err error) {
+func (t *TransactionTracer) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 	t.depth--
 }

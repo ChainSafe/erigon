@@ -16,6 +16,7 @@ import (
 	"github.com/ledgerwatch/erigon/cmd/devnet/requests"
 	"github.com/ledgerwatch/erigon/diagnostics"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/node/nodecfg"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/turbo/debug"
@@ -138,6 +139,7 @@ func (n *devnetNode) EnableMetrics(int) {
 // run configures, creates and serves an erigon node
 func (n *devnetNode) run(ctx *cli.Context) error {
 	var logger log.Logger
+	var tracer tracers.Tracer
 	var err error
 	var metricsMux *http.ServeMux
 
@@ -152,7 +154,7 @@ func (n *devnetNode) run(ctx *cli.Context) error {
 		n.Unlock()
 	}()
 
-	if logger, metricsMux, err = debug.Setup(ctx, false /* rootLogger */); err != nil {
+	if logger, tracer, metricsMux, err = debug.Setup(ctx, false /* rootLogger */); err != nil {
 		return err
 	}
 
@@ -182,7 +184,7 @@ func (n *devnetNode) run(ctx *cli.Context) error {
 		logger.Warn("TODO: custom BorStateSyncDelay is not applied to BorConfig.StateSyncConfirmationDelay", "delay", stateSyncConfirmationDelay)
 	}
 
-	n.ethNode, err = enode.New(ctx.Context, n.nodeCfg, n.ethCfg, logger)
+	n.ethNode, err = enode.New(ctx.Context, n.nodeCfg, n.ethCfg, logger, tracer)
 
 	if metricsMux != nil {
 		diagnostics.Setup(ctx, metricsMux, n.ethNode)

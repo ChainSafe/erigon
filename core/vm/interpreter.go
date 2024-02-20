@@ -225,11 +225,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	in.depth++
 	defer func() {
 		// first: capture data/memory/state/depth/etc... then clenup them
-		if in.cfg.Debug && err != nil {
+		if in.cfg.Tracer != nil && err != nil {
 			if !logged {
-				in.cfg.Tracer.CaptureState(pcCopy, op, gasCopy, cost, callContext, in.returnData, in.depth, err) //nolint:errcheck
+				in.cfg.Tracer.CaptureState(pcCopy, op, gasCopy, cost, callContext, in.returnData, in.depth, VMErrorFromErr(err)) //nolint:errcheck
 			} else {
-				in.cfg.Tracer.CaptureFault(pcCopy, op, gasCopy, cost, callContext, in.depth, err)
+				in.cfg.Tracer.CaptureFault(pcCopy, op, gasCopy, cost, callContext, in.depth, VMErrorFromErr(err))
 			}
 		}
 		// this function must execute _after_: the `CaptureState` needs the stacks before
@@ -266,7 +266,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		} else if sLen > operation.maxStack {
 			return nil, &ErrStackOverflow{stackLen: sLen, limit: operation.maxStack}
 		}
-		if !contract.UseGas(cost) {
+		if !contract.UseGas(cost, in.cfg.Tracer, GasChangeIgnored) {
 			return nil, ErrOutOfGas
 		}
 		if operation.dynamicGas != nil {
@@ -292,19 +292,20 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			var dynamicCost uint64
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, locStack, mem, memorySize)
 			cost += dynamicCost // for tracing
-			if err != nil || !contract.UseGas(dynamicCost) {
+			if err != nil || !contract.UseGas(dynamicCost, in.cfg.Tracer, GasChangeIgnored) {
 				return nil, ErrOutOfGas
 			}
 			// Do tracing before memory expansion
-			if in.cfg.Debug {
+			if in.cfg.Tracer != nil {
 				in.cfg.Tracer.CaptureState(_pc, op, gasCopy, cost, callContext, in.returnData, in.depth, err) //nolint:errcheck
 				logged = true
 			}
 			if memorySize > 0 {
 				mem.Resize(memorySize)
 			}
-		} else if in.cfg.Debug {
-			in.cfg.Tracer.CaptureState(_pc, op, gasCopy, cost, callContext, in.returnData, in.depth, err) //nolint:errcheck
+		} else if in.cfg.Tracer != nil {
+			in.cfg.Tracer.OnGasChange(gasCopy, gasCopy-cost, GasChangeCallOpCode)
+			in.cfg.Tracer.CaptureState(_pc, op, gasCopy, cost, callContext, in.returnData, in.depth, VMErrorFromErr(err)) //nolint:errcheck
 			logged = true
 		}
 		// execute the operation

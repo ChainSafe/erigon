@@ -33,7 +33,10 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/ledgerwatch/erigon/common/fdlimit"
+	"github.com/ledgerwatch/erigon/eth/tracers"
+
 	"github.com/ledgerwatch/erigon/turbo/logging"
+	"github.com/ledgerwatch/erigon/turbo/tracing"
 )
 
 var (
@@ -176,7 +179,7 @@ func SetupCobra(cmd *cobra.Command, filePrefix string) log.Logger {
 
 // Setup initializes profiling and logging based on the CLI flags.
 // It should be called as early as possible in the program.
-func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, *http.ServeMux, error) {
+func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, tracers.Tracer, *http.ServeMux, error) {
 	// ensure we've read in config file details before setting up metrics etc.
 	if err := SetFlagsFromConfigFile(ctx); err != nil {
 		log.Warn("failed setting config flags from yaml/toml file", "err", err)
@@ -185,16 +188,20 @@ func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, *http.ServeMux, error
 	RaiseFdLimit()
 
 	logger := logging.SetupLoggerCtx("erigon", ctx, log.LvlInfo, log.LvlInfo, rootLogger)
+	tracer, err := tracing.SetupTracerCtx(ctx)
+	if err != nil {
+		return logger, tracer, nil, err
+	}
 
 	if traceFile := ctx.String(traceFlag.Name); traceFile != "" {
 		if err := Handler.StartGoTrace(traceFile); err != nil {
-			return logger, nil, err
+			return logger, tracer, nil, err
 		}
 	}
 
 	if cpuFile := ctx.String(cpuprofileFlag.Name); cpuFile != "" {
 		if err := Handler.StartCPUProfile(cpuFile); err != nil {
-			return logger, nil, err
+			return logger, tracer, nil, err
 		}
 	}
 	pprofEnabled := ctx.Bool(pprofFlag.Name)
@@ -222,7 +229,7 @@ func Setup(ctx *cli.Context, rootLogger bool) (log.Logger, *http.ServeMux, error
 		}
 	}
 
-	return logger, metricsMux, nil
+	return logger, tracer, metricsMux, nil
 }
 
 func StartPProf(address string, metricsMux *http.ServeMux) {

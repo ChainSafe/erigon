@@ -143,7 +143,7 @@ func (rw *Worker) RunTxTaskNoLock(txTask *exec22.TxTask) {
 		if txTask.BlockNum == 0 {
 			// Genesis block
 			// fmt.Printf("txNum=%d, blockNum=%d, Genesis\n", txTask.TxNum, txTask.BlockNum)
-			_, ibs, err = core.GenesisToBlock(rw.genesis, "", logger)
+			_, ibs, err = core.GenesisToBlock(rw.genesis, "", logger, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -156,7 +156,7 @@ func (rw *Worker) RunTxTaskNoLock(txTask *exec22.TxTask) {
 		syscall := func(contract libcommon.Address, data []byte, ibs *state.IntraBlockState, header *types.Header, constCall bool) ([]byte, error) {
 			return core.SysCallContract(contract, data, rw.chainConfig, ibs, header, rw.engine, constCall /* constCall */)
 		}
-		rw.engine.Initialize(rw.chainConfig, rw.chain, header, ibs, syscall, logger)
+		rw.engine.Initialize(rw.chainConfig, rw.chain, header, ibs, syscall, logger, nil)
 		txTask.Error = ibs.FinalizeTx(rules, noop)
 	case txTask.Final:
 		if txTask.BlockNum == 0 {
@@ -240,6 +240,33 @@ func NewChainReader(config *chain.Config, tx kv.Tx, blockReader services.FullBlo
 
 func (cr ChainReader) Config() *chain.Config        { return cr.config }
 func (cr ChainReader) CurrentHeader() *types.Header { panic("") }
+func (cr ChainReader) CurrentFinalizedHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceFinalized(cr.tx)
+	if hash == (libcommon.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.tx, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.tx, hash, *number)
+}
+
+func (cr ChainReader) CurrentSafeHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceSafe(cr.tx)
+	if hash == (libcommon.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.tx, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.tx, hash, *number)
+}
 func (cr ChainReader) GetHeader(hash libcommon.Hash, number uint64) *types.Header {
 	if cr.blockReader != nil {
 		h, _ := cr.blockReader.Header(context.Background(), cr.tx, hash, number)

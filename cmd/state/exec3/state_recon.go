@@ -297,7 +297,7 @@ func (rw *ReconWorker) runTxTask(txTask *exec22.TxTask) error {
 	if txTask.BlockNum == 0 && txTask.TxIndex == -1 {
 		//fmt.Printf("txNum=%d, blockNum=%d, Genesis\n", txTask.TxNum, txTask.BlockNum)
 		// Genesis block
-		_, ibs, err = core.GenesisToBlock(rw.genesis, "", logger)
+		_, ibs, err = core.GenesisToBlock(rw.genesis, "", logger, nil)
 		if err != nil {
 			return err
 		}
@@ -322,7 +322,7 @@ func (rw *ReconWorker) runTxTask(txTask *exec22.TxTask) error {
 			return core.SysCallContract(contract, data, rw.chainConfig, ibState, header, rw.engine, constCall /* constCall */)
 		}
 
-		rw.engine.Initialize(rw.chainConfig, rw.chain, txTask.Header, ibs, syscall, logger)
+		rw.engine.Initialize(rw.chainConfig, rw.chain, txTask.Header, ibs, syscall, logger, nil)
 		if err = ibs.FinalizeTx(rules, noop); err != nil {
 			if _, readError := rw.stateReader.ReadError(); !readError {
 				return err

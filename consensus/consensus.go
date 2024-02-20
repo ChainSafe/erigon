@@ -42,6 +42,10 @@ type ChainHeaderReader interface {
 	// CurrentHeader retrieves the current header from the local chain.
 	CurrentHeader() *types.Header
 
+	CurrentFinalizedHeader() *types.Header
+
+	CurrentSafeHeader() *types.Header
+
 	// GetHeader retrieves a block header from the database by hash and number.
 	GetHeader(hash libcommon.Hash, number uint64) *types.Header
 
@@ -84,6 +88,12 @@ type Call func(contract libcommon.Address, data []byte) ([]byte, error)
 // Depending on the consensus engine the allocated block reward might have
 // different semantics which could lead e.g. to different reward values.
 type RewardKind uint16
+
+// EngineLogger interface for logging blockchain events
+type EngineLogger interface {
+	OnBeaconBlockRootStart(root libcommon.Hash)
+	OnBeaconBlockRootEnd()
+}
 
 const (
 	// RewardAuthor - attributed to the block author.
@@ -145,7 +155,7 @@ type EngineWriter interface {
 
 	// Initialize runs any pre-transaction state modifications (e.g. epoch start)
 	Initialize(config *chain.Config, chain ChainHeaderReader, header *types.Header,
-		state *state.IntraBlockState, syscall SysCallCustom, logger log.Logger)
+		state *state.IntraBlockState, syscall SysCallCustom, logger log.Logger, eLogger EngineLogger)
 
 	// Finalize runs any post-transaction state modifications (e.g. block rewards)
 	// but does not assemble the block.

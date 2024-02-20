@@ -79,7 +79,7 @@ func ComputeTxEnv(ctx context.Context, engine consensus.EngineReader, block *typ
 	consensusHeaderReader := stagedsync.NewChainReaderImpl(cfg, dbtx, nil, nil)
 
 	logger := log.New("tracing")
-	err = core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, header, cfg, statedb, logger)
+	err = core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, header, cfg, statedb, logger, nil)
 	if err != nil {
 		return nil, evmtypes.BlockContext{}, evmtypes.TxContext{}, nil, nil, err
 	}
@@ -127,10 +127,11 @@ func ComputeTxEnv(ctx context.Context, engine consensus.EngineReader, block *typ
 // be tracer dependent.
 func TraceTx(
 	ctx context.Context,
+	tx types.Transaction,
 	message core.Message,
 	blockCtx evmtypes.BlockContext,
 	txCtx evmtypes.TxContext,
-	ibs evmtypes.IntraBlockState,
+	ibs *state.IntraBlockState,
 	config *tracers.TraceConfig,
 	chainConfig *chain.Config,
 	stream *jsoniter.Stream,
@@ -146,7 +147,14 @@ func TraceTx(
 
 	execCb := func(evm *vm.EVM, refunds bool) (*core.ExecutionResult, error) {
 		gp := new(core.GasPool).AddGas(message.Gas()).AddBlobGas(message.BlobGas())
-		return core.ApplyMessage(evm, message, gp, refunds, false /* gasBailout */)
+		tracer.CaptureTxStart(evm, tx)
+		result, err := core.ApplyMessage(evm, message, gp, refunds, false /* gasBailout */)
+		if err != nil {
+			tracer.CaptureTxEnd(nil, err)
+		} else {
+			tracer.CaptureTxEnd(&types.Receipt{GasUsed: result.UsedGas}, nil)
+		}
+		return result, err
 	}
 
 	return ExecuteTraceTx(blockCtx, txCtx, ibs, config, chainConfig, stream, tracer, streaming, execCb)
@@ -158,7 +166,7 @@ func AssembleTracer(
 	txHash libcommon.Hash,
 	stream *jsoniter.Stream,
 	callTimeout time.Duration,
-) (vm.EVMLogger, bool, context.CancelFunc, error) {
+) (tracers.Tracer, bool, context.CancelFunc, error) {
 	// Assemble the structured logger or the JavaScript tracer
 	switch {
 	case config != nil && config.Tracer != nil:
@@ -200,17 +208,17 @@ func AssembleTracer(
 func ExecuteTraceTx(
 	blockCtx evmtypes.BlockContext,
 	txCtx evmtypes.TxContext,
-	ibs evmtypes.IntraBlockState,
+	ibs *state.IntraBlockState,
 	config *tracers.TraceConfig,
 	chainConfig *chain.Config,
 	stream *jsoniter.Stream,
-	tracer vm.EVMLogger,
+	tracer tracers.Tracer,
 	streaming bool,
 	execCb func(evm *vm.EVM, refunds bool) (*core.ExecutionResult, error),
 ) error {
 	// Run the transaction with tracing enabled.
 	evm := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer})
-
+	ibs.SetLogger(tracer)
 	var refunds = true
 	if config != nil && config.NoRefunds != nil && *config.NoRefunds {
 		refunds = false

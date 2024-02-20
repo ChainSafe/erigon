@@ -164,7 +164,9 @@ func executeBlock(
 
 	callTracer := calltracer.NewCallTracer()
 	vmConfig.Debug = true
-	vmConfig.Tracer = callTracer
+	if vmConfig.Tracer == nil {
+		vmConfig.Tracer = callTracer
+	}
 
 	var receipts types.Receipts
 	var stateSyncReceipt *types.Receipt

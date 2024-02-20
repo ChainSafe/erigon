@@ -20,6 +20,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/ledgerwatch/log/v3"
@@ -55,6 +56,19 @@ const (
 	SysCallGasLimit = uint64(30_000_000)
 )
 
+// BlockchainLogger is used to collect traces during chain processing.
+// Please make a copy of the referenced types if you intend to retain them.
+type BlockchainLogger interface {
+	vm.EVMLogger
+	state.StateLogger
+	consensus.EngineLogger
+	// OnBlockStart is called before executing `block`.
+	// `td` is the total difficulty prior to `block`.
+	OnBlockStart(block *types.Block, td *big.Int, finalized *types.Header, safe *types.Header, chainConfig *chain.Config)
+	OnBlockEnd(err error)
+	OnGenesisBlock(genesis *types.Block, alloc types.GenesisAlloc)
+}
+
 type RejectedTx struct {
 	Index int    `json:"index"    gencodec:"required"`
 	Err   string `json:"error"    gencodec:"required"`
@@ -84,11 +98,22 @@ func ExecuteBlockEphemerally(
 	stateReader state.StateReader, stateWriter state.WriterWithChangeSets,
 	chainReader consensus.ChainReader, getTracer func(txIndex int, txHash libcommon.Hash) (vm.EVMLogger, error),
 	logger log.Logger,
-) (*EphemeralExecResult, error) {
+) (res *EphemeralExecResult, executeBlockErr error) {
+
+	var bcLogger BlockchainLogger
+	if vmConfig.Tracer != nil {
+		l, ok := vmConfig.Tracer.(BlockchainLogger)
+		if ok {
+			bcLogger = l
+		} else {
+			log.Warn("only extended tracers are supported for live mode")
+		}
+	}
 
 	defer blockExecutionTimer.ObserveDuration(time.Now())
 	block.Uncles()
 	ibs := state.New(stateReader)
+	ibs.SetLogger(bcLogger)
 	header := block.Header()
 
 	usedGas := new(uint64)
@@ -96,13 +121,26 @@ func ExecuteBlockEphemerally(
 	gp := new(GasPool)
 	gp.AddGas(block.GasLimit()).AddBlobGas(chainConfig.GetMaxBlobGasPerBlock())
 
-	if err := InitializeBlockExecution(engine, chainReader, block.Header(), chainConfig, ibs, logger); err != nil {
+	var (
+		rejectedTxs []*RejectedTx
+		includedTxs types.Transactions
+		receipts    types.Receipts
+	)
+
+	if bcLogger != nil {
+		td := chainReader.GetTd(block.ParentHash(), block.NumberU64()-1)
+		bcLogger.OnBlockStart(block, td, chainReader.CurrentFinalizedHeader(), chainReader.CurrentSafeHeader(), chainConfig)
+		defer func() {
+			bcLogger.OnBlockEnd(executeBlockErr)
+		}()
+	}
+
+	if err := InitializeBlockExecution(engine, chainReader, block.Header(), chainConfig, ibs, logger, bcLogger); err != nil {
 		return nil, err
 	}
 
-	var rejectedTxs []*RejectedTx
-	includedTxs := make(types.Transactions, 0, block.Transactions().Len())
-	receipts := make(types.Receipts, 0, block.Transactions().Len())
+	includedTxs = make(types.Transactions, 0, block.Transactions().Len())
+	receipts = make(types.Receipts, 0, block.Transactions().Len())
 	noop := state.NewNoopWriter()
 	for i, tx := range block.Transactions() {
 		ibs.SetTxContext(tx.Hash(), block.Hash(), i)
@@ -341,11 +379,11 @@ func FinalizeBlockExecution(
 }
 
 func InitializeBlockExecution(engine consensus.Engine, chain consensus.ChainHeaderReader, header *types.Header,
-	cc *chain.Config, ibs *state.IntraBlockState, logger log.Logger,
+	cc *chain.Config, ibs *state.IntraBlockState, logger log.Logger, bcLogger BlockchainLogger,
 ) error {
 	engine.Initialize(cc, chain, header, ibs, func(contract libcommon.Address, data []byte, ibState *state.IntraBlockState, header *types.Header, constCall bool) ([]byte, error) {
 		return SysCallContract(contract, data, cc, ibState, header, engine, constCall)
-	}, logger)
+	}, logger, bcLogger)
 	noop := state.NewNoopWriter()
 	ibs.FinalizeTx(cc.Rules(header.Number.Uint64(), header.Time), noop)
 	return nil

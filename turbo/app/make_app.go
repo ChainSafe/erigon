@@ -8,6 +8,7 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
 	"github.com/ledgerwatch/erigon/turbo/logging"
+	"github.com/ledgerwatch/erigon/turbo/tracing"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
 
@@ -73,6 +74,7 @@ func appFlags(cliFlags []cli.Flag) []cli.Flag {
 	flags := append(cliFlags, debug.Flags...) // debug flags are required
 	flags = append(flags, utils.MetricFlags...)
 	flags = append(flags, logging.Flags...)
+	flags = append(flags, tracing.Flags...)
 	flags = append(flags, &utils.ConfigFlag)
 
 	// remove exact duplicate flags, keeping only the first one. this will allow easier composition later down the line

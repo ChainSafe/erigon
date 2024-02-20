@@ -173,7 +173,7 @@ func (api *PrivateDebugAPIImpl) traceBlock(ctx context.Context, blockNrOrHash rp
 				api.evmCallTimeout,
 			)
 		} else {
-			err = transactions.TraceTx(ctx, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
+			err = transactions.TraceTx(ctx, txn, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
 		}
 		if err == nil {
 			err = ibs.FinalizeTx(rules, state.NewNoopWriter())
@@ -306,7 +306,7 @@ func (api *PrivateDebugAPIImpl) TraceTransaction(ctx context.Context, hash commo
 		)
 	}
 	// Trace the transaction and return
-	return transactions.TraceTx(ctx, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
+	return transactions.TraceTx(ctx, txn, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
 }
 
 func (api *PrivateDebugAPIImpl) TraceCall(ctx context.Context, args ethapi.CallArgs, blockNrOrHash rpc.BlockNumberOrHash, config *tracers.TraceConfig, stream *jsoniter.Stream) error {
@@ -369,10 +369,15 @@ func (api *PrivateDebugAPIImpl) TraceCall(ctx context.Context, args ethapi.CallA
 		return fmt.Errorf("convert args to msg: %v", err)
 	}
 
+	transaction, err := args.ToTransaction(api.GasCap, baseFee)
+	if err != nil {
+		return fmt.Errorf("convert args to msg: %v", err)
+	}
+
 	blockCtx := transactions.NewEVMBlockContext(engine, header, blockNrOrHash.RequireCanonical, dbtx, api._blockReader)
 	txCtx := core.NewEVMTxContext(msg)
 	// Trace the transaction and return
-	return transactions.TraceTx(ctx, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
+	return transactions.TraceTx(ctx, transaction, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
 }
 
 func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bundle, simulateContext StateContext, config *tracers.TraceConfig, stream *jsoniter.Stream) error {
@@ -544,10 +549,17 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 				stream.WriteArrayEnd()
 				return err
 			}
+
+			transaction, err := txn.ToTransaction(api.GasCap, blockCtx.BaseFee)
+			if err != nil {
+				stream.WriteNil()
+				return err
+			}
+
 			txCtx = core.NewEVMTxContext(msg)
 			ibs := evm.IntraBlockState().(*state.IntraBlockState)
 			ibs.SetTxContext(common.Hash{}, parent.Hash(), txnIndex)
-			err = transactions.TraceTx(ctx, msg, blockCtx, txCtx, evm.IntraBlockState(), config, chainConfig, stream, api.evmCallTimeout)
+			err = transactions.TraceTx(ctx, transaction, msg, blockCtx, txCtx, st, config, chainConfig, stream, api.evmCallTimeout)
 			if err != nil {
 				stream.WriteArrayEnd()
 				stream.WriteArrayEnd()

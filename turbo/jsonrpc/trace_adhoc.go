@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"strings"
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/log/v3"
 
+	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
@@ -22,7 +24,9 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/core/vm"
-	"github.com/ledgerwatch/erigon/polygon/tracer"
+	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
+	"github.com/ledgerwatch/erigon/eth/tracers"
+	ptracer "github.com/ledgerwatch/erigon/polygon/tracer"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 	"github.com/ledgerwatch/erigon/turbo/shards"
@@ -224,6 +228,61 @@ func (args *TraceCallParam) ToMessage(globalGasCap uint64, baseFee *uint256.Int)
 	return msg, nil
 }
 
+// ToTransaction converts CallArgs to the Transaction type used by the core evm
+func (args *TraceCallParam) ToTransaction(globalGasCap uint64, baseFee *uint256.Int) (types.Transaction, error) {
+	msg, err := args.ToMessage(globalGasCap, baseFee)
+	if err != nil {
+		return nil, err
+	}
+
+	var tx types.Transaction
+	switch {
+	case args.MaxFeePerGas != nil:
+		al := types2.AccessList{}
+		if args.AccessList != nil {
+			al = *args.AccessList
+		}
+		tx = &types.DynamicFeeTransaction{
+			CommonTx: types.CommonTx{
+				Nonce: msg.Nonce(),
+				Gas:   msg.Gas(),
+				To:    args.To,
+				Value: msg.Value(),
+				Data:  msg.Data(),
+			},
+			FeeCap:     msg.FeeCap(),
+			Tip:        msg.Tip(),
+			AccessList: al,
+		}
+	case args.AccessList != nil:
+		tx = &types.AccessListTx{
+			LegacyTx: types.LegacyTx{
+				CommonTx: types.CommonTx{
+					Nonce: msg.Nonce(),
+					Gas:   msg.Gas(),
+					To:    args.To,
+					Value: msg.Value(),
+					Data:  msg.Data(),
+				},
+				GasPrice: msg.GasPrice(),
+			},
+			AccessList: *args.AccessList,
+		}
+	default:
+		tx = &types.LegacyTx{
+			CommonTx: types.CommonTx{
+				Nonce: msg.Nonce(),
+				Gas:   msg.Gas(),
+				To:    args.To,
+				Value: msg.Value(),
+				Data:  msg.Data(),
+			},
+			GasPrice: msg.GasPrice(),
+		}
+	}
+	return tx, nil
+}
+
 // OpenEthereum-style tracer
 type OeTracer struct {
 	r            *TraceCallResult
@@ -242,9 +301,9 @@ type OeTracer struct {
 	idx          []string     // Prefix for the "idx" inside operations, for easier navigation
 }
 
-func (ot *OeTracer) CaptureTxStart(gasLimit uint64) {}
+func (ot *OeTracer) CaptureTxStart(env *vm.EVM, tx types.Transaction) {}
 
-func (ot *OeTracer) CaptureTxEnd(restGas uint64) {}
+func (ot *OeTracer) CaptureTxEnd(receipt *types.Receipt, err error) {}
 
 func (ot *OeTracer) captureStartOrEnter(deep bool, typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	//fmt.Printf("captureStartOrEnter deep %t, typ %s, from %x, to %x, create %t, input %x, gas %d, value %d, precompile %t\n", deep, typ.String(), from, to, create, input, gas, value, precompile)
@@ -352,7 +411,7 @@ func (ot *OeTracer) captureStartOrEnter(deep bool, typ vm.OpCode, from libcommon
 	ot.traceStack = append(ot.traceStack, trace)
 }
 
-func (ot *OeTracer) CaptureStart(env *vm.EVM, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+func (ot *OeTracer) CaptureStart(from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	ot.captureStartOrEnter(false /* deep */, vm.CALL, from, to, precompile, create, input, gas, value, code)
 }
 
@@ -429,11 +488,11 @@ func (ot *OeTracer) captureEndOrExit(deep bool, output []byte, usedGas uint64, e
 	}
 }
 
-func (ot *OeTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
+func (ot *OeTracer) CaptureEnd(output []byte, usedGas uint64, err error, reverted bool) {
 	ot.captureEndOrExit(false /* deep */, output, usedGas, err)
 }
 
-func (ot *OeTracer) CaptureExit(output []byte, usedGas uint64, err error) {
+func (ot *OeTracer) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 	ot.captureEndOrExit(true /* deep */, output, usedGas, err)
 }
 
@@ -572,6 +631,42 @@ func (ot *OeTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scop
 
 func (ot *OeTracer) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, opDepth int, err error) {
 }
+
+func (ot *OeTracer) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
+}
+
+func (ot *OeTracer) OnBlockEnd(err error) {
+}
+
+func (ot *OeTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+}
+
+func (ot *OeTracer) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (ot *OeTracer) OnBeaconBlockRootEnd() {}
+
+func (ot *OeTracer) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
+
+func (ot *OeTracer) OnGasChange(old, new uint64, reason vm.GasChangeReason) {}
+
+func (ot *OeTracer) OnBalanceChange(addr libcommon.Address, prev, new *uint256.Int, reason evmtypes.BalanceChangeReason) {
+}
+
+func (ot *OeTracer) OnNonceChange(addr libcommon.Address, prev, new uint64) {}
+
+func (aot *OeTracer) OnCodeChange(addr libcommon.Address, prevCodeHash libcommon.Hash, prev []byte, codeHash libcommon.Hash, code []byte) {
+}
+
+func (ot *OeTracer) OnStorageChange(addr libcommon.Address, k *libcommon.Hash, prev, new uint256.Int) {
+}
+
+func (ot *OeTracer) OnLog(log *types.Log) {}
+
+func (ot *OeTracer) GetResult() (json.RawMessage, error) {
+	return json.RawMessage{}, nil
+}
+
+func (ot *OeTracer) Stop(err error) {}
 
 // Implements core/state/StateWriter to provide state diffs
 type StateDiff struct {
@@ -972,6 +1067,11 @@ func (api *TraceAPIImpl) Call(ctx context.Context, args TraceCallParam, traceTyp
 		return nil, err
 	}
 
+	txn, err := args.ToTransaction(api.gasCap, baseFee)
+	if err != nil {
+		return nil, err
+	}
+
 	blockCtx := transactions.NewEVMBlockContext(engine, header, blockNrOrHash.RequireCanonical, tx, api._blockReader)
 	txCtx := core.NewEVMTxContext(msg)
 
@@ -990,10 +1090,15 @@ func (api *TraceAPIImpl) Call(ctx context.Context, args TraceCallParam, traceTyp
 	gp := new(core.GasPool).AddGas(msg.Gas()).AddBlobGas(msg.BlobGas())
 	var execResult *core.ExecutionResult
 	ibs.SetTxContext(libcommon.Hash{}, libcommon.Hash{}, 0)
+	ibs.SetLogger(&ot)
+
+	ot.CaptureTxStart(evm, txn)
 	execResult, err = core.ApplyMessage(evm, msg, gp, true /* refunds */, true /* gasBailout */)
 	if err != nil {
+		ot.CaptureTxEnd(nil, err)
 		return nil, err
 	}
+	ot.CaptureTxEnd(&types.Receipt{GasUsed: execResult.UsedGas}, nil)
 	traceResult.Output = libcommon.CopyBytes(execResult.ReturnData)
 	if traceTypeStateDiff {
 		sdMap := make(map[libcommon.Address]*StateDiffAccount)
@@ -1090,17 +1195,23 @@ func (api *TraceAPIImpl) CallMany(ctx context.Context, calls json.RawMessage, pa
 		}
 	}
 	msgs := make([]types.Message, len(callParams))
+	txns := make([]types.Transaction, len(callParams))
 	for i, args := range callParams {
 		msgs[i], err = args.ToMessage(api.gasCap, baseFee)
 		if err != nil {
 			return nil, fmt.Errorf("convert callParam to msg: %w", err)
 		}
+
+		txns[i], err = args.ToTransaction(api.gasCap, baseFee)
+		if err != nil {
+			return nil, fmt.Errorf("convert callParam to txn: %w", err)
+		}
 	}
-	results, _, err := api.doCallMany(ctx, dbtx, msgs, callParams, parentNrOrHash, nil, true /* gasBailout */, -1 /* all tx indices */)
+	results, _, err := api.doCallMany(ctx, dbtx, txns, msgs, callParams, parentNrOrHash, nil, true /* gasBailout */, -1 /* all tx indices */)
 	return results, err
 }
 
-func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, msgs []types.Message, callParams []TraceCallParam,
+func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, txns []types.Transaction, msgs []types.Message, callParams []TraceCallParam,
 	parentNrOrHash *rpc.BlockNumberOrHash, header *types.Header, gasBailout bool, txIndexNeeded int,
 ) ([]*TraceCallResult, *state.IntraBlockState, error) {
 	chainConfig, err := api.chainConfig(dbtx)
@@ -1179,6 +1290,7 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, msgs []type
 
 		traceResult := &TraceCallResult{Trace: []*ParityTrace{}, TransactionHash: args.txHash}
 		vmConfig := vm.Config{}
+		var tracer tracers.Tracer
 		if (traceTypeTrace && (txIndexNeeded == -1 || txIndex == txIndexNeeded)) || traceTypeVmTrace {
 			var ot OeTracer
 			ot.compat = api.compatibility
@@ -1192,6 +1304,7 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, msgs []type
 			}
 			vmConfig.Debug = true
 			vmConfig.Tracer = &ot
+			tracer = &ot
 		}
 
 		blockCtx := transactions.NewEVMBlockContext(engine, header, parentNrOrHash.RequireCanonical, dbtx, api._blockReader)
@@ -1225,7 +1338,7 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, msgs []type
 		var execResult *core.ExecutionResult
 		if args.isBorStateSyncTxn {
 			txFinalized = true
-			execResult, err = tracer.TraceBorStateSyncTxnTraceAPI(
+			execResult, err = ptracer.TraceBorStateSyncTxnTraceAPI(
 				ctx,
 				dbtx,
 				&vmConfig,
@@ -1245,14 +1358,24 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, msgs []type
 				ibs.SetTxContext(libcommon.Hash{}, header.Hash(), txIndex)
 			}
 
+			ibs.SetLogger(tracer)
 			txCtx := core.NewEVMTxContext(msg)
 			evm := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
 			gp := new(core.GasPool).AddGas(msg.Gas()).AddBlobGas(msg.BlobGas())
 
+			if tracer != nil {
+				tracer.CaptureTxStart(evm, txns[txIndex])
+			}
 			execResult, err = core.ApplyMessage(evm, msg, gp, true /* refunds */, gasBailout /* gasBailout */)
 		}
 		if err != nil {
+			if tracer != nil {
+				tracer.CaptureTxEnd(nil, err)
+			}
 			return nil, nil, fmt.Errorf("first run for txIndex %d error: %w", txIndex, err)
+		}
+		if tracer != nil {
+			tracer.CaptureTxEnd(&types.Receipt{GasUsed: execResult.UsedGas}, nil)
 		}
 
 		chainRules := chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Time)

@@ -54,7 +54,7 @@ func runCaplinNode(cliCtx *cli.Context) error {
 		log.Error("[Phase1] Could not initialize caplin", "err", err)
 		return err
 	}
-	if _, _, err := debug.Setup(cliCtx, true /* root logger */); err != nil {
+	if _, _, _, err := debug.Setup(cliCtx, true /* root logger */); err != nil {
 		return err
 	}
 	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(cfg.LogLvl), log.StderrHandler))

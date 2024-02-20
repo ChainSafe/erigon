@@ -19,6 +19,7 @@ import (
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
+	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 )
 
 var ErrTraceLimitReached = errors.New("the number of logs reached the specified limit")
@@ -130,13 +131,13 @@ func NewStructLogger(cfg *LogConfig) *StructLogger {
 	return logger
 }
 
-func (l *StructLogger) CaptureTxStart(gasLimit uint64) {}
-
-func (l *StructLogger) CaptureTxEnd(restGas uint64) {}
-
-// CaptureStart implements the Tracer interface to initialize the tracing operation.
-func (l *StructLogger) CaptureStart(env *vm.EVM, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+func (l *StructLogger) CaptureTxStart(env *vm.EVM, tx types.Transaction) {
 	l.env = env
+}
+
+func (l *StructLogger) CaptureTxEnd(receipt *types.Receipt, err error) {}
+
+func (l *StructLogger) CaptureStart(from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 }
 
 // CaptureEnter implements the Tracer interface to initialize the tracing operation for an internal call.
@@ -213,7 +214,7 @@ func (l *StructLogger) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, s
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
-func (l *StructLogger) CaptureEnd(output []byte, usedGas uint64, err error) {
+func (l *StructLogger) CaptureEnd(output []byte, usedGas uint64, err error, reverted bool) {
 	l.output = output
 	l.err = err
 	if l.cfg.Debug {
@@ -224,8 +225,47 @@ func (l *StructLogger) CaptureEnd(output []byte, usedGas uint64, err error) {
 	}
 }
 
+func (l *StructLogger) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
+}
+
+func (l *StructLogger) OnBlockEnd(err error) {
+}
+
+func (l *StructLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+}
+
+func (l *StructLogger) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (l *StructLogger) OnBeaconBlockRootEnd() {}
+
+func (l *StructLogger) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
+
+func (l *StructLogger) OnGasChange(old, new uint64, reason vm.GasChangeReason) {}
+
+func (l *StructLogger) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, reason evmtypes.BalanceChangeReason) {
+}
+
+func (l *StructLogger) OnNonceChange(a libcommon.Address, prev, new uint64) {}
+
+func (l *StructLogger) OnCodeChange(a libcommon.Address, prevCodeHash libcommon.Hash, prev []byte, codeHash libcommon.Hash, code []byte) {
+}
+
+func (l *StructLogger) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev, new uint256.Int) {
+}
+
+func (l *StructLogger) OnLog(log *types.Log) {}
+
 // CaptureExit is called after the internal call finishes to finalize the tracing.
-func (l *StructLogger) CaptureExit(output []byte, usedGas uint64, err error) {
+func (l *StructLogger) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
+}
+
+// GetResult returns an empty json object.
+func (l *StructLogger) GetResult() (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
+}
+
+// Stop terminates execution of the tracer at the first opportune moment.
+func (l *StructLogger) Stop(err error) {
 }
 
 // StructLogs returns the captured log entries.
@@ -352,9 +392,11 @@ func NewMarkdownLogger(cfg *LogConfig, writer io.Writer) *mdLogger {
 	return l
 }
 
-func (t *mdLogger) CaptureTxStart(gasLimit uint64) {}
+func (t *mdLogger) CaptureTxStart(env *vm.EVM, tx types.Transaction) {
+	t.env = env
+}
 
-func (t *mdLogger) CaptureTxEnd(restGas uint64) {}
+func (t *mdLogger) CaptureTxEnd(receipt *types.Receipt, err error) {}
 
 func (t *mdLogger) captureStartOrEnter(from, to libcommon.Address, create bool, input []byte, gas uint64, value *uint256.Int) {
 	if !create {
@@ -373,8 +415,7 @@ func (t *mdLogger) captureStartOrEnter(from, to libcommon.Address, create bool, 
 `)
 }
 
-func (t *mdLogger) CaptureStart(env *vm.EVM, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) { //nolint:interfacer
-	t.env = env
+func (t *mdLogger) CaptureStart(from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) { //nolint:interfacer
 	t.captureStartOrEnter(from, to, create, input, gas, value)
 }
 
@@ -412,10 +453,49 @@ func (t *mdLogger) captureEndOrExit(output []byte, usedGas uint64, err error) {
 		output, usedGas, err)
 }
 
-func (t *mdLogger) CaptureEnd(output []byte, usedGas uint64, err error) {
+func (t *mdLogger) CaptureEnd(output []byte, usedGas uint64, err error, reverted bool) {
 	t.captureEndOrExit(output, usedGas, err)
 }
 
-func (t *mdLogger) CaptureExit(output []byte, usedGas uint64, err error) {
+func (t *mdLogger) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
+}
+
+func (t *mdLogger) OnBlockEnd(err error) {
+}
+
+func (t *mdLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+}
+
+func (t *mdLogger) OnBeaconBlockRootStart(root libcommon.Hash) {}
+
+func (t *mdLogger) OnBeaconBlockRootEnd() {}
+
+func (t *mdLogger) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
+
+func (t *mdLogger) OnGasChange(old, new uint64, reason vm.GasChangeReason) {}
+
+func (t *mdLogger) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, reason evmtypes.BalanceChangeReason) {
+}
+
+func (t *mdLogger) OnNonceChange(a libcommon.Address, prev, new uint64) {}
+
+func (t *mdLogger) OnCodeChange(a libcommon.Address, prevCodeHash libcommon.Hash, prev []byte, codeHash libcommon.Hash, code []byte) {
+}
+
+func (t *mdLogger) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev, new uint256.Int) {
+}
+
+func (t *mdLogger) OnLog(log *types.Log) {}
+
+func (t *mdLogger) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
 	t.captureEndOrExit(output, usedGas, err)
+}
+
+// GetResult returns an empty json object.
+func (t *mdLogger) GetResult() (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
+}
+
+// Stop terminates execution of the tracer at the first opportune moment.
+func (t *mdLogger) Stop(err error) {
 }
