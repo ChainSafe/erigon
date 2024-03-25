@@ -67,11 +67,9 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Trac
 
 	return &tracers.Tracer{
 		Hooks: &tracing.Hooks{
-			OnBlockchainInit: tracer.OnBlockchainInit,
-			OnGenesisBlock:   tracer.OnGenesisBlock,
-			OnBlockStart:     tracer.OnBlockStart,
-			OnBlockEnd:       tracer.OnBlockEnd,
-			OnSkippedBlock:   tracer.OnSkippedBlock,
+			OnGenesisBlock: tracer.OnGenesisBlock,
+			OnBlockStart:   tracer.OnBlockStart,
+			OnBlockEnd:     tracer.OnBlockEnd,
 
 			OnTxStart: tracer.OnTxStart,
 			OnTxEnd:   tracer.OnTxEnd,
@@ -170,16 +168,6 @@ func (f *Firehose) resetTransaction() {
 	f.deferredCallState.Reset()
 }
 
-func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
-	f.chainConfig = chainConfig
-
-	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
-		printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
-	} else {
-		f.panicInvalidState("The OnBlockchainInit callback was called more than once")
-	}
-}
-
 func (f *Firehose) OnBlockStart(event tracing.BlockEvent) {
 	b := event.Block
 	firehoseDebug("block start number=%d hash=%s", b.NumberU64(), b.Hash())
@@ -208,25 +196,6 @@ func (f *Firehose) OnBlockStart(event tracing.BlockEvent) {
 	}
 
 	f.blockFinality.populateFromChain(event.Finalized)
-}
-
-func (f *Firehose) OnSkippedBlock(event tracing.BlockEvent) {
-	// Blocks that are skipped from blockchain that were knwon and should contain 0 transactions.
-	// It happened in the past, on Polygon if I recall right, that we missed block because some block
-	// went in this code path.
-	//
-	// See https: //github.com/streamingfast/go-ethereum/blob/a46903cf0cad829479ded66b369017914bf82314/core/blockchain.go#L1797-L1814
-	if event.Block.Transactions().Len() > 0 {
-		panic(fmt.Sprintf("The tracer received an `OnSkippedBlock` block #%d (%s) with transactions (%d), this according to core/blockchain.go should never happen and is an error",
-			event.Block.NumberU64(),
-			event.Block.Hash().Hex(),
-			event.Block.Transactions().Len(),
-		))
-	}
-
-	// Trace the block as normal, worst case the Firehose system will simply discard it at some point
-	f.OnBlockStart(event)
-	f.OnBlockEnd(nil)
 }
 
 func getActivePrecompilesChecker(rules *chain.Rules) func(addr libcommon.Address) bool {
@@ -1144,6 +1113,10 @@ func (f *Firehose) panicInvalidState(msg string) string {
 //
 // It flushes this through [flushToFirehose] to the `os.Stdout` writer.
 func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *FinalityStatus) {
+	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
+		printToFirehose("INIT", FirehoseProtocolVersion, "erigon", params.Version)
+	}
+
 	marshalled, err := proto.Marshal(block)
 	if err != nil {
 		panic(fmt.Errorf("failed to marshal block: %w", err))
