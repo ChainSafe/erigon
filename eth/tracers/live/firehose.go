@@ -910,8 +910,8 @@ func (f *Firehose) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 	activeCall.StorageChanges = append(activeCall.StorageChanges, &pbeth.StorageChange{
 		Address:  a.Bytes(),
 		Key:      k.Bytes(),
-		OldValue: prev.Bytes(),
-		NewValue: new.Bytes(),
+		OldValue: libcommon.BigToHash(prev.ToBig()).Bytes(),
+		NewValue: libcommon.BigToHash(new.ToBig()).Bytes(),
 		Ordinal:  f.blockOrdinal.Next(),
 	})
 }
