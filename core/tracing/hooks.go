@@ -110,20 +110,12 @@ type (
 		- Chain events -
 	*/
 
-	// BlockchainInitHook is called when the blockchain is initialized.
-	BlockchainInitHook = func(chainConfig *chain.Config)
-
 	// BlockStartHook is called before executing `block`.
 	// `td` is the total difficulty prior to `block`.
 	BlockStartHook = func(event BlockEvent)
 
 	// BlockEndHook is called after executing a block.
 	BlockEndHook = func(err error)
-
-	// SkippedBlockHook indicates a block was skipped during processing
-	// due to it being known previously. This can happen e.g. when recovering
-	// from a crash.
-	SkippedBlockHook = func(event BlockEvent)
 
 	// GenesisBlockHook is called when the genesis block is being processed.
 	GenesisBlockHook = func(genesis *types.Block, alloc types.GenesisAlloc)
@@ -158,11 +150,9 @@ type Hooks struct {
 	OnFault     FaultHook
 	OnGasChange GasChangeHook
 	// Chain events
-	OnBlockchainInit BlockchainInitHook
-	OnBlockStart     BlockStartHook
-	OnBlockEnd       BlockEndHook
-	OnSkippedBlock   SkippedBlockHook
-	OnGenesisBlock   GenesisBlockHook
+	OnBlockStart   BlockStartHook
+	OnBlockEnd     BlockEndHook
+	OnGenesisBlock GenesisBlockHook
 	// State events
 	OnBalanceChange BalanceChangeHook
 	OnNonceChange   NonceChangeHook
