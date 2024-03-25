@@ -67,9 +67,10 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Trac
 
 	return &tracers.Tracer{
 		Hooks: &tracing.Hooks{
-			OnGenesisBlock: tracer.OnGenesisBlock,
-			OnBlockStart:   tracer.OnBlockStart,
-			OnBlockEnd:     tracer.OnBlockEnd,
+			OnBlockchainInit: tracer.OnBlockchainInit,
+			OnGenesisBlock:   tracer.OnGenesisBlock,
+			OnBlockStart:     tracer.OnBlockStart,
+			OnBlockEnd:       tracer.OnBlockEnd,
 
 			OnTxStart: tracer.OnTxStart,
 			OnTxEnd:   tracer.OnTxEnd,
@@ -166,6 +167,16 @@ func (f *Firehose) resetTransaction() {
 	f.callStack.Reset()
 	f.latestCallEnterSuicided = false
 	f.deferredCallState.Reset()
+}
+
+func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
+	f.chainConfig = chainConfig
+
+	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
+		printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
+	} else {
+		f.panicInvalidState("The OnBlockchainInit callback was called more than once")
+	}
 }
 
 func (f *Firehose) OnBlockStart(event tracing.BlockEvent) {
@@ -1113,10 +1124,6 @@ func (f *Firehose) panicInvalidState(msg string) string {
 //
 // It flushes this through [flushToFirehose] to the `os.Stdout` writer.
 func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *FinalityStatus) {
-	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
-		printToFirehose("INIT", FirehoseProtocolVersion, "erigon", params.Version)
-	}
-
 	marshalled, err := proto.Marshal(block)
 	if err != nil {
 		panic(fmt.Errorf("failed to marshal block: %w", err))
