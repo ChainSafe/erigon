@@ -110,6 +110,9 @@ type (
 		- Chain events -
 	*/
 
+	// BlockchainInitHook is called when the blockchain is initialized.
+	BlockchainInitHook = func(chainConfig *chain.Config)
+
 	// BlockStartHook is called before executing `block`.
 	// `td` is the total difficulty prior to `block`.
 	BlockStartHook = func(event BlockEvent)
@@ -150,9 +153,10 @@ type Hooks struct {
 	OnFault     FaultHook
 	OnGasChange GasChangeHook
 	// Chain events
-	OnBlockStart   BlockStartHook
-	OnBlockEnd     BlockEndHook
-	OnGenesisBlock GenesisBlockHook
+	OnBlockchainInit BlockchainInitHook
+	OnBlockStart     BlockStartHook
+	OnBlockEnd       BlockEndHook
+	OnGenesisBlock   GenesisBlockHook
 	// State events
 	OnBalanceChange BalanceChangeHook
 	OnNonceChange   NonceChangeHook
