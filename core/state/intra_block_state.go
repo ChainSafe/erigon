@@ -551,7 +551,7 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 	}
 
 	if sdb.logger != nil {
-		sdb.logger.OnNewAccount(addr)
+		sdb.logger.OnNewAccount(addr, previous != nil)
 	}
 
 	newobj.newlyCreated = true

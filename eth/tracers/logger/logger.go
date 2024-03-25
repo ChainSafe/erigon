@@ -453,54 +453,6 @@ func (t *mdLogger) OnFault(pc uint64, op byte, gas, cost uint64, scope tracing.O
 	fmt.Fprintf(t.out, "\nError: at pc=%d, op=%v: %v\n", pc, op, err)
 }
 
-<<<<<<< HEAD
-func (t *mdLogger) captureEndOrExit(output []byte, usedGas uint64, err error) {
-	fmt.Fprintf(t.out, "\nOutput: `0x%x`\nConsumed gas: `%d`\nError: `%v`\n",
-		output, usedGas, err)
-}
-
-func (t *mdLogger) CaptureEnd(output []byte, usedGas uint64, err error, reverted bool) {
-	t.captureEndOrExit(output, usedGas, err)
-}
-
-func (t *mdLogger) OnBlockStart(b *types.Block, td *big.Int, finalized, safe *types.Header, chainConfig *chain.Config) {
-}
-
-func (t *mdLogger) OnBlockEnd(err error) {
-}
-
-func (t *mdLogger) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
-}
-
-func (t *mdLogger) OnBeaconBlockRootStart(root libcommon.Hash) {}
-
-func (t *mdLogger) OnBeaconBlockRootEnd() {}
-
-func (t *mdLogger) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {}
-
-func (t *mdLogger) OnGasChange(old, new uint64, reason vm.GasChangeReason) {}
-
-func (t *mdLogger) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, reason evmtypes.BalanceChangeReason) {
-}
-
-func (t *mdLogger) OnNonceChange(a libcommon.Address, prev, new uint64) {}
-
-func (t *mdLogger) OnCodeChange(a libcommon.Address, prevCodeHash libcommon.Hash, prev []byte, codeHash libcommon.Hash, code []byte) {
-}
-
-func (t *mdLogger) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev, new uint256.Int) {
-}
-
-func (t *mdLogger) OnLog(log *types.Log) {}
-
-func (t *mdLogger) OnNewAccount(a libcommon.Address) {}
-
-func (t *mdLogger) CaptureExit(output []byte, usedGas uint64, err error, reverted bool) {
-	t.captureEndOrExit(output, usedGas, err)
-}
-
-=======
->>>>>>> feature/erigon-live-tracer-hook-port
 // GetResult returns an empty json object.
 func (t *mdLogger) GetResult() (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil

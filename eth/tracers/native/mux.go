@@ -140,9 +140,9 @@ func (t *muxTracer) OnBlockEnd(err error) {
 	}
 }
 
-func (t *muxTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
+func (t *muxTracer) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
 	for _, t := range t.tracers {
-		t.OnGenesisBlock(b, alloc, chainConfig)
+		t.OnGenesisBlock(b, alloc)
 	}
 }
 
@@ -178,9 +178,9 @@ func (t *muxTracer) OnStorageChange(addr libcommon.Address, slot *libcommon.Hash
 	}
 }
 
-func (t *muxTracer) OnNewAccount(a libcommon.Address) {
+func (t *muxTracer) OnNewAccount(a libcommon.Address, previousExisted bool) {
 	for _, t := range t.tracers {
-		t.OnNewAccount(a)
+		t.OnNewAccount(a, previousExisted)
 	}
 }
 

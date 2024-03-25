@@ -2,6 +2,7 @@ package live
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,34 +18,31 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
+
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/math"
-	"github.com/ledgerwatch/erigon/core"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
-	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/params"
 	pbeth "github.com/ledgerwatch/erigon/pb/sf/ethereum/type/v2"
 	"github.com/ledgerwatch/erigon/rlp"
+
+	"github.com/holiman/uint256"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-var _ core.BlockchainLogger = (*Firehose)(nil)
-
-var firehoseTracerLogLevel = strings.ToLower(os.Getenv("ERIGON_FIREHOSE_TRACER_LOG_LEVEL"))
+var firehoseTracerLogLevel = strings.ToLower(os.Getenv("FIREHOSE_ETHEREUM_TRACER_LOG_LEVEL"))
 var isFirehoseDebugEnabled = firehoseTracerLogLevel == "debug" || firehoseTracerLogLevel == "trace"
 var isFirehoseTracerEnabled = firehoseTracerLogLevel == "trace"
-
-var _ core.BlockchainLogger = (*Firehose)(nil)
 
 var emptyCommonAddress = libcommon.Address{}
 var emptyCommonHash = libcommon.Hash{}
@@ -55,15 +53,56 @@ func init() {
 	register("firehose", newFirehoseTracer)
 }
 
-func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (tracers.Tracer, error) {
+func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
 	firehoseDebug("New firehose tracer")
-	return NewFirehoseLogger(), nil
+
+	var config FirehoseConfig
+	if len([]byte(cfg)) > 0 {
+		if err := json.Unmarshal(cfg, &config); err != nil {
+			return nil, fmt.Errorf("failed to parse Firehose config: %w", err)
+		}
+	}
+
+	tracer := NewFirehose()
+
+	return &tracers.Tracer{
+		Hooks: &tracing.Hooks{
+			OnBlockchainInit: tracer.OnBlockchainInit,
+			OnGenesisBlock:   tracer.OnGenesisBlock,
+			OnBlockStart:     tracer.OnBlockStart,
+			OnBlockEnd:       tracer.OnBlockEnd,
+			OnSkippedBlock:   tracer.OnSkippedBlock,
+
+			OnTxStart: tracer.OnTxStart,
+			OnTxEnd:   tracer.OnTxEnd,
+			OnEnter:   tracer.OnCallEnter,
+			OnExit:    tracer.OnCallExit,
+			OnOpcode:  tracer.OnOpcode,
+			OnFault:   tracer.OnOpcodeFault,
+
+			OnBalanceChange: tracer.OnBalanceChange,
+			OnNonceChange:   tracer.OnNonceChange,
+			OnCodeChange:    tracer.OnCodeChange,
+			OnStorageChange: tracer.OnStorageChange,
+			OnGasChange:     tracer.OnGasChange,
+			OnLog:           tracer.OnLog,
+
+			OnNewAccount: tracer.OnNewAccount,
+		},
+	}, nil
+}
+
+type FirehoseConfig struct {
+	// Nothing for now
 }
 
 type Firehose struct {
 	// Global state
 	outputBuffer *bytes.Buffer
 	initSent     *atomic.Bool
+	chainConfig  *chain.Config
+	hasher       crypto.KeccakState // Keccak256 hasher instance shared across tracer needs (non-concurrent safe)
+	hasherBuf    libcommon.Hash     // Keccak256 hasher result array shared across tracer needs (non-concurrent safe)
 
 	// Block state
 	block         *pbeth.Block
@@ -73,24 +112,27 @@ type Firehose struct {
 	blockRules    *chain.Rules
 
 	// Transaction state
-	evm                    *vm.EVM
+	evm                    *tracing.VMContext
 	transaction            *pbeth.TransactionTrace
 	transactionLogIndex    uint32
+	inSystemCall           bool
 	blockIsPrecompiledAddr func(addr libcommon.Address) bool
 
 	// Call state
 	callStack               *CallStack
 	deferredCallState       *DeferredCallState
-	latestCallStartSuicided bool
+	latestCallEnterSuicided bool
 }
 
 const FirehoseProtocolVersion = "3.0"
 
-func NewFirehoseLogger() *Firehose {
+func NewFirehose() *Firehose {
 	return &Firehose{
 		// Global state
 		outputBuffer: bytes.NewBuffer(make([]byte, 0, 100*1024*1024)),
 		initSent:     new(atomic.Bool),
+		chainConfig:  nil,
+		hasher:       crypto.NewKeccakState(),
 
 		// Block state
 		blockOrdinal:  &Ordinal{},
@@ -102,7 +144,7 @@ func NewFirehoseLogger() *Firehose {
 		// Call state
 		callStack:               NewCallStack(),
 		deferredCallState:       NewDeferredCallState(),
-		latestCallStartSuicided: false,
+		latestCallEnterSuicided: false,
 	}
 }
 
@@ -113,7 +155,7 @@ func (f *Firehose) resetBlock() {
 	f.blockOrdinal.Reset()
 	f.blockFinality.Reset()
 	f.blockIsPrecompiledAddr = nil
-	f.blockRules = nil
+	f.blockRules = &chain.Rules{}
 }
 
 // resetTransaction resets the transaction state and the call state in one shot
@@ -121,23 +163,36 @@ func (f *Firehose) resetTransaction() {
 	f.transaction = nil
 	f.evm = nil
 	f.transactionLogIndex = 0
+	f.inSystemCall = false
 
 	f.callStack.Reset()
-	f.latestCallStartSuicided = false
+	f.latestCallEnterSuicided = false
 	f.deferredCallState.Reset()
 }
 
-func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.Header, safe *types.Header, chainConfig *chain.Config) {
+func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
+	f.chainConfig = chainConfig
+
+	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
+		printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
+	} else {
+		f.panicInvalidState("The OnBlockchainInit callback was called more than once")
+	}
+}
+
+func (f *Firehose) OnBlockStart(event tracing.BlockEvent) {
+	b := event.Block
 	firehoseDebug("block start number=%d hash=%s", b.NumberU64(), b.Hash())
 
-	f.ensureNotInBlock()
-	f.blockRules = chainConfig.Rules(b.Number().Uint64(), b.Time())
+	f.ensureBlockChainInit()
+
+	f.blockRules = f.chainConfig.Rules(b.Number().Uint64(), b.Time())
 	f.blockIsPrecompiledAddr = getActivePrecompilesChecker(f.blockRules)
 
 	f.block = &pbeth.Block{
 		Hash:   b.Hash().Bytes(),
 		Number: b.Number().Uint64(),
-		Header: newBlockHeaderFromChainHeader(b.Header(), firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))),
+		Header: newBlockHeaderFromChainHeader(b.Header(), firehoseBigIntFromNative(new(big.Int).Add(event.TD, b.Difficulty()))),
 		Size:   uint64(b.Size()),
 		// Known Firehose issue: If you fix all known Firehose issue for a new chain, don't forget to bump `Ver` to `4`!
 		Ver: 3,
@@ -152,7 +207,26 @@ func (f *Firehose) OnBlockStart(b *types.Block, td *big.Int, finalized *types.He
 		f.blockBaseFee = f.block.Header.BaseFeePerGas.Native()
 	}
 
-	f.blockFinality.populateFromChain(finalized)
+	f.blockFinality.populateFromChain(event.Finalized)
+}
+
+func (f *Firehose) OnSkippedBlock(event tracing.BlockEvent) {
+	// Blocks that are skipped from blockchain that were knwon and should contain 0 transactions.
+	// It happened in the past, on Polygon if I recall right, that we missed block because some block
+	// went in this code path.
+	//
+	// See https: //github.com/streamingfast/go-ethereum/blob/a46903cf0cad829479ded66b369017914bf82314/core/blockchain.go#L1797-L1814
+	if event.Block.Transactions().Len() > 0 {
+		panic(fmt.Sprintf("The tracer received an `OnSkippedBlock` block #%d (%s) with transactions (%d), this according to core/blockchain.go should never happen and is an error",
+			event.Block.NumberU64(),
+			event.Block.Hash().Hex(),
+			event.Block.Transactions().Len(),
+		))
+	}
+
+	// Trace the block as normal, worst case the Firehose system will simply discard it at some point
+	f.OnBlockStart(event)
+	f.OnBlockEnd(nil)
 }
 
 func getActivePrecompilesChecker(rules *chain.Rules) func(addr libcommon.Address) bool {
@@ -186,34 +260,43 @@ func (f *Firehose) OnBlockEnd(err error) {
 	firehoseDebug("block end")
 }
 
-func (f *Firehose) CaptureTxStart(evm *vm.EVM, tx types.Transaction) {
+func (f *Firehose) OnBeaconBlockRootStart(root libcommon.Hash) {
+	firehoseDebug("system call start for=%s", "beacon_block_root")
+	f.ensureInBlockAndNotInTrx()
+
+	f.inSystemCall = true
+	f.transaction = &pbeth.TransactionTrace{}
+}
+
+func (f *Firehose) OnBeaconBlockRootEnd() {
+	f.ensureInBlockAndInTrx()
+	f.ensureInSystemCall()
+
+	f.block.SystemCalls = append(f.block.SystemCalls, f.transaction.Calls...)
+
+	f.resetTransaction()
+}
+
+func (f *Firehose) OnTxStart(evm *tracing.VMContext, tx types.Transaction, from libcommon.Address) {
 	firehoseDebug("trx start hash=%s type=%d gas=%d input=%s", tx.Hash(), tx.Type(), tx.GetGas(), inputView(tx.GetData()))
 
 	f.ensureInBlockAndNotInTrxAndNotInCall()
 
 	f.evm = evm
-	signer := types.MakeSigner(evm.ChainConfig(), evm.Context.BlockNumber, evm.Context.Time)
-
-	from, err := tx.Sender(*signer)
-	if err != nil {
-		panic(fmt.Errorf("could not recover sender address: %w", err))
-	}
-
 	var to libcommon.Address
 	if tx.GetTo() == nil {
-		to = crypto.CreateAddress(from, evm.IntraBlockState().GetNonce(from))
+		to = crypto.CreateAddress(from, evm.IntraBlockState.GetNonce(from))
 	} else {
 		to = *tx.GetTo()
 	}
 
-	precompiledAddr := vm.ActivePrecompiles(evm.ChainConfig().Rules(evm.Context.BlockNumber, evm.Context.Time))
-	f.captureTxStart(tx, tx.Hash(), from, to, precompiledAddr)
+	f.onTxStart(tx, tx.Hash(), from, to)
 }
 
-// captureTxStart is used internally a two places, in the normal "tracer" and in the "OnGenesisBlock",
+// onTxStart is used internally a two places, in the normal "tracer" and in the "OnGenesisBlock",
 // we manually pass some override to the `tx` because genesis block has a different way of creating
 // the transaction that wraps the genesis block.
-func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, from, to libcommon.Address, precompiledAddr []libcommon.Address) {
+func (f *Firehose) onTxStart(tx types.Transaction, hash libcommon.Hash, from, to libcommon.Address) {
 	v, r, s := tx.RawSignatureValues()
 
 	f.transaction = &pbeth.TransactionTrace{
@@ -236,7 +319,7 @@ func (f *Firehose) captureTxStart(tx types.Transaction, hash libcommon.Hash, fro
 	}
 }
 
-func (f *Firehose) CaptureTxEnd(receipt *types.Receipt, err error) {
+func (f *Firehose) OnTxEnd(receipt *types.Receipt, err error) {
 	firehoseDebug("trx ending")
 	f.ensureInBlockAndInTrx()
 
@@ -254,13 +337,7 @@ func (f *Firehose) completeTransaction(receipt *types.Receipt) *pbeth.Transactio
 
 	// Sorting needs to happen first, before we populate the state reverted
 	slices.SortFunc(f.transaction.Calls, func(i, j *pbeth.Call) int {
-		if i.Index < j.Index {
-			return -1
-		} else if i.Index > j.Index {
-			return 1
-		} else {
-			return 0
-		}
+		return cmp.Compare(i.Index, j.Index)
 	})
 
 	rootCall := f.transaction.Calls[0]
@@ -273,7 +350,7 @@ func (f *Firehose) completeTransaction(receipt *types.Receipt) *pbeth.Transactio
 	if receipt != nil {
 		f.transaction.Index = uint32(receipt.TransactionIndex)
 		f.transaction.GasUsed = receipt.GasUsed
-		f.transaction.Receipt = newTxReceiptFromChain(receipt)
+		f.transaction.Receipt = newTxReceiptFromChain(receipt, f.transaction.Type)
 		f.transaction.Status = transactionStatusFromChainTxReceipt(receipt.Status)
 	}
 
@@ -329,12 +406,18 @@ func (f *Firehose) removeLogBlockIndexOnStateRevertedCalls() {
 }
 
 func (f *Firehose) assignOrdinalAndIndexToReceiptLogs() {
+	firehoseTrace("assigning ordinal and index to logs")
+	defer func() {
+		firehoseTrace("assigning ordinal and index to logs terminated")
+	}()
+
 	trx := f.transaction
 
 	receiptsLogs := trx.Receipt.Logs
 
 	callLogs := []*pbeth.Log{}
 	for _, call := range trx.Calls {
+		firehoseTrace("checking call reverted=%t logs=%d", call.StateReverted, len(call.Logs))
 		if call.StateReverted {
 			continue
 		}
@@ -343,18 +426,14 @@ func (f *Firehose) assignOrdinalAndIndexToReceiptLogs() {
 	}
 
 	slices.SortFunc(callLogs, func(i, j *pbeth.Log) int {
-		if i.Ordinal < j.Ordinal {
-			return -1
-		} else if i.Ordinal > j.Ordinal {
-			return 1
-		} else {
-			return 0
-		}
+		return cmp.Compare(i.Ordinal, j.Ordinal)
 	})
 
 	if len(callLogs) != len(receiptsLogs) {
 		panic(fmt.Errorf(
-			"mismatch between Firehose call logs and Ethereum transaction receipt logs, transaction receipt has %d logs but there is %d Firehose call logs",
+			"mismatch between Firehose call logs and Ethereum transaction %s receipt logs at block #%d, transaction receipt has %d logs but there is %d Firehose call logs",
+			hex.EncodeToString(trx.Hash),
+			f.block.Number,
 			len(receiptsLogs),
 			len(callLogs),
 		))
@@ -380,29 +459,104 @@ func (f *Firehose) assignOrdinalAndIndexToReceiptLogs() {
 	}
 }
 
-// CaptureStart implements the EVMLogger interface to initialize the tracing operation.
-func (f *Firehose) CaptureStart(from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	f.callStart("root", rootCallType(create), from, to, precompile, input, gas, value, code)
+// OnCallEnter implements the EVMLogger interface to initialize the tracing operation.
+func (f *Firehose) OnCallEnter(depth int, typ byte, from libcommon.Address, to libcommon.Address, precompile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+	opCode := vm.OpCode(typ)
+
+	var callType pbeth.CallType
+	if isRootCall := depth == 0; isRootCall {
+		callType = rootCallType(opCode == vm.CREATE)
+	} else {
+		// The invokation for vm.SELFDESTRUCT is called while already in another call and is recorded specially
+		// in the Geth tracer and generates `OnEnter/OnExit` callbacks. However in Firehose, self destruction
+		// simply sets the call as having called suicided so there is no extra call.
+		//
+		// So we ignore `OnEnter/OnExit` callbacks for `SELFDESTRUCT` opcode, we ignore it here and set
+		// a special sentinel variable that will tell `OnExit` to ignore itself.
+		if opCode == vm.SELFDESTRUCT {
+			f.ensureInCall()
+			f.callStack.Peek().Suicide = true
+
+			// The next OnCallExit must be ignored, this variable will make the next OnCallExit to be ignored
+			f.latestCallEnterSuicided = true
+			return
+		}
+
+		callType = callTypeFromOpCode(opCode)
+		if callType == pbeth.CallType_UNSPECIFIED {
+			panic(fmt.Errorf("unexpected call type, received OpCode %s but only call related opcode (CALL, CREATE, CREATE2, STATIC, DELEGATECALL and CALLCODE) or SELFDESTRUCT is accepted", opCode))
+		}
+	}
+
+	f.callStart(computeCallSource(depth), callType, from, to, precompile, input, gas, value, code)
 }
 
-// CaptureEnd is called after the call finishes to finalize the tracing.
-func (f *Firehose) CaptureEnd(output []byte, gasUsed uint64, err error, reverted bool) {
-	f.callEnd("root", output, gasUsed, err)
+// OnCallExit is called after the call finishes to finalize the tracing.
+func (f *Firehose) OnCallExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
+	f.callEnd(computeCallSource(depth), output, gasUsed, err, reverted)
 }
 
-// CaptureState implements the EVMLogger interface to trace a single step of VM execution.
-func (f *Firehose) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
-	firehoseTrace("capture state op=%s gas=%d cost=%d, err=%s", op, gas, cost, errorView(err))
+// OnOpcode implements the EVMLogger interface to trace a single step of VM execution.
+func (f *Firehose) OnOpcode(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
+	firehoseTrace("on opcode op=%s gas=%d cost=%d, err=%s", op, gas, cost, errorView(err))
 
 	if activeCall := f.callStack.Peek(); activeCall != nil {
-		f.captureInterpreterStep(activeCall, pc, op, gas, cost, scope, rData, depth, err)
+		opCode := vm.OpCode(op)
+		f.captureInterpreterStep(activeCall, pc, opCode, gas, cost, scope, rData, depth, err)
 
-		if err == nil && cost > 0 {
-			if reason, found := opCodeToGasChangeReasonMap[op]; found {
+		// The rest of the logic expects that a call succeeded, nothing to do more here if the interpreter failed on this OpCode
+		if err != nil {
+			return
+		}
+
+		// The gas change must come first to retain Firehose backward compatibility. Indeed, before Firehose 3.0,
+		// we had a specific method `OnKeccakPreimage` that was called during the KECCAK256 opcode. However, in
+		// the new model, we do it through `OnOpcode`.
+		//
+		// The gas change recording in the previous Firehose patch was done before calling `OnKeccakPreimage` so
+		// we must do the same here.
+		if cost > 0 {
+			if reason, found := opCodeToGasChangeReasonMap[opCode]; found {
 				activeCall.GasChanges = append(activeCall.GasChanges, f.newGasChange("state", gas, gas-cost, reason))
 			}
 		}
+
+		if opCode == vm.KECCAK256 {
+			f.onOpcodeKeccak256(activeCall, scope.StackData(), Memory(scope.MemoryData()))
+		}
 	}
+}
+
+// onOpcodeKeccak256 is called during the SHA3 (a.k.a KECCAK256) opcode it's known
+// in Firehose tracer as Keccak preimages. The preimage is the input data that
+// was used to produce the given keccak hash.
+func (f *Firehose) onOpcodeKeccak256(call *pbeth.Call, stack []uint256.Int, memory Memory) {
+	if call.KeccakPreimages == nil {
+		call.KeccakPreimages = make(map[string]string)
+	}
+
+	offset, size := stack[len(stack)-1], stack[len(stack)-2]
+	preImage := memory.GetPtrUint256(&offset, &size)
+
+	// We should have exclusive access to the hasher, we can safely reset it.
+	f.hasher.Reset()
+	f.hasher.Write(preImage)
+	f.hasher.Read(f.hasherBuf[:])
+
+	// Known Firehose issue: It appears the old Firehose instrumentation have a bug
+	// where when the keccak256 preimage is empty, it is written as "." which is
+	// completely wrong.
+	//
+	// To keep the same behavior, we will write the preimage as a "." when the encoded
+	// data is an empty string.
+	//
+	// For new chain, this code should be remove so that we just keep `hex.EncodeToString(data)`.
+	encodedData := hex.EncodeToString(preImage)
+	if encodedData == "" {
+		encodedData = "."
+	}
+
+	call.KeccakPreimages[hex.EncodeToString(f.hasherBuf[:])] = encodedData
 }
 
 var opCodeToGasChangeReasonMap = map[vm.OpCode]pbeth.GasChange_Reason{
@@ -426,48 +580,25 @@ var opCodeToGasChangeReasonMap = map[vm.OpCode]pbeth.GasChange_Reason{
 	vm.RETURNDATACOPY: pbeth.GasChange_REASON_RETURN_DATA_COPY,
 }
 
-// CaptureFault implements the EVMLogger interface to trace an execution fault.
-func (f *Firehose) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, depth int, err error) {
+// OnOpcodeFault implements the EVMLogger interface to trace an execution fault.
+func (f *Firehose) OnOpcodeFault(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, depth int, err error) {
 	if activeCall := f.callStack.Peek(); activeCall != nil {
-		f.captureInterpreterStep(activeCall, pc, op, gas, cost, scope, nil, depth, err)
+		f.captureInterpreterStep(activeCall, pc, vm.OpCode(op), gas, cost, scope, nil, depth, err)
 	}
 }
 
-func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op vm.OpCode, gas, cost uint64, _ *vm.ScopeContext, rData []byte, depth int, err error) {
-	// if !activeCall.ExecutedCode {
-	// 	firehoseTrace("setting active call executed code to true")
-	// 	activeCall.ExecutedCode = true
-	// }
-}
+func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call, pc uint64, op vm.OpCode, gas, cost uint64, _ tracing.OpContext, rData []byte, depth int, err error) {
+	_, _, _, _, _, _, _ = pc, op, gas, cost, rData, depth, err
 
-func (f *Firehose) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	f.ensureInBlockAndInTrx()
-
-	// The invokation for vm.SELFDESTRUCT is called while already in another call, so we must not check that we are not in a call here
-	if typ == vm.SELFDESTRUCT {
-		f.ensureInCall()
-		f.callStack.Peek().Suicide = true
-
-		// The next CaptureExit must be ignored, this variable will make the next CaptureExit to be ignored
-		f.latestCallStartSuicided = true
-		return
+	// for call, we need to process the executed code here
+	// since in old firehose executed code calculation depends if the code exist
+	if activeCall.CallType == pbeth.CallType_CALL && !activeCall.ExecutedCode {
+		firehoseTrace("Intepreter step for callType_CALL")
+		activeCall.ExecutedCode = len(activeCall.Input) > 0
 	}
-
-	callType := callTypeFromOpCode(typ)
-	if callType == pbeth.CallType_UNSPECIFIED {
-		panic(fmt.Errorf("unexpected call type, received OpCode %s but only call related opcode (CALL, CREATE, CREATE2, STATIC, DELEGATECALL and CALLCODE) or SELFDESTRUCT is accepted", typ))
-	}
-
-	f.callStart("child", callType, from, to, precompile, input, gas, value, code)
 }
 
-// CaptureExit is called when EVM exits a scope, even if the scope didn't
-// execute any code.
-func (f *Firehose) CaptureExit(output []byte, gasUsed uint64, err error, reverted bool) {
-	f.callEnd("child", output, gasUsed, err)
-}
-
-func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, precompile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, precomile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	firehoseDebug("call start source=%s index=%d type=%s input=%s", source, f.callStack.NextIndex(), callType, inputView(input))
 	f.ensureInBlockAndInTrx()
 
@@ -480,8 +611,6 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		input = nil
 	}
 
-	v := firehoseBigIntFromNative(value.ToBig())
-
 	call := &pbeth.Call{
 		// Known Firehose issue: Ref 042a2ff03fd623f151d7726314b8aad6 (see below)
 		//
@@ -493,7 +622,7 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 		Address:  to.Bytes(),
 		// We need to clone `input` received by the tracer as it's re-used within Geth!
 		Input:    bytes.Clone(input),
-		Value:    v,
+		Value:    firehoseBigIntFromNative(value.ToBig()),
 		GasLimit: gas,
 	}
 
@@ -525,11 +654,11 @@ func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcom
 	f.callStack.Push(call)
 }
 
-func (f *Firehose) getExecutedCode(evm *vm.EVM, call *pbeth.Call, code []byte) bool {
+func (f *Firehose) getExecutedCode(evm *tracing.VMContext, call *pbeth.Call, code []byte) bool {
 	precompile := f.blockIsPrecompiledAddr(libcommon.BytesToAddress(call.Address))
 
 	if evm != nil && call.CallType == pbeth.CallType_CALL {
-		if !evm.IntraBlockState().Exist(libcommon.BytesToAddress(call.Address)) &&
+		if !evm.IntraBlockState.Exist(libcommon.BytesToAddress(call.Address)) &&
 			!precompile && f.blockRules.IsSpuriousDragon &&
 			(call.Value == nil || call.Value.Native().Sign() == 0) {
 			firehoseDebug("executed code IsSpuriousDragon callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
@@ -551,17 +680,17 @@ func (f *Firehose) getExecutedCode(evm *vm.EVM, call *pbeth.Call, code []byte) b
 	return call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 }
 
-func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err error) {
-	firehoseDebug("call end source=%s index=%d output=%s gasUsed=%d err=%s", source, f.callStack.ActiveIndex(), outputView(output), gasUsed, errorView(err))
+func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err error, reverted bool) {
+	firehoseDebug("call end source=%s index=%d output=%s gasUsed=%d err=%s reverted=%t", source, f.callStack.ActiveIndex(), outputView(output), gasUsed, errorView(err), reverted)
 
-	if f.latestCallStartSuicided {
+	if f.latestCallEnterSuicided {
 		if source != "child" {
 			panic(fmt.Errorf("unexpected source for suicided call end, expected child but got %s, suicide are always produced on a 'child' source", source))
 		}
 
-		// Geth native tracer does a `CaptureEnter(SELFDESTRUCT, ...)/CaptureExit(...)`, we must skip the `CaptureExit` call
+		// Geth native tracer does a `OnEnter(SELFDESTRUCT, ...)/OnExit(...)`, we must skip the `OnExit` call
 		// in that case because we did not push it on our CallStack.
-		f.latestCallStartSuicided = false
+		f.latestCallEnterSuicided = false
 		return
 	}
 
@@ -584,7 +713,7 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	//         call.ExecutedCode = true
 	//     }
 	//
-	// At this point, `call.ExecutedCode`` is tied to `EVMInterpreter#Run` execution (in `core/vm/interpreter.go`)
+	// At this point, `call.ExecutedCode` is tied to `EVMInterpreter#Run` execution (in `core/vm/interpreter.go`)
 	// and is `true` if the run/loop of the interpreter executed.
 	//
 	// This means that if `false` the interpreter did not run at all and we would had emitted a
@@ -592,7 +721,7 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	// to false
 	//
 	// For precompiled address however, interpreter does not run so determine  there was a bug in Firehose instrumentation where we would
-	// if call.ExecutedCode || f.isPrecompileAddress(libcommon.BytesToAddress(call.Address)) {
+	// if call.ExecutedCode || (f.isPrecompiledAddr != nil && f.isPrecompiledAddr(common.BytesToAddress(call.Address))) {
 	// 	// In this case, we are sure that some code executed. This translates in the old Firehose instrumentation
 	// 	// that it would have **never** emitted an `account_without_code`.
 	// 	//
@@ -606,14 +735,20 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	// 	call.ExecutedCode = false
 	// }
 
-	if err != nil {
-		call.FailureReason = err.Error()
+	if reverted {
+		failureReason := ""
+		if err != nil {
+			failureReason = err.Error()
+		}
+
+		call.FailureReason = failureReason
 		call.StatusFailed = true
 
 		// We also treat ErrInsufficientBalance and ErrDepth as reverted in Firehose model
 		// because they do not cost any gas.
 		call.StatusReverted = errors.Is(err, vm.ErrExecutionReverted) || errors.Is(err, vm.ErrInsufficientBalance) || errors.Is(err, vm.ErrDepth)
 
+		// Known Firehose issue: FIXME Document!
 		if !call.ExecutedCode && (errors.Is(err, vm.ErrInsufficientBalance) || errors.Is(err, vm.ErrDepth)) {
 			call.ExecutedCode = call.CallType != pbeth.CallType_CREATE && len(call.Input) > 0
 		}
@@ -634,31 +769,25 @@ func (f *Firehose) callEnd(source string, output []byte, gasUsed uint64, err err
 	f.transaction.Calls = append(f.transaction.Calls, call)
 }
 
-// CaptureKeccakPreimage is called during the KECCAK256 opcode.
-func (f *Firehose) CaptureKeccakPreimage(hash libcommon.Hash, data []byte) {
-	f.ensureInBlockAndInTrxAndInCall()
-
-	activeCall := f.callStack.Peek()
-	if activeCall.KeccakPreimages == nil {
-		activeCall.KeccakPreimages = make(map[string]string)
+func computeCallSource(depth int) string {
+	if depth == 0 {
+		return "root"
 	}
 
-	if len(data) == 0 {
-		activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = "."
-	} else {
-		activeCall.KeccakPreimages[hex.EncodeToString(hash.Bytes())] = hex.EncodeToString(data)
-	}
+	return "child"
 }
 
-func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chainConfig *chain.Config) {
-	f.OnBlockStart(b, big.NewInt(0), nil, nil, chainConfig)
-	f.captureTxStart(&types.LegacyTx{}, emptyCommonHash, emptyCommonAddress, emptyCommonAddress, nil)
-	f.CaptureStart(emptyCommonAddress, emptyCommonAddress, false, false, nil, 0, nil, nil)
+func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+	f.ensureBlockChainInit()
+
+	f.OnBlockStart(tracing.BlockEvent{Block: b, TD: big.NewInt(0), Finalized: nil, Safe: nil})
+	f.onTxStart(&types.LegacyTx{}, emptyCommonHash, emptyCommonAddress, emptyCommonAddress)
+	f.OnCallEnter(0, byte(vm.CALL), emptyCommonAddress, emptyCommonAddress, false, nil, 0, nil, nil)
 
 	for _, addr := range sortedKeys(alloc) {
 		account := alloc[addr]
 
-		f.OnNewAccount(addr)
+		f.OnNewAccount(addr, false)
 
 		if account.Balance != nil && account.Balance.Sign() != 0 {
 			activeCall := f.callStack.Peek()
@@ -678,17 +807,13 @@ func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc, chai
 		}
 	}
 
-	f.CaptureEnd(nil, 0, nil, false)
-	f.CaptureTxEnd(&types.Receipt{
+	f.OnCallExit(0, nil, 0, nil, false)
+	f.OnTxEnd(&types.Receipt{
 		PostState: b.Root().Bytes(),
 		Status:    types.ReceiptStatusSuccessful,
 	}, nil)
 	f.OnBlockEnd(nil)
 }
-
-func (f *Firehose) OnBeaconBlockRootStart(root libcommon.Hash) {}
-
-func (f *Firehose) OnBeaconBlockRootEnd() {}
 
 type bytesGetter interface {
 	comparable
@@ -704,8 +829,8 @@ func sortedKeys[K bytesGetter, V any](m map[K]V) []K {
 	return keys
 }
 
-func (f *Firehose) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, reason evmtypes.BalanceChangeReason) {
-	if reason == evmtypes.BalanceChangeUnspecified {
+func (f *Firehose) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, reason tracing.BalanceChangeReason) {
+	if reason == tracing.BalanceChangeUnspecified {
 		// We ignore those, if they are mislabelled, too bad so particular attention needs to be ported to this
 		return
 	}
@@ -715,7 +840,7 @@ func (f *Firehose) OnBalanceChange(a libcommon.Address, prev, new *uint256.Int, 
 	// we were not tracking in the old Firehose instrumentation.
 	//
 	// New chain integration should remove this `if` statement all along.
-	if reason == evmtypes.BalanceDecreaseSelfdestructBurn {
+	if reason == tracing.BalanceDecreaseSelfdestructBurn {
 		return
 	}
 
@@ -789,7 +914,7 @@ func (f *Firehose) OnCodeChange(a libcommon.Address, prevCodeHash libcommon.Hash
 	if f.transaction != nil {
 		activeCall := f.callStack.Peek()
 		if activeCall == nil {
-			f.panicNotInState("caller expected to be in call state but we were not, this is a bug")
+			f.panicInvalidState("caller expected to be in call state but we were not, this is a bug")
 		}
 
 		activeCall.CodeChanges = append(activeCall.CodeChanges, change)
@@ -805,8 +930,8 @@ func (f *Firehose) OnStorageChange(a libcommon.Address, k *libcommon.Hash, prev,
 	activeCall.StorageChanges = append(activeCall.StorageChanges, &pbeth.StorageChange{
 		Address:  a.Bytes(),
 		Key:      k.Bytes(),
-		OldValue: libcommon.BigToHash(prev.ToBig()).Bytes(),
-		NewValue: libcommon.BigToHash(new.ToBig()).Bytes(),
+		OldValue: prev.Bytes(),
+		NewValue: new.Bytes(),
 		Ordinal:  f.blockOrdinal.Next(),
 	})
 }
@@ -820,6 +945,8 @@ func (f *Firehose) OnLog(l *types.Log) {
 	}
 
 	activeCall := f.callStack.Peek()
+	firehoseTrace("adding log to call address=%s call=%d (has already %d logs)", l.Address, activeCall.Index, len(activeCall.Logs))
+
 	activeCall.Logs = append(activeCall.Logs, &pbeth.Log{
 		Address:    l.Address.Bytes(),
 		Topics:     topics,
@@ -832,16 +959,25 @@ func (f *Firehose) OnLog(l *types.Log) {
 	f.transactionLogIndex++
 }
 
-func (f *Firehose) OnNewAccount(a libcommon.Address) {
+func (f *Firehose) OnNewAccount(a libcommon.Address, previousDataExists bool) {
 	f.ensureInBlockOrTrx()
 	if f.transaction == nil {
 		// We receive OnNewAccount on finalization of the block which means there is no
 		// transaction active. In that case, we do not track the account creation because
 		// the "old" Firehose didn't but mainly because we don't have `AccountCreation` at
 		// the block level so what can we do...
+
+		// This fix was applied on Erigon branch after chain's comparison. I need to check
+		// with what the old patch was doing to write a meaningful comment here and ensure
+		// they got the logic right
 		f.blockOrdinal.Next()
 		return
 	}
+
+	// Known Firehose issue: The current Firehose instrumentation emits multiple
+	// time the same `OnNewAccount` event for the same account when such account
+	// exists in the past. For now, do nothing and keep the legacy behavior.
+	_ = previousDataExists
 
 	if call := f.callStack.Peek(); call != nil && call.CallType == pbeth.CallType_STATIC && f.blockIsPrecompiledAddr(libcommon.Address(call.Address)) {
 		// Old Firehose ignore those, we do the same
@@ -862,15 +998,15 @@ func (f *Firehose) OnNewAccount(a libcommon.Address) {
 	activeCall.AccountCreations = append(activeCall.AccountCreations, accountCreation)
 }
 
-func (f *Firehose) OnGasChange(old, new uint64, reason vm.GasChangeReason) {
+func (f *Firehose) OnGasChange(old, new uint64, reason tracing.GasChangeReason) {
 	f.ensureInBlockAndInTrx()
 
 	if old == new {
 		return
 	}
 
-	if reason == vm.GasChangeCallOpCode {
-		// We ignore those because we track OpCode gas consumption manually by tracking the gas value at `CaptureState` call
+	if reason == tracing.GasChangeCallOpCode {
+		// We ignore those because we track OpCode gas consumption manually by tracking the gas value at `OnOpcode` call
 		return
 	}
 
@@ -880,11 +1016,11 @@ func (f *Firehose) OnGasChange(old, new uint64, reason vm.GasChangeReason) {
 	// For new chain, this code should be remove so that they are included and useful to user.
 	//
 	// Ref eb1916a67d9bea03df16a7a3e2cfac72
-	if reason == vm.GasChangeTxInitialBalance ||
-		reason == vm.GasChangeTxRefunds ||
-		reason == vm.GasChangeTxLeftOverReturned ||
-		reason == vm.GasChangeCallInitialBalance ||
-		reason == vm.GasChangeCallLeftOverReturned {
+	if reason == tracing.GasChangeTxInitialBalance ||
+		reason == tracing.GasChangeTxRefunds ||
+		reason == tracing.GasChangeTxLeftOverReturned ||
+		reason == tracing.GasChangeCallInitialBalance ||
+		reason == tracing.GasChangeCallLeftOverReturned {
 		return
 	}
 
@@ -916,23 +1052,37 @@ func (f *Firehose) newGasChange(tag string, oldValue, newValue uint64, reason pb
 	}
 }
 
+func (f *Firehose) ensureBlockChainInit() {
+	if f.chainConfig == nil {
+		f.panicInvalidState("the OnBlockchainInit hook should have been called at this point")
+	}
+}
+
 func (f *Firehose) ensureInBlock() {
 	if f.block == nil {
-		f.panicNotInState("caller expected to be in block state but we were not, this is a bug")
+		f.panicInvalidState("caller expected to be in block state but we were not, this is a bug")
+	}
+
+	if f.chainConfig == nil {
+		f.panicInvalidState("the OnBlockchainInit hook should have been called at this point")
 	}
 }
 
 func (f *Firehose) ensureNotInBlock() {
 	if f.block != nil {
-		f.panicNotInState("caller expected to not be in block state but we were, this is a bug")
+		f.panicInvalidState("caller expected to not be in block state but we were, this is a bug")
 	}
 }
+
+// Suppress lint warning about unusued method, we keep it in the patch because it's used in other
+// network which pulls this branch.
+var _ = new(Firehose).ensureNotInBlock
 
 func (f *Firehose) ensureInBlockAndInTrx() {
 	f.ensureInBlock()
 
 	if f.transaction == nil {
-		f.panicNotInState("caller expected to be in transaction state but we were not, this is a bug")
+		f.panicInvalidState("caller expected to be in transaction state but we were not, this is a bug")
 	}
 }
 
@@ -940,7 +1090,7 @@ func (f *Firehose) ensureInBlockAndNotInTrx() {
 	f.ensureInBlock()
 
 	if f.transaction != nil {
-		f.panicNotInState("caller expected to not be in transaction state but we were, this is a bug")
+		f.panicInvalidState("caller expected to not be in transaction state but we were, this is a bug")
 	}
 }
 
@@ -948,38 +1098,44 @@ func (f *Firehose) ensureInBlockAndNotInTrxAndNotInCall() {
 	f.ensureInBlock()
 
 	if f.transaction != nil {
-		f.panicNotInState("caller expected to not be in transaction state but we were, this is a bug")
+		f.panicInvalidState("caller expected to not be in transaction state but we were, this is a bug")
 	}
 
 	if f.callStack.HasActiveCall() {
-		f.panicNotInState("caller expected to not be in call state but we were, this is a bug")
+		f.panicInvalidState("caller expected to not be in call state but we were, this is a bug")
 	}
 }
 
 func (f *Firehose) ensureInBlockOrTrx() {
 	if f.transaction == nil && f.block == nil {
-		f.panicNotInState("caller expected to be in either block or  transaction state but we were not, this is a bug")
+		f.panicInvalidState("caller expected to be in either block or  transaction state but we were not, this is a bug")
 	}
 }
 
 func (f *Firehose) ensureInBlockAndInTrxAndInCall() {
 	if f.transaction == nil || f.block == nil {
-		f.panicNotInState("caller expected to be in block and in transaction but we were not, this is a bug")
+		f.panicInvalidState("caller expected to be in block and in transaction but we were not, this is a bug")
 	}
 
 	if !f.callStack.HasActiveCall() {
-		f.panicNotInState("caller expected to be in call state but we were not, this is a bug")
+		f.panicInvalidState("caller expected to be in call state but we were not, this is a bug")
 	}
 }
 
 func (f *Firehose) ensureInCall() {
 	if f.block == nil {
-		f.panicNotInState("caller expected to be in call state but we were not, this is a bug")
+		f.panicInvalidState("caller expected to be in call state but we were not, this is a bug")
 	}
 }
 
-func (f *Firehose) panicNotInState(msg string) string {
-	panic(fmt.Errorf("%s (inBlock=%t, inTransaction=%t, inCall=%t)", msg, f.block != nil, f.transaction != nil, f.callStack.HasActiveCall()))
+func (f *Firehose) ensureInSystemCall() {
+	if !f.inSystemCall {
+		f.panicInvalidState("call expected to be in system call state but we were not, this is a bug")
+	}
+}
+
+func (f *Firehose) panicInvalidState(msg string) string {
+	panic(fmt.Errorf("%s (init=%t, inBlock=%t, inTransaction=%t, inCall=%t)", msg, f.chainConfig != nil, f.block != nil, f.transaction != nil, f.callStack.HasActiveCall()))
 }
 
 // printToFirehose is an easy way to print to Firehose format, it essentially
@@ -988,10 +1144,6 @@ func (f *Firehose) panicNotInState(msg string) string {
 //
 // It flushes this through [flushToFirehose] to the `os.Stdout` writer.
 func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *FinalityStatus) {
-	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
-		printToFirehose("INIT", FirehoseProtocolVersion, "erigon", params.Version)
-	}
-
 	marshalled, err := proto.Marshal(block)
 	if err != nil {
 		panic(fmt.Errorf("failed to marshal block: %w", err))
@@ -1031,13 +1183,6 @@ func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *Fina
 	f.outputBuffer.WriteString("\n")
 
 	flushToFirehose(f.outputBuffer.Bytes(), os.Stdout)
-}
-
-func (f *Firehose) GetResult() (json.RawMessage, error) {
-	return json.RawMessage{}, nil
-}
-
-func (f *Firehose) Stop(err error) {
 }
 
 // printToFirehose is an easy way to print to Firehose format, it essentially
@@ -1084,6 +1229,11 @@ func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.Blo
 		withdrawalsHashBytes = hash.Bytes()
 	}
 
+	var parentBeaconRootBytes []byte
+	if root := h.ParentBeaconBlockRoot; root != nil {
+		parentBeaconRootBytes = root.Bytes()
+	}
+
 	pbHead := &pbeth.BlockHeader{
 		Hash:             h.Hash().Bytes(),
 		Number:           h.Number.Uint64(),
@@ -1104,6 +1254,12 @@ func newBlockHeaderFromChainHeader(h *types.Header, td *pbeth.BigInt) *pbeth.Blo
 		Nonce:            h.Nonce.Uint64(),
 		BaseFeePerGas:    firehoseBigIntFromNative(h.BaseFee),
 		WithdrawalsRoot:  withdrawalsHashBytes,
+		BlobGasUsed:      h.BlobGasUsed,
+		ExcessBlobGas:    h.ExcessBlobGas,
+		ParentBeaconRoot: parentBeaconRootBytes,
+
+		// Only set on Polygon fork(s)
+		TxDependency: nil,
 	}
 
 	if pbHead.Difficulty == nil {
@@ -1122,9 +1278,8 @@ func transactionTypeFromChainTxType(txType uint8) pbeth.TransactionTrace_Type {
 		return pbeth.TransactionTrace_TRX_TYPE_DYNAMIC_FEE
 	case types.LegacyTxType:
 		return pbeth.TransactionTrace_TRX_TYPE_LEGACY
-	// Add when enabled in a fork
-	// case types.BlobTxType:
-	// 	return pbeth.TransactionTrace_TRX_TYPE_BLOB
+	case types.BlobTxType:
+		return pbeth.TransactionTrace_TRX_TYPE_BLOB
 	default:
 		panic(fmt.Errorf("unknown transaction type %d", txType))
 	}
@@ -1166,7 +1321,7 @@ func callTypeFromOpCode(typ vm.OpCode) pbeth.CallType {
 	return pbeth.CallType_UNSPECIFIED
 }
 
-func newTxReceiptFromChain(receipt *types.Receipt) (out *pbeth.TransactionReceipt) {
+func newTxReceiptFromChain(receipt *types.Receipt, txType pbeth.TransactionTrace_Type) (out *pbeth.TransactionReceipt) {
 	out = &pbeth.TransactionReceipt{
 		StateRoot:         receipt.PostState,
 		CumulativeGasUsed: receipt.CumulativeGasUsed,
@@ -1224,26 +1379,39 @@ func newAccessListFromChain(accessList types2.AccessList) (out []*pbeth.AccessTu
 	return
 }
 
-var balanceChangeReasonToPb = map[evmtypes.BalanceChangeReason]pbeth.BalanceChange_Reason{
-	evmtypes.BalanceIncreaseRewardMineUncle:      pbeth.BalanceChange_REASON_REWARD_MINE_UNCLE,
-	evmtypes.BalanceIncreaseRewardMineBlock:      pbeth.BalanceChange_REASON_REWARD_MINE_BLOCK,
-	evmtypes.BalanceIncreaseDaoContract:          pbeth.BalanceChange_REASON_DAO_REFUND_CONTRACT,
-	evmtypes.BalanceDecreaseDaoAccount:           pbeth.BalanceChange_REASON_DAO_ADJUST_BALANCE,
-	evmtypes.BalanceChangeTransfer:               pbeth.BalanceChange_REASON_TRANSFER,
-	evmtypes.BalanceIncreaseGenesisBalance:       pbeth.BalanceChange_REASON_GENESIS_BALANCE,
-	evmtypes.BalanceDecreaseGasBuy:               pbeth.BalanceChange_REASON_GAS_BUY,
-	evmtypes.BalanceIncreaseRewardTransactionFee: pbeth.BalanceChange_REASON_REWARD_TRANSACTION_FEE,
-	evmtypes.BalanceIncreaseGasReturn:            pbeth.BalanceChange_REASON_GAS_REFUND,
-	evmtypes.BalanceChangeTouchAccount:           pbeth.BalanceChange_REASON_TOUCH_ACCOUNT,
-	evmtypes.BalanceIncreaseSelfdestruct:         pbeth.BalanceChange_REASON_SUICIDE_REFUND,
-	evmtypes.BalanceDecreaseSelfdestruct:         pbeth.BalanceChange_REASON_SUICIDE_WITHDRAW,
-	evmtypes.BalanceDecreaseSelfdestructBurn:     pbeth.BalanceChange_REASON_BURN,
-	evmtypes.BalanceIncreaseWithdrawal:           pbeth.BalanceChange_REASON_WITHDRAWAL,
+func newBlobHashesFromChain(blobHashes []libcommon.Hash) (out [][]byte) {
+	if len(blobHashes) == 0 {
+		return nil
+	}
 
-	evmtypes.BalanceChangeUnspecified: pbeth.BalanceChange_REASON_UNKNOWN,
+	out = make([][]byte, len(blobHashes))
+	for i, blobHash := range blobHashes {
+		out[i] = blobHash.Bytes()
+	}
+
+	return
 }
 
-func balanceChangeReasonFromChain(reason evmtypes.BalanceChangeReason) pbeth.BalanceChange_Reason {
+var balanceChangeReasonToPb = map[tracing.BalanceChangeReason]pbeth.BalanceChange_Reason{
+	tracing.BalanceIncreaseRewardMineUncle:      pbeth.BalanceChange_REASON_REWARD_MINE_UNCLE,
+	tracing.BalanceIncreaseRewardMineBlock:      pbeth.BalanceChange_REASON_REWARD_MINE_BLOCK,
+	tracing.BalanceIncreaseDaoContract:          pbeth.BalanceChange_REASON_DAO_REFUND_CONTRACT,
+	tracing.BalanceDecreaseDaoAccount:           pbeth.BalanceChange_REASON_DAO_ADJUST_BALANCE,
+	tracing.BalanceChangeTransfer:               pbeth.BalanceChange_REASON_TRANSFER,
+	tracing.BalanceIncreaseGenesisBalance:       pbeth.BalanceChange_REASON_GENESIS_BALANCE,
+	tracing.BalanceDecreaseGasBuy:               pbeth.BalanceChange_REASON_GAS_BUY,
+	tracing.BalanceIncreaseRewardTransactionFee: pbeth.BalanceChange_REASON_REWARD_TRANSACTION_FEE,
+	tracing.BalanceIncreaseGasReturn:            pbeth.BalanceChange_REASON_GAS_REFUND,
+	tracing.BalanceChangeTouchAccount:           pbeth.BalanceChange_REASON_TOUCH_ACCOUNT,
+	tracing.BalanceIncreaseSelfdestruct:         pbeth.BalanceChange_REASON_SUICIDE_REFUND,
+	tracing.BalanceDecreaseSelfdestruct:         pbeth.BalanceChange_REASON_SUICIDE_WITHDRAW,
+	tracing.BalanceDecreaseSelfdestructBurn:     pbeth.BalanceChange_REASON_BURN,
+	tracing.BalanceIncreaseWithdrawal:           pbeth.BalanceChange_REASON_WITHDRAWAL,
+
+	tracing.BalanceChangeUnspecified: pbeth.BalanceChange_REASON_UNKNOWN,
+}
+
+func balanceChangeReasonFromChain(reason tracing.BalanceChangeReason) pbeth.BalanceChange_Reason {
 	if r, ok := balanceChangeReasonToPb[reason]; ok {
 		return r
 	}
@@ -1251,38 +1419,38 @@ func balanceChangeReasonFromChain(reason evmtypes.BalanceChangeReason) pbeth.Bal
 	panic(fmt.Errorf("unknown tracer balance change reason value '%d', check state.BalanceChangeReason so see to which constant it refers to", reason))
 }
 
-var gasChangeReasonToPb = map[vm.GasChangeReason]pbeth.GasChange_Reason{
+var gasChangeReasonToPb = map[tracing.GasChangeReason]pbeth.GasChange_Reason{
 	// Known Firehose issue: Those are new gas change trace that we were missing initially in our old
 	// Firehose patch. See Known Firehose issue referenced eb1916a67d9bea03df16a7a3e2cfac72 for details
 	// search for the id within this project to find back all links).
 	//
 	// New chain should uncomment the code below and remove the same assigments to UNKNOWN
 	//
-	// vm.GasChangeTxInitialBalance:     pbeth.GasChange_REASON_TX_INITIAL_BALANCE,
-	// vm.GasChangeTxRefunds:            pbeth.GasChange_REASON_TX_REFUNDS,
-	// vm.GasChangeTxLeftOverReturned:   pbeth.GasChange_REASON_TX_LEFT_OVER_RETURNED,
-	// vm.GasChangeCallInitialBalance:   pbeth.GasChange_REASON_CALL_INITIAL_BALANCE,
-	// vm.GasChangeCallLeftOverReturned: pbeth.GasChange_REASON_CALL_LEFT_OVER_RETURNED,
-	vm.GasChangeTxInitialBalance:     pbeth.GasChange_REASON_UNKNOWN,
-	vm.GasChangeTxRefunds:            pbeth.GasChange_REASON_UNKNOWN,
-	vm.GasChangeTxLeftOverReturned:   pbeth.GasChange_REASON_UNKNOWN,
-	vm.GasChangeCallInitialBalance:   pbeth.GasChange_REASON_UNKNOWN,
-	vm.GasChangeCallLeftOverReturned: pbeth.GasChange_REASON_UNKNOWN,
+	// tracing.GasChangeTxInitialBalance:     pbeth.GasChange_REASON_TX_INITIAL_BALANCE,
+	// tracing.GasChangeTxRefunds:            pbeth.GasChange_REASON_TX_REFUNDS,
+	// tracing.GasChangeTxLeftOverReturned:   pbeth.GasChange_REASON_TX_LEFT_OVER_RETURNED,
+	// tracing.GasChangeCallInitialBalance:   pbeth.GasChange_REASON_CALL_INITIAL_BALANCE,
+	// tracing.GasChangeCallLeftOverReturned: pbeth.GasChange_REASON_CALL_LEFT_OVER_RETURNED,
+	tracing.GasChangeTxInitialBalance:     pbeth.GasChange_REASON_UNKNOWN,
+	tracing.GasChangeTxRefunds:            pbeth.GasChange_REASON_UNKNOWN,
+	tracing.GasChangeTxLeftOverReturned:   pbeth.GasChange_REASON_UNKNOWN,
+	tracing.GasChangeCallInitialBalance:   pbeth.GasChange_REASON_UNKNOWN,
+	tracing.GasChangeCallLeftOverReturned: pbeth.GasChange_REASON_UNKNOWN,
 
-	vm.GasChangeTxIntrinsicGas:          pbeth.GasChange_REASON_INTRINSIC_GAS,
-	vm.GasChangeCallContractCreation:    pbeth.GasChange_REASON_CONTRACT_CREATION,
-	vm.GasChangeCallContractCreation2:   pbeth.GasChange_REASON_CONTRACT_CREATION2,
-	vm.GasChangeCallCodeStorage:         pbeth.GasChange_REASON_CODE_STORAGE,
-	vm.GasChangeCallPrecompiledContract: pbeth.GasChange_REASON_PRECOMPILED_CONTRACT,
-	vm.GasChangeCallStorageColdAccess:   pbeth.GasChange_REASON_STATE_COLD_ACCESS,
-	vm.GasChangeCallLeftOverRefunded:    pbeth.GasChange_REASON_REFUND_AFTER_EXECUTION,
-	vm.GasChangeCallFailedExecution:     pbeth.GasChange_REASON_FAILED_EXECUTION,
+	tracing.GasChangeTxIntrinsicGas:          pbeth.GasChange_REASON_INTRINSIC_GAS,
+	tracing.GasChangeCallContractCreation:    pbeth.GasChange_REASON_CONTRACT_CREATION,
+	tracing.GasChangeCallContractCreation2:   pbeth.GasChange_REASON_CONTRACT_CREATION2,
+	tracing.GasChangeCallCodeStorage:         pbeth.GasChange_REASON_CODE_STORAGE,
+	tracing.GasChangeCallPrecompiledContract: pbeth.GasChange_REASON_PRECOMPILED_CONTRACT,
+	tracing.GasChangeCallStorageColdAccess:   pbeth.GasChange_REASON_STATE_COLD_ACCESS,
+	tracing.GasChangeCallLeftOverRefunded:    pbeth.GasChange_REASON_REFUND_AFTER_EXECUTION,
+	tracing.GasChangeCallFailedExecution:     pbeth.GasChange_REASON_FAILED_EXECUTION,
 
 	// Ignored, we track them manually, newGasChange ensure that we panic if we see Unknown
-	vm.GasChangeCallOpCode: pbeth.GasChange_REASON_UNKNOWN,
+	tracing.GasChangeCallOpCode: pbeth.GasChange_REASON_UNKNOWN,
 }
 
-func gasChangeReasonFromChain(reason vm.GasChangeReason) pbeth.GasChange_Reason {
+func gasChangeReasonFromChain(reason tracing.GasChangeReason) pbeth.GasChange_Reason {
 	if r, ok := gasChangeReasonToPb[reason]; ok {
 		if r == pbeth.GasChange_REASON_UNKNOWN {
 			panic(fmt.Errorf("tracer gas change reason value '%d' mapped to %s which is not accepted", reason, r))
@@ -1616,16 +1784,6 @@ func (s *FinalityStatus) populateFromChain(finalHeader *types.Header) {
 	s.LastIrreversibleBlockHash = finalHeader.Hash().Bytes()
 }
 
-// ToFirehoseLogParams converts the data into the format expected by Firehose reader,
-// replacing the value with "." if the data is empty.
-func (s *FinalityStatus) ToFirehoseLogParams() (libNum, libID string) {
-	if s.IsEmpty() {
-		return ".", "."
-	}
-
-	return strconv.FormatUint(s.LastIrreversibleBlockNumber, 10), hex.EncodeToString(s.LastIrreversibleBlockHash)
-}
-
 func (s *FinalityStatus) Reset() {
 	s.LastIrreversibleBlockNumber = 0
 	s.LastIrreversibleBlockHash = nil
@@ -1674,8 +1832,7 @@ func staticFirehoseChainValidationOnInit() {
 				new transaction types but could be now generate false positive.
 
 				Received error: %w
-				Tx Type: %s
-			`, " "), err, txType))
+			`, " "), err))
 		}
 	}
 }
@@ -1696,8 +1853,7 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 		}
 
 		// All other cases results in an error as we should have been able to encode it to RLP
-		return nil
-		//return fmt.Errorf("encoding RLP: %w", err)
+		return fmt.Errorf("encoding RLP: %w", err)
 	}
 
 	readerBuffer := bytes.NewBuffer(writerBuffer.Bytes())
@@ -1713,8 +1869,7 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 		}
 
 		// All other cases results in an error as we should have been able to decode it from RLP
-		return nil
-		//return fmt.Errorf("decoding RLP: %w", err)
+		return fmt.Errorf("decoding RLP: %w", err)
 	}
 
 	// If we reach here, encoding/decoding accepted the transaction's type, so let's ensure we expected the same
@@ -1793,4 +1948,26 @@ func validateField[T any](into *validationResult, field string, a, b T, equal bo
 	if !equal {
 		into.failures = append(into.failures, fmt.Sprintf("%s [(actual) %s %s %s (expected)]", field, toString(a), "!=", toString(b)))
 	}
+}
+
+func ptr[T any](t T) *T {
+	return &t
+}
+
+type Memory []byte
+
+func (m Memory) GetPtrUint256(offset, size *uint256.Int) []byte {
+	return m.GetPtr(int64(offset.Uint64()), int64(size.Uint64()))
+}
+
+func (m Memory) GetPtr(offset, size int64) []byte {
+	if size == 0 {
+		return nil
+	}
+
+	if len(m) > int(offset) {
+		return m[offset : offset+size]
+	}
+
+	return nil
 }
