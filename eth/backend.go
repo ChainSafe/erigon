@@ -275,6 +275,10 @@ func New(ctx context.Context, stack *node.Node, config *ethconfig.Config, logger
 		logger: logger,
 	}
 
+	if tracer.Hooks != nil && tracer.Hooks.OnBlockchainInit != nil {
+		tracer.Hooks.OnBlockchainInit(config.Genesis.Config)
+	}
+
 	var chainConfig *chain.Config
 	var genesis *types.Block
 	if err := backend.chainDB.Update(context.Background(), func(tx kv.RwTx) error {

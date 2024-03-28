@@ -71,6 +71,9 @@ func initGenesis(cliCtx *cli.Context) error {
 	var tracingHooks *tracing.Hooks
 	if tracer != nil {
 		tracingHooks = tracer.Hooks
+		if tracer.Hooks != nil && tracer.Hooks.OnBlockchainInit != nil {
+			tracer.Hooks.OnBlockchainInit(genesis.Config)
+		}
 	}
 	_, hash, err := core.CommitGenesisBlock(chaindb, genesis, "", logger, tracingHooks)
 	if err != nil {
