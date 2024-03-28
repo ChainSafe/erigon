@@ -50,7 +50,6 @@ func init() {
 //	  0xc281d19e-0: 1
 //	}
 type fourByteTracer struct {
-	tracers.NoopTracer
 	ids               map[string]int      // ids aggregates the 4byte ids found
 	interrupt         uint32              // Atomic flag to signal execution interruption
 	reason            error               // Textual reason for the interruption
