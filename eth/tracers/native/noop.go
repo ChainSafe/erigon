@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package tracers
+package native
 
 import (
 	"encoding/json"
@@ -25,6 +25,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 )
 
 func init() {
@@ -36,9 +37,9 @@ func init() {
 type NoopTracer struct{}
 
 // newNoopTracer returns a new noop tracer.
-func newNoopTracer(ctx *Context, _ json.RawMessage) (*Tracer, error) {
+func newNoopTracer(ctx *tracers.Context, _ json.RawMessage) (*tracers.Tracer, error) {
 	t := &NoopTracer{}
-	return &Tracer{
+	return &tracers.Tracer{
 		Hooks: &tracing.Hooks{
 			OnTxStart:       t.OnTxStart,
 			OnTxEnd:         t.OnTxEnd,

@@ -509,5 +509,6 @@ func (evm *EVM) GetVMContext() *tracing.VMContext {
 		GasPrice:        evm.TxContext.GasPrice,
 		ChainConfig:     evm.ChainConfig(),
 		IntraBlockState: evm.IntraBlockState(),
+		TxHash:          evm.TxHash,
 	}
 }
