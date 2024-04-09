@@ -120,6 +120,12 @@ type (
 	// BlockEndHook is called after executing a block.
 	BlockEndHook = func(err error)
 
+	// BeaconBlockRootStartHook is called before the beacon block
+	BeaconBlockRootStartHook = func(root libcommon.Hash)
+
+	// BeaconBlockRootEndHook is called after the beacon block
+	BeaconBlockRootEndHook = func()
+
 	// GenesisBlockHook is called when the genesis block is being processed.
 	GenesisBlockHook = func(genesis *types.Block, alloc types.GenesisAlloc)
 
@@ -153,10 +159,12 @@ type Hooks struct {
 	OnFault     FaultHook
 	OnGasChange GasChangeHook
 	// Chain events
-	OnBlockchainInit BlockchainInitHook
-	OnBlockStart     BlockStartHook
-	OnBlockEnd       BlockEndHook
-	OnGenesisBlock   GenesisBlockHook
+	OnBlockchainInit       BlockchainInitHook
+	OnBlockStart           BlockStartHook
+	OnBlockEnd             BlockEndHook
+	OnBeaconBlockRootStart BeaconBlockRootStartHook
+	OnBeaconBlockRootEnd   BeaconBlockRootEndHook
+	OnGenesisBlock         GenesisBlockHook
 	// State events
 	OnBalanceChange BalanceChangeHook
 	OnNonceChange   NonceChangeHook
