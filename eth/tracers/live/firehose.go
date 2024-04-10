@@ -67,10 +67,12 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Trac
 
 	return &tracers.Tracer{
 		Hooks: &tracing.Hooks{
-			OnBlockchainInit: tracer.OnBlockchainInit,
-			OnGenesisBlock:   tracer.OnGenesisBlock,
-			OnBlockStart:     tracer.OnBlockStart,
-			OnBlockEnd:       tracer.OnBlockEnd,
+			OnBlockchainInit:       tracer.OnBlockchainInit,
+			OnGenesisBlock:         tracer.OnGenesisBlock,
+			OnBlockStart:           tracer.OnBlockStart,
+			OnBlockEnd:             tracer.OnBlockEnd,
+			OnBeaconBlockRootStart: tracer.OnBeaconBlockRootStart,
+			OnBeaconBlockRootEnd:   tracer.OnBeaconBlockRootEnd,
 
 			OnTxStart: tracer.OnTxStart,
 			OnTxEnd:   tracer.OnTxEnd,
