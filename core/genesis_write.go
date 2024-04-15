@@ -605,7 +605,7 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger, bcLogger
 			}
 
 			if len(account.Constructor) > 0 {
-				if _, err = SysCreate(addr, account.Constructor, *g.Config, statedb, head); err != nil {
+				if _, err = SysCreate(addr, account.Constructor, *g.Config, statedb, head, nil); err != nil {
 					return
 				}
 			}

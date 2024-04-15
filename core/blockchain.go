@@ -261,7 +261,7 @@ func rlpHash(x interface{}) (h libcommon.Hash) {
 	return h
 }
 
-func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool) (result []byte, err error) {
+func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool, bcLogger *tracing.Hooks) (result []byte, err error) {
 	msg := types.NewMessage(
 		state.SystemAddress,
 		&contract,
@@ -273,7 +273,7 @@ func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain
 		true, // isFree
 		nil,  // maxFeePerBlobGas
 	)
-	vmConfig := vm.Config{NoReceipts: true, RestoreState: constCall}
+	vmConfig := vm.Config{NoReceipts: true, RestoreState: constCall, Tracer: bcLogger}
 	// Create a new context to be used in the EVM environment
 	isBor := chainConfig.Bor != nil
 	var txContext evmtypes.TxContext
@@ -303,7 +303,7 @@ func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain
 }
 
 // SysCreate is a special (system) contract creation methods for genesis constructors.
-func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header) (result []byte, err error) {
+func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, bcLogger *tracing.Hooks) (result []byte, err error) {
 	msg := types.NewMessage(
 		contract,
 		nil, // to
@@ -315,7 +315,7 @@ func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config
 		true, // isFree
 		nil,  // maxFeePerBlobGas
 	)
-	vmConfig := vm.Config{NoReceipts: true}
+	vmConfig := vm.Config{NoReceipts: true, Tracer: bcLogger}
 	// Create a new context to be used in the EVM environment
 	author := &contract
 	txContext := NewEVMTxContext(msg)
@@ -342,7 +342,7 @@ func FinalizeBlockExecution(
 	logger log.Logger,
 ) (newBlock *types.Block, newTxs types.Transactions, newReceipt types.Receipts, err error) {
 	syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-		return SysCallContract(contract, data, cc, ibs, header, engine, false /* constCall */)
+		return SysCallContract(contract, data, cc, ibs, header, engine, false /* constCall */, nil)
 	}
 	if isMining {
 		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, chainReader, syscall, nil, logger)
@@ -367,7 +367,7 @@ func InitializeBlockExecution(engine consensus.Engine, chain consensus.ChainHead
 	cc *chain.Config, ibs *state.IntraBlockState, logger log.Logger, bcLogger *tracing.Hooks,
 ) error {
 	engine.Initialize(cc, chain, header, ibs, func(contract libcommon.Address, data []byte, ibState *state.IntraBlockState, header *types.Header, constCall bool) ([]byte, error) {
-		return SysCallContract(contract, data, cc, ibState, header, engine, constCall)
+		return SysCallContract(contract, data, cc, ibState, header, engine, constCall, bcLogger)
 	}, logger, bcLogger)
 	noop := state.NewNoopWriter()
 	ibs.FinalizeTx(cc.Rules(header.Number.Uint64(), header.Time), noop)

@@ -960,7 +960,7 @@ func (api *TraceAPIImpl) callManyTransactions(
 			// gnosis might have a fee free account here
 			if msg.FeeCap().IsZero() && engine != nil {
 				syscall := func(contract common.Address, data []byte) ([]byte, error) {
-					return core.SysCallContract(contract, data, cfg, initialState, header, engine, true /* constCall */)
+					return core.SysCallContract(contract, data, cfg, initialState, header, engine, true /* constCall */, nil)
 				}
 				msg.SetIsFree(engine.IsServiceTransaction(msg.From(), syscall))
 			}
@@ -988,7 +988,7 @@ func (api *TraceAPIImpl) callManyTransactions(
 	}
 
 	syscall := func(contract common.Address, data []byte) ([]byte, error) {
-		return core.SysCallContract(contract, data, cfg, lastState, header, engine, false /* constCall */)
+		return core.SysCallContract(contract, data, cfg, lastState, header, engine, false /* constCall */, nil)
 	}
 
 	return traces, syscall, nil

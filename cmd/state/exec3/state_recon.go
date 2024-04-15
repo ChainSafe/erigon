@@ -308,7 +308,7 @@ func (rw *ReconWorker) runTxTask(txTask *exec22.TxTask) error {
 			//fmt.Printf("txNum=%d, blockNum=%d, finalisation of the block\n", txTask.TxNum, txTask.BlockNum)
 			// End of block transaction in a block
 			syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-				return core.SysCallContract(contract, data, rw.chainConfig, ibs, txTask.Header, rw.engine, false /* constCall */)
+				return core.SysCallContract(contract, data, rw.chainConfig, ibs, txTask.Header, rw.engine, false /* constCall */, nil)
 			}
 			if _, _, err := rw.engine.Finalize(rw.chainConfig, types.CopyHeader(txTask.Header), ibs, txTask.Txs, txTask.Uncles, nil, txTask.Withdrawals, rw.chain, syscall, logger); err != nil {
 				if _, readError := rw.stateReader.ReadError(); !readError {
@@ -319,7 +319,7 @@ func (rw *ReconWorker) runTxTask(txTask *exec22.TxTask) error {
 	} else if txTask.TxIndex == -1 {
 		// Block initialisation
 		syscall := func(contract libcommon.Address, data []byte, ibState *state.IntraBlockState, header *types.Header, constCall bool) ([]byte, error) {
-			return core.SysCallContract(contract, data, rw.chainConfig, ibState, header, rw.engine, constCall /* constCall */)
+			return core.SysCallContract(contract, data, rw.chainConfig, ibState, header, rw.engine, constCall /* constCall */, nil)
 		}
 
 		rw.engine.Initialize(rw.chainConfig, rw.chain, txTask.Header, ibs, syscall, logger, nil)
