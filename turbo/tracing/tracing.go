@@ -10,12 +10,12 @@ import (
 // SetupTracerCtx performs the tracing setup according to the parameters
 // containted in the given urfave context.
 func SetupTracerCtx(ctx *cli.Context) (*tracers.Tracer, error) {
-	tracerName := ctx.String(TracerFlag.Name)
+	tracerName := ctx.String(VMTraceFlag.Name)
 	if tracerName == "" {
 		return nil, nil
 	}
 
-	cfg := ctx.String(TracerConfigFlag.Name)
+	cfg := ctx.String(VMTraceJsonConfigFlag.Name)
 
 	return tracers.New(tracerName, &tracers.Context{}, []byte(cfg))
 }
