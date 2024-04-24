@@ -61,7 +61,7 @@ func init() {
 }
 
 func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
-	firehoseInfo("new firehose tracer")
+	firehoseInfo("new firehose tracer (config=%s)", string(cfg))
 
 	var config FirehoseConfig
 	if len([]byte(cfg)) > 0 {
@@ -246,6 +246,8 @@ func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
 	if f.applyBackwardCompatibility == nil {
 		f.applyBackwardCompatibility = ptr(chainNeedsLegacyBackwardCompatibility(chainConfig.ChainID))
 	}
+
+	firehoseInfo("blockchain init (chain_id=%d apply_backward_compatibility=%t)", chainConfig.ChainID.Int64(), *f.applyBackwardCompatibility)
 }
 
 var mainnetChainID = big.NewInt(1)
@@ -1879,6 +1881,16 @@ func (e _errorView) String() string {
 	}
 
 	return e.err.Error()
+}
+
+type boolPtrView bool
+
+func (b *boolPtrView) String() string {
+	if b == nil {
+		return "<nil>"
+	}
+
+	return strconv.FormatBool(*(*bool)(b))
 }
 
 type inputView []byte
