@@ -5,18 +5,18 @@ import (
 )
 
 var (
-	TracerFlag = cli.StringFlag{
+	VMTraceFlag = cli.StringFlag{
 		Name:  "vmtrace",
 		Usage: "Set the provider tracer",
 	}
 
-	TracerConfigFlag = cli.StringFlag{
-		Name:  "vmtrace.config",
+	VMTraceJsonConfigFlag = cli.StringFlag{
+		Name:  "vmtrace.jsonconfig",
 		Usage: "Set the config of the tracer",
 	}
 )
 
 var Flags = []cli.Flag{
-	&TracerFlag,
-	&TracerConfigFlag,
+	&VMTraceFlag,
+	&VMTraceJsonConfigFlag,
 }
