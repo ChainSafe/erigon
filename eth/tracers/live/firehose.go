@@ -23,6 +23,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
+	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/math"
@@ -72,8 +73,6 @@ func init() {
 }
 
 func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
-	firehoseInfo("new firehose tracer (config=%s)", string(cfg))
-
 	var config FirehoseConfig
 	if len([]byte(cfg)) > 0 {
 		if err := json.Unmarshal(cfg, &config); err != nil {
@@ -117,6 +116,18 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Trac
 
 type FirehoseConfig struct {
 	ApplyBackwardCompatibility *bool `json:"applyBackwardCompatibility"`
+}
+
+// LogKeValues returns a list of key-values to be logged when the config is printed.
+func (c *FirehoseConfig) LogKeyValues() []any {
+	applyBackwardCompatibility := "<unspecified>"
+	if c.ApplyBackwardCompatibility != nil {
+		applyBackwardCompatibility = strconv.FormatBool(*c.ApplyBackwardCompatibility)
+	}
+
+	return []any{
+		"config.applyBackwardCompatibility", applyBackwardCompatibility,
+	}
 }
 
 type Firehose struct {
@@ -165,6 +176,8 @@ type Firehose struct {
 const FirehoseProtocolVersion = "3.0"
 
 func NewFirehose(config *FirehoseConfig) *Firehose {
+	log.Info("Firehose tracer created", config.LogKeyValues()...)
+
 	return &Firehose{
 		// Global state
 		outputBuffer:               bytes.NewBuffer(make([]byte, 0, 100*1024*1024)),
@@ -258,7 +271,7 @@ func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
 		f.applyBackwardCompatibility = ptr(chainNeedsLegacyBackwardCompatibility(chainConfig.ChainID))
 	}
 
-	firehoseInfo("blockchain init (chain_id=%d apply_backward_compatibility=%t)", chainConfig.ChainID.Int64(), *f.applyBackwardCompatibility)
+	log.Info("Firehose tracer initialized", "chain_id", chainConfig.ChainID, "apply_backward_compatibility", *f.applyBackwardCompatibility, "protocol_version", FirehoseProtocolVersion)
 }
 
 var mainnetChainID = big.NewInt(1)
