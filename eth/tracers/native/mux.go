@@ -180,7 +180,9 @@ func (t *muxTracer) OnStorageChange(addr libcommon.Address, slot *libcommon.Hash
 
 func (t *muxTracer) OnNewAccount(a libcommon.Address, previousExisted bool) {
 	for _, t := range t.tracers {
-		t.OnNewAccount(a, previousExisted)
+		if t.OnNewAccount != nil {
+			t.OnNewAccount(a, previousExisted)
+		}
 	}
 }
 
