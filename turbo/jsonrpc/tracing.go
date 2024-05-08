@@ -3,7 +3,6 @@ package jsonrpc
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/holiman/uint256"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
+
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/state"
@@ -19,6 +19,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	tracerConfig "github.com/ledgerwatch/erigon/eth/tracers/config"
+	bortypes "github.com/ledgerwatch/erigon/polygon/bor/types"
 	polygontracer "github.com/ledgerwatch/erigon/polygon/tracer"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/adapter/ethapi"
@@ -43,30 +44,19 @@ func (api *PrivateDebugAPIImpl) traceBlock(ctx context.Context, blockNrOrHash rp
 		return err
 	}
 	defer tx.Rollback()
-	var (
-		block    *types.Block
-		number   rpc.BlockNumber
-		numberOk bool
-		hash     common.Hash
-		hashOk   bool
-	)
-	if number, numberOk = blockNrOrHash.Number(); numberOk {
-		block, err = api.blockByRPCNumber(number, tx)
-	} else if hash, hashOk = blockNrOrHash.Hash(); hashOk {
-		block, err = api.blockByHashWithSenders(tx, hash)
-	} else {
-		return fmt.Errorf("invalid arguments; neither block nor hash specified")
-	}
 
+	blockNumber, hash, _, err := rpchelper.GetCanonicalBlockNumber(blockNrOrHash, tx, api.filters)
 	if err != nil {
 		stream.WriteNil()
 		return err
 	}
-
+	block, err := api.blockWithSenders(ctx, tx, hash, blockNumber)
+	if err != nil {
+		stream.WriteNil()
+		return err
+	}
 	if block == nil {
-		if numberOk {
-			return fmt.Errorf("invalid arguments; block with number %d not found", number)
-		}
+		stream.WriteNil()
 		return fmt.Errorf("invalid arguments; block with hash %x not found", hash)
 	}
 
@@ -87,7 +77,7 @@ func (api *PrivateDebugAPIImpl) traceBlock(ctx context.Context, blockNrOrHash rp
 		config.BorTraceEnabled = &disabled
 	}
 
-	chainConfig, err := api.chainConfig(tx)
+	chainConfig, err := api.chainConfig(ctx, tx)
 	if err != nil {
 		stream.WriteNil()
 		return err
@@ -107,14 +97,14 @@ func (api *PrivateDebugAPIImpl) traceBlock(ctx context.Context, blockNrOrHash rp
 	txns := block.Transactions()
 	var borStateSyncTxn types.Transaction
 	if *config.BorTraceEnabled {
-		borStateSyncTxHash := types.ComputeBorTxHash(block.NumberU64(), block.Hash())
+		borStateSyncTxHash := bortypes.ComputeBorTxHash(block.NumberU64(), block.Hash())
 		_, ok, err := api._blockReader.EventLookup(ctx, tx, borStateSyncTxHash)
 		if err != nil {
 			stream.WriteArrayEnd()
 			return err
 		}
 		if ok {
-			borStateSyncTxn = types.NewBorTransaction()
+			borStateSyncTxn = bortypes.NewBorTransaction()
 			txns = append(txns, borStateSyncTxn)
 		}
 	}
@@ -123,7 +113,7 @@ func (api *PrivateDebugAPIImpl) traceBlock(ctx context.Context, blockNrOrHash rp
 		isBorStateSyncTxn := borStateSyncTxn == txn
 		var txnHash common.Hash
 		if isBorStateSyncTxn {
-			txnHash = types.ComputeBorTxHash(block.NumberU64(), block.Hash())
+			txnHash = bortypes.ComputeBorTxHash(block.NumberU64(), block.Hash())
 		} else {
 			txnHash = txn.Hash()
 		}
@@ -152,9 +142,10 @@ func (api *PrivateDebugAPIImpl) traceBlock(ctx context.Context, blockNrOrHash rp
 		}
 
 		txCtx := evmtypes.TxContext{
-			TxHash:   txnHash,
-			Origin:   msg.From(),
-			GasPrice: msg.GasPrice(),
+			TxHash:     txnHash,
+			Origin:     msg.From(),
+			GasPrice:   msg.GasPrice(),
+			BlobHashes: msg.BlobHashes(),
 		}
 
 		if isBorStateSyncTxn {
@@ -211,14 +202,14 @@ func (api *PrivateDebugAPIImpl) TraceTransaction(ctx context.Context, hash commo
 		return err
 	}
 	defer tx.Rollback()
-	chainConfig, err := api.chainConfig(tx)
+	chainConfig, err := api.chainConfig(ctx, tx)
 	if err != nil {
 		stream.WriteNil()
 		return err
 	}
 	// Retrieve the transaction and assemble its EVM context
 	var isBorStateSyncTxn bool
-	blockNum, ok, err := api.txnLookup(tx, hash)
+	blockNum, ok, err := api.txnLookup(ctx, tx, hash)
 	if err != nil {
 		stream.WriteNil()
 		return err
@@ -254,7 +245,7 @@ func (api *PrivateDebugAPIImpl) TraceTransaction(ctx context.Context, hash commo
 		return err
 	}
 
-	block, err := api.blockByNumberWithSenders(tx, blockNum)
+	block, err := api.blockByNumberWithSenders(ctx, tx, blockNum)
 	if err != nil {
 		stream.WriteNil()
 		return err
@@ -309,6 +300,7 @@ func (api *PrivateDebugAPIImpl) TraceTransaction(ctx context.Context, hash commo
 	return transactions.TraceTx(ctx, txn, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
 }
 
+// TraceCall implements debug_traceCall. Returns Geth style call traces.
 func (api *PrivateDebugAPIImpl) TraceCall(ctx context.Context, args ethapi.CallArgs, blockNrOrHash rpc.BlockNumberOrHash, config *tracerConfig.TraceConfig, stream *jsoniter.Stream) error {
 	dbtx, err := api.db.BeginRo(ctx)
 	if err != nil {
@@ -316,7 +308,7 @@ func (api *PrivateDebugAPIImpl) TraceCall(ctx context.Context, args ethapi.CallA
 	}
 	defer dbtx.Rollback()
 
-	chainConfig, err := api.chainConfig(dbtx)
+	chainConfig, err := api.chainConfig(ctx, dbtx)
 	if err != nil {
 		return fmt.Errorf("read chain config: %v", err)
 	}
@@ -341,7 +333,7 @@ func (api *PrivateDebugAPIImpl) TraceCall(ctx context.Context, args ethapi.CallA
 	if err != nil {
 		return fmt.Errorf("create state reader: %v", err)
 	}
-	header, err := api._blockReader.Header(context.Background(), dbtx, hash, blockNumber)
+	header, err := api._blockReader.Header(ctx, dbtx, hash, blockNumber)
 	if err != nil {
 		return fmt.Errorf("could not fetch header %d(%x): %v", blockNumber, hash, err)
 	}
@@ -388,7 +380,6 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 		blockCtx           evmtypes.BlockContext
 		txCtx              evmtypes.TxContext
 		overrideBlockHash  map[uint64]common.Hash
-		baseFee            uint256.Int
 	)
 
 	if config == nil {
@@ -402,7 +393,7 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 		return err
 	}
 	defer tx.Rollback()
-	chainConfig, err := api.chainConfig(tx)
+	chainConfig, err := api.chainConfig(ctx, tx)
 	if err != nil {
 		stream.WriteNil()
 		return err
@@ -436,10 +427,14 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 		return err
 	}
 
-	block, err := api.blockByNumberWithSenders(tx, blockNum)
+	block, err := api.blockByNumberWithSenders(ctx, tx, blockNum)
 	if err != nil {
 		stream.WriteNil()
 		return err
+	}
+	if block == nil {
+		stream.WriteNil()
+		return fmt.Errorf("block %d not found", blockNum)
 	}
 
 	// -1 is a default value for transaction index.
@@ -464,9 +459,9 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 
 	st := state.New(stateReader)
 
-	parent := block.Header()
+	header := block.Header()
 
-	if parent == nil {
+	if header == nil {
 		stream.WriteNil()
 		return fmt.Errorf("block %d(%x) not found", blockNum, hash)
 	}
@@ -482,22 +477,7 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 		return hash
 	}
 
-	if parent.BaseFee != nil {
-		baseFee.SetFromBig(parent.BaseFee)
-	}
-
-	blockCtx = evmtypes.BlockContext{
-		CanTransfer: core.CanTransfer,
-		Transfer:    core.Transfer,
-		GetHash:     getHash,
-		Coinbase:    parent.Coinbase,
-		BlockNumber: parent.Number.Uint64(),
-		Time:        parent.Time,
-		Difficulty:  new(big.Int).Set(parent.Difficulty),
-		GasLimit:    parent.GasLimit,
-		BaseFee:     &baseFee,
-	}
-
+	blockCtx = core.NewEVMBlockContext(header, getHash, api.engine(), nil /* author */)
 	// Get a new instance of the EVM
 	evm = vm.NewEVM(blockCtx, txCtx, st, chainConfig, vm.Config{Debug: false})
 	signer := types.MakeSigner(chainConfig, blockNum, block.Time())
@@ -558,8 +538,8 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 
 			txCtx = core.NewEVMTxContext(msg)
 			ibs := evm.IntraBlockState().(*state.IntraBlockState)
-			ibs.SetTxContext(common.Hash{}, parent.Hash(), txnIndex)
-			err = transactions.TraceTx(ctx, transaction, msg, blockCtx, txCtx, st, config, chainConfig, stream, api.evmCallTimeout)
+			ibs.SetTxContext(common.Hash{}, header.Hash(), txnIndex)
+			err = transactions.TraceTx(ctx, transaction, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
 			if err != nil {
 				stream.WriteArrayEnd()
 				stream.WriteArrayEnd()

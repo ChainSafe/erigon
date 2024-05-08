@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/holiman/uint256"
+
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/txpool/txpoolcfg"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
@@ -56,17 +57,17 @@ The state transitioning model does all the necessary work to work out a valid ne
 6) Derive new state root
 */
 type StateTransition struct {
-	gp         *GasPool
-	msg        Message
-	gas        uint64
-	gasPrice   *uint256.Int
-	gasFeeCap  *uint256.Int
-	tip        *uint256.Int
-	initialGas uint64
-	value      *uint256.Int
-	data       []byte
-	state      evmtypes.IntraBlockState
-	evm        *vm.EVM
+	gp           *GasPool
+	msg          Message
+	gasRemaining uint64
+	gasPrice     *uint256.Int
+	gasFeeCap    *uint256.Int
+	tip          *uint256.Int
+	initialGas   uint64
+	value        *uint256.Int
+	data         []byte
+	state        evmtypes.IntraBlockState
+	evm          *vm.EVM
 
 	//some pre-allocated intermediate variables
 	sharedBuyGas        *uint256.Int
@@ -231,9 +232,15 @@ func (st *StateTransition) buyGas(gasBailout bool) error {
 		if overflow {
 			return fmt.Errorf("%w: address %v", ErrInsufficientFunds, st.msg.From().Hex())
 		}
-		balanceCheck, overflow = balanceCheck.AddOverflow(balanceCheck, blobGasVal)
-		if overflow {
-			return fmt.Errorf("%w: address %v", ErrInsufficientFunds, st.msg.From().Hex())
+		if st.evm.ChainRules().IsCancun {
+			maxBlobFee, overflow := new(uint256.Int).MulOverflow(st.msg.MaxFeePerBlobGas(), new(uint256.Int).SetUint64(st.msg.BlobGas()))
+			if overflow {
+				return fmt.Errorf("%w: address %v", ErrInsufficientFunds, st.msg.From().Hex())
+			}
+			balanceCheck, overflow = balanceCheck.AddOverflow(balanceCheck, maxBlobFee)
+			if overflow {
+				return fmt.Errorf("%w: address %v", ErrInsufficientFunds, st.msg.From().Hex())
+			}
 		}
 	}
 	var subBalance = false
@@ -254,7 +261,7 @@ func (st *StateTransition) buyGas(gasBailout bool) error {
 		st.evm.Config().Tracer.OnGasChange(0, st.msg.Gas(), tracing.GasChangeTxInitialBalance)
 	}
 
-	st.gas += st.msg.Gas()
+	st.gasRemaining += st.msg.Gas()
 	st.initialGas = st.msg.Gas()
 
 	if subBalance {
@@ -381,14 +388,14 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 	if err != nil {
 		return nil, err
 	}
-	if st.gas < gas {
-		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gas, gas)
+	if st.gasRemaining < gas {
+		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, gas)
 	}
 
 	if t := st.evm.Config().Tracer; t != nil && t.OnGasChange != nil {
-		t.OnGasChange(st.gas, st.gas-gas, tracing.GasChangeTxIntrinsicGas)
+		t.OnGasChange(st.gasRemaining, st.gasRemaining-gas, tracing.GasChangeTxIntrinsicGas)
 	}
-	st.gas -= gas
+	st.gasRemaining -= gas
 
 	var bailout bool
 	// Gas bailout (for trace_call) should only be applied if there is not sufficient balance to perform value transfer
@@ -417,11 +424,11 @@ func (st *StateTransition) TransitionDb(refunds bool, gasBailout bool) (*Executi
 		// nonce to calculate the address of the contract that is being created
 		// It does get incremented inside the `Create` call, after the computation
 		// of the contract's address, but before the execution of the code.
-		ret, _, st.gas, vmerr = st.evm.Create(sender, st.data, st.gas, st.value)
+		ret, _, st.gasRemaining, vmerr = st.evm.Create(sender, st.data, st.gasRemaining, st.value)
 	} else {
 		// Increment the nonce for the next transaction
 		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
-		ret, st.gas, vmerr = st.evm.Call(sender, st.to(), st.data, st.gas, st.value, bailout)
+		ret, st.gasRemaining, vmerr = st.evm.Call(sender, st.to(), st.data, st.gasRemaining, st.value, bailout)
 	}
 	if refunds {
 		if rules.IsLondon {
@@ -484,24 +491,24 @@ func (st *StateTransition) refundGas(refundQuotient uint64) {
 	}
 
 	if st.evm.Config().Tracer != nil && st.evm.Config().Tracer.OnGasChange != nil && refund > 0 {
-		st.evm.Config().Tracer.OnGasChange(st.gas, st.gas+refund, tracing.GasChangeTxRefunds)
+		st.evm.Config().Tracer.OnGasChange(st.gasRemaining, st.gasRemaining+refund, tracing.GasChangeTxRefunds)
 	}
-	st.gas += refund
+	st.gasRemaining += refund
 
 	// Return ETH for remaining gas, exchanged at the original rate.
-	remaining := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gas), st.gasPrice)
+	remaining := new(uint256.Int).Mul(new(uint256.Int).SetUint64(st.gasRemaining), st.gasPrice)
 	st.state.AddBalance(st.msg.From(), remaining, tracing.BalanceIncreaseGasReturn)
 
-	if st.evm.Config().Tracer != nil && st.evm.Config().Tracer.OnGasChange != nil && st.gas > 0 {
-		st.evm.Config().Tracer.OnGasChange(st.gas, 0, tracing.GasChangeTxLeftOverReturned)
+	if st.evm.Config().Tracer != nil && st.evm.Config().Tracer.OnGasChange != nil && st.gasRemaining > 0 {
+		st.evm.Config().Tracer.OnGasChange(st.gasRemaining, 0, tracing.GasChangeTxLeftOverReturned)
 	}
 
 	// Also return remaining gas to the block gas counter so it is
 	// available for the next transaction.
-	st.gp.AddGas(st.gas)
+	st.gp.AddGas(st.gasRemaining)
 }
 
 // gasUsed returns the amount of gas used up by the state transition.
 func (st *StateTransition) gasUsed() uint64 {
-	return st.initialGas - st.gas
+	return st.initialGas - st.gasRemaining
 }

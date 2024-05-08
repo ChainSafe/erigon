@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon-lib/chain"
@@ -41,7 +42,7 @@ import (
 	"github.com/ledgerwatch/erigon/rpc"
 )
 
-const DEBUG_LOG_FROM = 999_999_999
+var DEBUG_LOG_FROM = uint64(dbg.EnvInt("AURA_DEBUG_FROM", 999_999_999))
 
 /*
 Not implemented features from OS:
@@ -204,7 +205,7 @@ func (e *EpochManager) zoomToAfter(chain consensus.ChainHeaderReader, er *NonTra
 // / or transitions to.
 // / This will give the epoch that any children of this parent belong to.
 // /
-// / The block corresponding the the parent hash must be stored already.
+// / The block corresponding the parent hash must be stored already.
 // nolint
 func epochTransitionFor(chain consensus.ChainHeaderReader, e *NonTransactionalEpochReader, parentHash libcommon.Hash) (transition EpochTransition, ok bool) {
 	//TODO: probably this version of func doesn't support non-canonical epoch transitions
@@ -360,6 +361,9 @@ func (c *AuRa) Author(header *types.Header) (libcommon.Address, error) {
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (c *AuRa) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, _ bool) error {
 	number := header.Number.Uint64()
+	if number == 0 {
+		return nil
+	}
 	parent := chain.GetHeader(header.ParentHash, number-1)
 	if parent == nil {
 		log.Error("consensus.ErrUnknownAncestor", "parentNum", number-1, "hash", header.ParentHash.String())

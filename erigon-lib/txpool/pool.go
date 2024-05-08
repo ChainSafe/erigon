@@ -39,8 +39,6 @@ import (
 	"github.com/google/btree"
 	"github.com/hashicorp/golang-lru/v2/simplelru"
 	"github.com/holiman/uint256"
-	"github.com/ledgerwatch/log/v3"
-
 	"github.com/ledgerwatch/erigon-lib/chain"
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/assert"
@@ -51,14 +49,16 @@ import (
 	libkzg "github.com/ledgerwatch/erigon-lib/crypto/kzg"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces/grpcutil"
-	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
-	proto_txpool "github.com/ledgerwatch/erigon-lib/gointerfaces/txpool"
+	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	txpoolproto "github.com/ledgerwatch/erigon-lib/gointerfaces/txpoolproto"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcache"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon-lib/metrics"
 	"github.com/ledgerwatch/erigon-lib/txpool/txpoolcfg"
 	"github.com/ledgerwatch/erigon-lib/types"
+	types2 "github.com/ledgerwatch/erigon-lib/types"
+	"github.com/ledgerwatch/log/v3"
 )
 
 const DefaultBlockGasLimit = uint64(30000000)
@@ -81,6 +81,8 @@ var TraceAll = false
 // Pool is interface for the transaction pool
 // This interface exists for the convenience of testing, and not yet because
 // there are multiple implementations
+//
+//go:generate mockgen -typed=true -destination=./pool_mock.go -package=txpool . Pool
 type Pool interface {
 	ValidateSerializedTxn(serializedTxn []byte) error
 
@@ -401,7 +403,37 @@ func (p *TxPool) OnNewBlock(ctx context.Context, stateChanges *remote.StateChang
 	pendingBlobFee := stateChanges.PendingBlobFeePerGas
 	p.setBlobFee(pendingBlobFee)
 
-	p.blockGasLimit.Store(stateChanges.BlockGasLimit)
+	oldGasLimit := p.blockGasLimit.Swap(stateChanges.BlockGasLimit)
+	if oldGasLimit != stateChanges.BlockGasLimit {
+		p.all.ascendAll(func(mt *metaTx) bool {
+			var updated bool
+			if mt.Tx.Gas < stateChanges.BlockGasLimit {
+				updated = (mt.subPool & NotTooMuchGas) > 0
+				mt.subPool |= NotTooMuchGas
+			} else {
+				updated = (mt.subPool & NotTooMuchGas) == 0
+				mt.subPool &^= NotTooMuchGas
+			}
+
+			if mt.Tx.Traced {
+				p.logger.Info("TX TRACING: on block gas limit update", "idHash", fmt.Sprintf("%x", mt.Tx.IDHash), "senderId", mt.Tx.SenderID, "nonce", mt.Tx.Nonce, "subPool", mt.currentSubPool, "updated", updated)
+			}
+
+			if !updated {
+				return true
+			}
+
+			switch mt.currentSubPool {
+			case PendingSubPool:
+				p.pending.Updated(mt)
+			case BaseFeeSubPool:
+				p.baseFee.Updated(mt)
+			case QueuedSubPool:
+				p.queued.Updated(mt)
+			}
+			return true
+		})
+	}
 
 	for i, txn := range unwindBlobTxs.Txs {
 		if txn.Type == types.BlobTxType {
@@ -651,14 +683,15 @@ func (p *TxPool) getCachedBlobTxnLocked(tx kv.Tx, hash []byte) (*metaTx, error) 
 		return nil, nil
 	}
 
-	txn, err := tx.GetOne(kv.PoolTransaction, hash)
+	v, err := tx.GetOne(kv.PoolTransaction, hash)
 	if err != nil {
 		return nil, err
 	}
+	txRlp := common.Copy(v[20:])
 	parseCtx := types.NewTxParseContext(p.chainID)
 	parseCtx.WithSender(false)
 	txSlot := &types.TxSlot{}
-	parseCtx.ParseTransaction(txn, 0, txSlot, nil, false, true, nil)
+	parseCtx.ParseTransaction(txRlp, 0, txSlot, nil, false, true, nil)
 	return newMetaTx(txSlot, false, 0), nil
 }
 
@@ -840,6 +873,19 @@ func (p *TxPool) validateTx(txn *types.TxSlot, isLocal bool, stateCache kvcache.
 		if err != nil {
 			return txpoolcfg.UnmatchedBlobTxExt
 		}
+
+		if !isLocal && (p.all.blobCount(txn.SenderID)+uint64(len(txn.BlobHashes))) > p.cfg.BlobSlots {
+			if txn.Traced {
+				p.logger.Info(fmt.Sprintf("TX TRACING: validateTx marked as spamming (too many blobs) idHash=%x slots=%d, limit=%d", txn.IDHash, p.all.count(txn.SenderID), p.cfg.AccountSlots))
+			}
+			return txpoolcfg.Spammer
+		}
+		if p.totalBlobsInPool.Load() >= p.cfg.TotalBlobPoolLimit {
+			if txn.Traced {
+				p.logger.Info(fmt.Sprintf("TX TRACING: validateTx total blobs limit reached in pool limit=%x current blobs=%d", p.cfg.TotalBlobPoolLimit, p.totalBlobsInPool.Load()))
+			}
+			return txpoolcfg.BlobPoolOverflow
+		}
 	}
 
 	// Drop non-local transactions under our own minimal accepted gas price or tip
@@ -871,20 +917,8 @@ func (p *TxPool) validateTx(txn *types.TxSlot, isLocal bool, stateCache kvcache.
 		}
 		return txpoolcfg.Spammer
 	}
-	if !isLocal && (p.all.blobCount(txn.SenderID)+uint64(len(txn.BlobHashes))) > p.cfg.BlobSlots {
-		if txn.Traced {
-			p.logger.Info(fmt.Sprintf("TX TRACING: validateTx marked as spamming (too many blobs) idHash=%x slots=%d, limit=%d", txn.IDHash, p.all.count(txn.SenderID), p.cfg.AccountSlots))
-		}
-		return txpoolcfg.Spammer
-	}
-	if p.totalBlobsInPool.Load() >= p.cfg.TotalBlobPoolLimit {
-		if txn.Traced {
-			p.logger.Info(fmt.Sprintf("TX TRACING: validateTx total blobs limit reached in pool limit=%x current blobs=%d", p.cfg.TotalBlobPoolLimit, p.totalBlobsInPool.Load()))
-		}
-		return txpoolcfg.BlobPoolOverflow
-	}
 
-	// check nonce and balance
+	// Check nonce and balance
 	senderNonce, senderBalance, _ := p.senders.info(stateCache, txn.SenderID)
 	if senderNonce > txn.Nonce {
 		if txn.Traced {
@@ -1022,7 +1056,7 @@ func (p *TxPool) isCancun() bool {
 	return activated
 }
 
-// Check that that the serialized txn should not exceed a certain max size
+// Check that the serialized txn should not exceed a certain max size
 func (p *TxPool) ValidateSerializedTxn(serializedTxn []byte) error {
 	const (
 		// txSlotSize is used to calculate how many data slots a single transaction
@@ -1829,6 +1863,11 @@ func MainLoop(ctx context.Context, db kv.RwDB, p *TxPool, newTxs chan types.Anno
 						if len(slotRlp) == 0 {
 							continue
 						}
+						// Strip away blob wrapper, if applicable
+						slotRlp, err2 := types2.UnwrapTxPlayloadRlp(slotRlp)
+						if err2 != nil {
+							continue
+						}
 
 						// Empty rlp can happen if a transaction we want to broadcast has just been mined, for example
 						slotsRlp = append(slotsRlp, slotRlp)
@@ -1859,8 +1898,7 @@ func MainLoop(ctx context.Context, db kv.RwDB, p *TxPool, newTxs chan types.Anno
 					return
 				}
 				if newSlotsStreams != nil {
-					// TODO(eip-4844) What is this for? Is it OK to broadcast blob transactions?
-					newSlotsStreams.Broadcast(&proto_txpool.OnAddReply{RplTxs: slotsRlp}, p.logger)
+					newSlotsStreams.Broadcast(&txpoolproto.OnAddReply{RplTxs: slotsRlp}, p.logger)
 				}
 
 				// broadcast local transactions
@@ -2030,7 +2068,7 @@ func (p *TxPool) fromDB(ctx context.Context, tx kv.Tx, coreTx kv.Tx) error {
 		p.lastSeenBlock.Store(lastSeenBlock)
 	}
 
-	// this is neccessary as otherwise best - which waits for sync events
+	// this is necessary as otherwise best - which waits for sync events
 	// may wait for ever if blocks have been process before the txpool
 	// starts with an empty db
 	lastSeenProgress, err := getExecutionProgress(coreTx)
@@ -2374,7 +2412,13 @@ func (sc *sendersBatch) info(cacheView kvcache.CacheView, id uint64) (nonce uint
 	if len(encoded) == 0 {
 		return emptySender.nonce, emptySender.balance, nil
 	}
-	nonce, balance, err = types.DecodeSender(encoded)
+	if cacheView.StateV3() {
+		var bp *uint256.Int
+		nonce, bp, _ = types.DecodeAccountBytesV3(encoded)
+		balance = *bp
+	} else {
+		nonce, balance, err = types.DecodeSender(encoded)
+	}
 	if err != nil {
 		return 0, emptySender.balance, err
 	}

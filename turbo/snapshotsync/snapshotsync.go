@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"runtime"
 	"strings"
 	"time"
@@ -16,14 +15,15 @@ import (
 	"github.com/ledgerwatch/erigon-lib/diagnostics"
 	"github.com/ledgerwatch/erigon-lib/downloader/downloadergrpc"
 	"github.com/ledgerwatch/erigon-lib/downloader/snaptype"
-	proto_downloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloader"
+	proto_downloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloaderproto"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
 	"github.com/ledgerwatch/erigon-lib/state"
+	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/core/rawdb"
+	coresnaptype "github.com/ledgerwatch/erigon/core/snaptype"
 	"github.com/ledgerwatch/erigon/turbo/services"
-	"github.com/ledgerwatch/log/v3"
 )
 
 type CaplinMode int
@@ -37,7 +37,7 @@ const (
 )
 
 func BuildProtoRequest(downloadRequest []services.DownloadRequest) *proto_downloader.AddRequest {
-	req := &proto_downloader.AddRequest{Items: make([]*proto_downloader.AddItem, 0, len(snaptype.BlockSnapshotTypes))}
+	req := &proto_downloader.AddRequest{Items: make([]*proto_downloader.AddItem, 0, len(coresnaptype.BlockSnapshotTypes))}
 	for _, r := range downloadRequest {
 		if r.Path == "" {
 			continue
@@ -68,10 +68,10 @@ func RequestSnapshotsDownload(ctx context.Context, downloadRequest []services.Do
 
 // WaitForDownloader - wait for Downloader service to download all expected snapshots
 // for MVP we sync with Downloader only once, in future will send new snapshots also
-func WaitForDownloader(ctx context.Context, logPrefix string, histV3 bool, caplin CaplinMode, agg *state.AggregatorV3, tx kv.RwTx, blockReader services.FullBlockReader, cc *chain.Config, snapshotDownloader proto_downloader.DownloaderClient, stagesIdsList []string) error {
+func WaitForDownloader(ctx context.Context, logPrefix string, histV3, blobs bool, caplin CaplinMode, agg *state.Aggregator, tx kv.RwTx, blockReader services.FullBlockReader, cc *chain.Config, snapshotDownloader proto_downloader.DownloaderClient, stagesIdsList []string) error {
 	snapshots := blockReader.Snapshots()
 	borSnapshots := blockReader.BorSnapshots()
-	if blockReader.FreezingCfg().NoDownloader {
+	if blockReader.FreezingCfg().NoDownloader || snapshotDownloader == nil {
 		if err := snapshots.ReopenFolder(); err != nil {
 			return err
 		}
@@ -83,59 +83,54 @@ func WaitForDownloader(ctx context.Context, logPrefix string, histV3 bool, capli
 		return nil
 	}
 
+	snapshots.Close()
+	if cc.Bor != nil {
+		borSnapshots.Close()
+	}
+
 	//Corner cases:
 	// - Erigon generated file X with hash H1. User upgraded Erigon. New version has preverified file X with hash H2. Must ignore H2 (don't send to Downloader)
 	// - Erigon "download once": means restart/upgrade/downgrade must not download files (and will be fast)
 	// - After "download once" - Erigon will produce and seed new files
 
-	// ProhibitNewDownloads implies - so only make the download request once,
-	//
-	// Erigon "download once" - means restart/upgrade/downgrade will not download files (and will be fast)
-	// After "download once" - Erigon will produce and seed new files
-	// Downloader will able: seed new files (already existing on FS), download uncomplete parts of existing files (if Verify found some bad parts)
-	//
-	// after the initial call the downloader or snapshot-lock.file will prevent this download from running
-	//
+	// send all hashes to the Downloader service
+	snapCfg := snapcfg.KnownCfg(cc.ChainName)
+	preverifiedBlockSnapshots := snapCfg.Preverified
+	downloadRequest := make([]services.DownloadRequest, 0, len(preverifiedBlockSnapshots))
 
-	if _, err := snapshotDownloader.ProhibitNewDownloads(ctx, &proto_downloader.ProhibitNewDownloadsRequest{}); err == nil {
-		// send all hashes to the Downloader service
-		snapCfg := snapcfg.KnownCfg(cc.ChainName)
-		preverifiedBlockSnapshots := snapCfg.Preverified
-		downloadRequest := make([]services.DownloadRequest, 0, len(preverifiedBlockSnapshots))
-
-		// build all download requests
-		for _, p := range preverifiedBlockSnapshots {
-			if !histV3 {
-				if strings.HasPrefix(p.Name, "domain") || strings.HasPrefix(p.Name, "history") || strings.HasPrefix(p.Name, "idx") {
-					continue
-				}
-			}
-			if caplin == NoCaplin && strings.Contains(p.Name, "beaconblocks") {
+	// build all download requests
+	for _, p := range preverifiedBlockSnapshots {
+		if !histV3 {
+			if strings.HasPrefix(p.Name, "domain") || strings.HasPrefix(p.Name, "history") || strings.HasPrefix(p.Name, "idx") {
 				continue
 			}
-			if caplin == OnlyCaplin && !strings.Contains(p.Name, "beaconblocks") {
-				continue
-			}
-
-			downloadRequest = append(downloadRequest, services.NewDownloadRequest(p.Name, p.Hash))
 		}
-
-		log.Info(fmt.Sprintf("[%s] Requesting downloads", logPrefix))
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			if err := RequestSnapshotsDownload(ctx, downloadRequest, snapshotDownloader); err != nil {
-				log.Error(fmt.Sprintf("[%s] call downloader", logPrefix), "err", err)
-				time.Sleep(10 * time.Second)
-				continue
-			}
-			break
+		if caplin == NoCaplin && (strings.Contains(p.Name, "beaconblocks") || strings.Contains(p.Name, "blobsidecars")) {
+			continue
 		}
-	} else {
-		time.Sleep(10 * time.Second)
+		if caplin == OnlyCaplin && !strings.Contains(p.Name, "beaconblocks") && !strings.Contains(p.Name, "blobsidecars") {
+			continue
+		}
+		if !blobs && strings.Contains(p.Name, "blobsidecars") {
+			continue
+		}
+		downloadRequest = append(downloadRequest, services.NewDownloadRequest(p.Name, p.Hash))
+	}
+
+	log.Info(fmt.Sprintf("[%s] Requesting downloads", logPrefix))
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if err := RequestSnapshotsDownload(ctx, downloadRequest, snapshotDownloader); err != nil {
+			log.Error(fmt.Sprintf("[%s] call downloader", logPrefix), "err", err)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		break
+
 	}
 
 	downloadStartTime := time.Now()
@@ -143,9 +138,12 @@ func WaitForDownloader(ctx context.Context, logPrefix string, histV3 bool, capli
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
 
+	/*diagnostics.RegisterProvider(diagnostics.ProviderFunc(func(ctx context.Context) error {
+		return nil
+	}), diagnostics.TypeOf(diagnostics.DownloadStatistics{}), log.Root())*/
+
 	// Check once without delay, for faster erigon re-start
 	stats, err := snapshotDownloader.Stats(ctx, &proto_downloader.StatsRequest{})
-
 	if err != nil {
 		return err
 	}
@@ -198,8 +196,45 @@ func WaitForDownloader(ctx context.Context, logPrefix string, histV3 bool, capli
 		}
 	}
 
-	if err := agg.OpenFolder(); err != nil {
+	if err := agg.OpenFolder(true); err != nil {
 		return err
+	}
+
+	// ProhibitNewDownloads implies - so only make the download request once,
+	//
+	// Erigon "download once" - means restart/upgrade/downgrade will not download files (and will be fast)
+	// After "download once" - Erigon will produce and seed new files
+	// Downloader will able: seed new files (already existing on FS), download uncomplete parts of existing files (if Verify found some bad parts)
+	//
+	// after the initial call the downloader or snapshot-lock.file will prevent this download from running
+	//
+
+	// prohibits further downloads, except some exceptions
+	for _, p := range blockReader.AllTypes() {
+		if _, err := snapshotDownloader.ProhibitNewDownloads(ctx, &proto_downloader.ProhibitNewDownloadsRequest{
+			Type: p.Name(),
+		}); err != nil {
+			return err
+		}
+	}
+	for _, p := range snaptype.SeedableV3Extensions() {
+		snapshotDownloader.ProhibitNewDownloads(ctx, &proto_downloader.ProhibitNewDownloadsRequest{
+			Type: p,
+		})
+	}
+
+	if caplin != NoCaplin {
+		for _, p := range snaptype.CaplinSnapshotTypes {
+			if p.Enum() == snaptype.BlobSidecars.Enum() && !blobs {
+				continue
+			}
+
+			if _, err := snapshotDownloader.ProhibitNewDownloads(ctx, &proto_downloader.ProhibitNewDownloadsRequest{
+				Type: p.Name(),
+			}); err != nil {
+				return err
+			}
+		}
 	}
 
 	if err := rawdb.WriteSnapshots(tx, blockReader.FrozenFiles(), agg.Files()); err != nil {
@@ -222,54 +257,43 @@ func WaitForDownloader(ctx context.Context, logPrefix string, histV3 bool, capli
 func logStats(ctx context.Context, stats *proto_downloader.StatsReply, startTime time.Time, stagesIdsList []string, logPrefix string, logReason string) {
 	var m runtime.MemStats
 
-	if stats.Completed {
-		diagnostics.Send(diagnostics.SnapshotDownloadStatistics{
-			Downloaded:       stats.BytesCompleted,
-			Total:            stats.BytesTotal,
-			TotalTime:        time.Since(startTime).Round(time.Second).Seconds(),
-			DownloadRate:     stats.DownloadRate,
-			UploadRate:       stats.UploadRate,
-			Peers:            stats.PeersUnique,
-			Files:            stats.FilesTotal,
-			Connections:      stats.ConnectionsTotal,
-			Alloc:            m.Alloc,
-			Sys:              m.Sys,
-			DownloadFinished: stats.Completed,
-		})
+	diagnostics.Send(diagnostics.SyncStagesList{Stages: stagesIdsList})
+	diagnostics.Send(diagnostics.SnapshotDownloadStatistics{
+		Downloaded:           stats.BytesCompleted,
+		Total:                stats.BytesTotal,
+		TotalTime:            time.Since(startTime).Round(time.Second).Seconds(),
+		DownloadRate:         stats.DownloadRate,
+		UploadRate:           stats.UploadRate,
+		Peers:                stats.PeersUnique,
+		Files:                stats.FilesTotal,
+		Connections:          stats.ConnectionsTotal,
+		Alloc:                m.Alloc,
+		Sys:                  m.Sys,
+		DownloadFinished:     stats.Completed,
+		TorrentMetadataReady: stats.MetadataReady,
+	})
 
+	if stats.Completed {
 		log.Info(fmt.Sprintf("[%s] download finished", logPrefix), "time", time.Since(startTime).String())
 	} else {
-		diagnostics.Send(diagnostics.SyncStagesList{Stages: stagesIdsList})
-		diagnostics.Send(diagnostics.SnapshotDownloadStatistics{
-			Downloaded:           stats.BytesCompleted,
-			Total:                stats.BytesTotal,
-			TotalTime:            time.Since(startTime).Round(time.Second).Seconds(),
-			DownloadRate:         stats.DownloadRate,
-			UploadRate:           stats.UploadRate,
-			Peers:                stats.PeersUnique,
-			Files:                stats.FilesTotal,
-			Connections:          stats.ConnectionsTotal,
-			Alloc:                m.Alloc,
-			Sys:                  m.Sys,
-			DownloadFinished:     stats.Completed,
-			TorrentMetadataReady: stats.MetadataReady,
-		})
 
 		if stats.MetadataReady < stats.FilesTotal && stats.BytesTotal == 0 {
 			log.Info(fmt.Sprintf("[%s] Waiting for torrents metadata: %d/%d", logPrefix, stats.MetadataReady, stats.FilesTotal))
 		}
 
 		dbg.ReadMemStats(&m)
-		downloadTimeLeft := calculateTime(stats.BytesTotal-stats.BytesCompleted, stats.DownloadRate)
 
-		progress := float64(stats.Progress)
+		var remainingBytes uint64
 
-		if math.Ceil(progress*1000)/1000 > 99.995 {
-			progress = 100
+		if stats.BytesTotal > stats.BytesCompleted {
+			remainingBytes = stats.BytesTotal - stats.BytesCompleted
 		}
 
+		downloadTimeLeft := calculateTime(remainingBytes, stats.DownloadRate)
+
 		log.Info(fmt.Sprintf("[%s] %s", logPrefix, logReason),
-			"progress", fmt.Sprintf("%.2f%% %s/%s", progress, common.ByteCount(stats.BytesCompleted), common.ByteCount(stats.BytesTotal)),
+			"progress", fmt.Sprintf("%.2f%% %s/%s", stats.Progress, common.ByteCount(stats.BytesCompleted), common.ByteCount(stats.BytesTotal)),
+			// TODO: "downloading", stats.Downloading,
 			"time-left", downloadTimeLeft,
 			"total-time", time.Since(startTime).Round(time.Second).String(),
 			"download", common.ByteCount(stats.DownloadRate)+"/s",

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+	"github.com/ledgerwatch/erigon/eth/consensuschain"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon-lib/chain"
@@ -20,7 +21,6 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
-	"github.com/ledgerwatch/erigon/eth/stagedsync"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	tracerConfig "github.com/ledgerwatch/erigon/eth/tracers/config"
 	"github.com/ledgerwatch/erigon/eth/tracers/logger"
@@ -77,7 +77,7 @@ func ComputeTxEnv(ctx context.Context, engine consensus.EngineReader, block *typ
 	vmenv := vm.NewEVM(blockContext, evmtypes.TxContext{}, statedb, cfg, vm.Config{})
 	rules := vmenv.ChainRules()
 
-	consensusHeaderReader := stagedsync.NewChainReaderImpl(cfg, dbtx, nil, nil)
+	consensusHeaderReader := consensuschain.NewReader(cfg, dbtx, nil, nil)
 
 	logger := log.New("tracing")
 	err = core.InitializeBlockExecution(engine.(consensus.Engine), consensusHeaderReader, header, cfg, statedb, logger, nil)
@@ -148,12 +148,18 @@ func TraceTx(
 
 	execCb := func(evm *vm.EVM, refunds bool) (*core.ExecutionResult, error) {
 		gp := new(core.GasPool).AddGas(message.Gas()).AddBlobGas(message.BlobGas())
-		tracer.OnTxStart(evm.GetVMContext(), tx, message.From())
+		if tracer != nil && tracer.Hooks.OnTxStart != nil {
+			tracer.OnTxStart(evm.GetVMContext(), tx, message.From())
+		}
 		result, err := core.ApplyMessage(evm, message, gp, refunds, false /* gasBailout */)
 		if err != nil {
-			tracer.OnTxEnd(nil, err)
+			if tracer != nil && tracer.Hooks.OnTxEnd != nil {
+				tracer.OnTxEnd(nil, err)
+			}
 		} else {
-			tracer.OnTxEnd(&types.Receipt{GasUsed: result.UsedGas}, nil)
+			if tracer != nil && tracer.Hooks.OnTxEnd != nil {
+				tracer.OnTxEnd(&types.Receipt{GasUsed: result.UsedGas}, nil)
+			}
 		}
 		return result, err
 	}

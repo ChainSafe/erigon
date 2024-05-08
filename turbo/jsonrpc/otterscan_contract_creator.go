@@ -31,7 +31,7 @@ func (api *OtterscanAPIImpl) GetContractCreator(ctx context.Context, addr common
 	}
 	defer tx.Rollback()
 
-	latestState := rpchelper.NewLatestStateReader(tx)
+	latestState := rpchelper.NewLatestStateReader(tx, api.historyV3(tx))
 	plainStateAcc, err := latestState.ReadAccountData(addr)
 	if err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func (api *OtterscanAPIImpl) GetContractCreator(ctx context.Context, addr common
 		return nil, nil
 	}
 
-	chainConfig, err := api.chainConfig(tx)
+	chainConfig, err := api.chainConfig(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +69,7 @@ func (api *OtterscanAPIImpl) GetContractCreator(ctx context.Context, addr common
 		if err != nil {
 			return nil, err
 		}
+		defer it.Close()
 		for i := 0; it.HasNext(); i++ {
 			txnID, err := it.Next()
 			if err != nil {

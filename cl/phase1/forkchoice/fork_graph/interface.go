@@ -24,7 +24,7 @@ type ForkGraph interface {
 	GetState(blockRoot libcommon.Hash, alwaysCopy bool) (*state.CachingBeaconState, error)
 	GetCurrentJustifiedCheckpoint(blockRoot libcommon.Hash) (solid.Checkpoint, bool)
 	GetFinalizedCheckpoint(blockRoot libcommon.Hash) (solid.Checkpoint, bool)
-	GetSyncCommittees(blockRoot libcommon.Hash) (*solid.SyncCommittee, *solid.SyncCommittee, bool)
+	GetSyncCommittees(period uint64) (*solid.SyncCommittee, *solid.SyncCommittee, bool)
 	MarkHeaderAsInvalid(blockRoot libcommon.Hash)
 	AnchorSlot() uint64
 	Prune(uint64) error
@@ -33,8 +33,9 @@ type ForkGraph interface {
 	GetLightClientBootstrap(blockRoot libcommon.Hash) (*cltypes.LightClientBootstrap, bool)
 	NewestLightClientUpdate() *cltypes.LightClientUpdate
 	GetLightClientUpdate(period uint64) (*cltypes.LightClientUpdate, bool)
-
-	// extra methods for validator api
-	GetStateAtSlot(slot uint64, alwaysCopy bool) (*state.CachingBeaconState, error)
-	GetStateAtStateRoot(root libcommon.Hash, alwaysCopy bool) (*state.CachingBeaconState, error)
+	GetBalances(blockRoot libcommon.Hash) (solid.Uint64ListSSZ, error)
+	GetInactivitiesScores(blockRoot libcommon.Hash) (solid.Uint64ListSSZ, error)
+	GetPreviousPartecipationIndicies(blockRoot libcommon.Hash) (*solid.BitList, error)
+	GetValidatorSet(blockRoot libcommon.Hash) (*solid.ValidatorSet, error)
+	GetCurrentPartecipationIndicies(blockRoot libcommon.Hash) (*solid.BitList, error)
 }

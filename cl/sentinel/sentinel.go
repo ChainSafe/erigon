@@ -24,15 +24,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon/cl/persistence/blob_storage"
 	"github.com/ledgerwatch/erigon/cl/phase1/forkchoice"
 	"github.com/ledgerwatch/erigon/cl/sentinel/handlers"
 	"github.com/ledgerwatch/erigon/cl/sentinel/handshake"
 	"github.com/ledgerwatch/erigon/cl/sentinel/httpreqresp"
 	"github.com/ledgerwatch/erigon/cl/sentinel/peers"
+	"github.com/ledgerwatch/erigon/cl/utils/eth_clock"
+	"github.com/ledgerwatch/erigon/turbo/snapshotsync/freezeblocks"
 
-	sentinelrpc "github.com/ledgerwatch/erigon-lib/gointerfaces/sentinel"
+	sentinelrpc "github.com/ledgerwatch/erigon-lib/gointerfaces/sentinelproto"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
-	"github.com/ledgerwatch/erigon/cl/persistence"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/p2p/discover"
 	"github.com/ledgerwatch/erigon/p2p/enode"
@@ -77,17 +79,21 @@ type Sentinel struct {
 
 	handshaker *handshake.HandShaker
 
-	db         persistence.RawBeaconBlockChain
+	blockReader freezeblocks.BeaconSnapshotReader
+	blobStorage blob_storage.BlobStorage
+
 	indiciesDB kv.RoDB
 
-	discoverConfig       discover.Config
-	pubsub               *pubsub.PubSub
-	subManager           *GossipManager
-	metrics              bool
-	listenForPeersDoneCh chan struct{}
-	logger               log.Logger
-	forkChoiceReader     forkchoice.ForkChoiceStorageReader
-	pidToEnr             sync.Map
+	discoverConfig   discover.Config
+	pubsub           *pubsub.PubSub
+	subManager       *GossipManager
+	metrics          bool
+	logger           log.Logger
+	forkChoiceReader forkchoice.ForkChoiceStorageReader
+	pidToEnr         sync.Map
+	ethClock         eth_clock.EthereumClock
+
+	metadataLock sync.Mutex
 }
 
 func (s *Sentinel) createLocalNode(
@@ -170,7 +176,7 @@ func (s *Sentinel) createListener() (*discover.UDPv5, error) {
 	if err != nil {
 		return nil, err
 	}
-	handlers.NewConsensusHandlers(s.ctx, s.db, s.indiciesDB, s.host, s.peers, s.cfg.NetworkConfig, localNode, s.cfg.BeaconConfig, s.cfg.GenesisConfig, s.handshaker, s.forkChoiceReader, s.cfg.EnableBlocks).Start()
+	handlers.NewConsensusHandlers(s.ctx, s.blockReader, s.indiciesDB, s.host, s.peers, s.cfg.NetworkConfig, localNode, s.cfg.BeaconConfig, s.ethClock, s.handshaker, s.forkChoiceReader, s.blobStorage, s.cfg.EnableBlocks).Start()
 
 	return net, err
 }
@@ -179,7 +185,9 @@ func (s *Sentinel) createListener() (*discover.UDPv5, error) {
 func New(
 	ctx context.Context,
 	cfg *SentinelConfig,
-	db persistence.RawBeaconBlockChain,
+	ethClock eth_clock.EthereumClock,
+	blockReader freezeblocks.BeaconSnapshotReader,
+	blobStorage blob_storage.BlobStorage,
 	indiciesDB kv.RoDB,
 	logger log.Logger,
 	forkChoiceReader forkchoice.ForkChoiceStorageReader,
@@ -187,11 +195,13 @@ func New(
 	s := &Sentinel{
 		ctx:              ctx,
 		cfg:              cfg,
-		db:               db,
+		blockReader:      blockReader,
 		indiciesDB:       indiciesDB,
 		metrics:          true,
 		logger:           logger,
 		forkChoiceReader: forkChoiceReader,
+		blobStorage:      blobStorage,
+		ethClock:         ethClock,
 	}
 
 	// Setup discovery
@@ -247,7 +257,7 @@ func New(
 	mux.Get("/", httpreqresp.NewRequestHandler(host))
 	s.httpApi = mux
 
-	s.handshaker = handshake.New(ctx, cfg.GenesisConfig, cfg.BeaconConfig, s.httpApi)
+	s.handshaker = handshake.New(ctx, s.ethClock, cfg.BeaconConfig, s.httpApi)
 
 	pubsub.TimeCacheDuration = 550 * gossipSubHeartbeatInterval
 	s.pubsub, err = pubsub.NewGossipSub(s.ctx, s.host, s.pubsubOptions()...)
@@ -296,7 +306,6 @@ func (s *Sentinel) Start() error {
 }
 
 func (s *Sentinel) Stop() {
-	s.listenForPeersDoneCh <- struct{}{}
 	s.listener.Close()
 	s.subManager.Close()
 	s.host.Close()
