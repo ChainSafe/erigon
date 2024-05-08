@@ -20,7 +20,7 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 	t.Helper()
 
 	prestate := readPrestateData(t, prestatePath)
-	tx, err := types.UnmarshalTransactionFromBinary(common.FromHex(prestate.Input))
+	tx, err := types.UnmarshalTransactionFromBinary(common.FromHex(prestate.Input), false)
 	if err != nil {
 		t.Fatalf("failed to parse testcase input: %v", err)
 	}
@@ -32,7 +32,7 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 	dbTx, err := m.DB.BeginRw(m.Ctx)
 	require.NoError(t, err)
 	defer dbTx.Rollback()
-	stateDB, _ := tests.MakePreState(rules, dbTx, prestate.Genesis.Alloc, context.BlockNumber)
+	stateDB, _ := tests.MakePreState(rules, dbTx, prestate.Genesis.Alloc, uint64(context.BlockNumber), m.HistoryV3)
 
 	var logger = log.New("test")
 	genesisBlock, _, err := core.GenesisToBlock(prestate.Genesis, "", logger, nil)

@@ -85,12 +85,12 @@ func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Trac
 
 func NewTracingHooksFromFirehose(tracer *Firehose) *tracing.Hooks {
 	return &tracing.Hooks{
-		OnBlockchainInit:       tracer.OnBlockchainInit,
-		OnGenesisBlock:         tracer.OnGenesisBlock,
-		OnBlockStart:           tracer.OnBlockStart,
-		OnBlockEnd:             tracer.OnBlockEnd,
-		OnBeaconBlockRootStart: tracer.OnBeaconBlockRootStart,
-		OnBeaconBlockRootEnd:   tracer.OnBeaconBlockRootEnd,
+		OnBlockchainInit:  tracer.OnBlockchainInit,
+		OnGenesisBlock:    tracer.OnGenesisBlock,
+		OnBlockStart:      tracer.OnBlockStart,
+		OnBlockEnd:        tracer.OnBlockEnd,
+		OnSystemCallStart: tracer.OnSystemCallStart,
+		OnSystemCallEnd:   tracer.OnSystemCallEnd,
 
 		OnTxStart: tracer.OnTxStart,
 		OnTxEnd:   tracer.OnTxEnd,
@@ -496,15 +496,15 @@ func (f *Firehose) reorderCallOrdinals(call *pbeth.Call, ordinalBase uint64) (or
 	return call.EndOrdinal
 }
 
-func (f *Firehose) OnBeaconBlockRootStart(root libcommon.Hash) {
-	firehoseInfo("system call start (for=%s)", "beacon_block_root")
+func (f *Firehose) OnSystemCallStart() {
+	firehoseInfo("system call start")
 	f.ensureInBlockAndNotInTrx()
 
 	f.inSystemCall = true
 	f.transaction = &pbeth.TransactionTrace{}
 }
 
-func (f *Firehose) OnBeaconBlockRootEnd() {
+func (f *Firehose) OnSystemCallEnd() {
 	f.ensureInBlockAndInTrx()
 	f.ensureInSystemCall()
 

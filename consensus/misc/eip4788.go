@@ -10,15 +10,12 @@ import (
 )
 
 func ApplyBeaconRootEip4788(parentBeaconBlockRoot *libcommon.Hash, syscall consensus.SystemCall, eLogger *tracing.Hooks) {
-	if eLogger != nil {
-		if eLogger.OnBeaconBlockRootStart != nil {
-			eLogger.OnBeaconBlockRootStart(*parentBeaconBlockRoot)
-		}
-		if eLogger.OnBeaconBlockRootEnd != nil {
-			defer func() {
-				eLogger.OnBeaconBlockRootEnd()
-			}()
-		}
+	if eLogger != nil && eLogger.OnSystemCallStart != nil {
+		eLogger.OnSystemCallStart()
+	}
+
+	if eLogger != nil && eLogger.OnSystemCallEnd != nil {
+		defer eLogger.OnSystemCallEnd()
 	}
 
 	_, err := syscall(params.BeaconRootsAddress, parentBeaconBlockRoot.Bytes())
