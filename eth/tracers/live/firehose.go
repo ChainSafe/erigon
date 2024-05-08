@@ -73,49 +73,57 @@ func init() {
 }
 
 func newFirehoseTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
-	var config FirehoseConfig
-	if len([]byte(cfg)) > 0 {
-		if err := json.Unmarshal(cfg, &config); err != nil {
-			return nil, fmt.Errorf("failed to parse Firehose config: %w", err)
-		}
+	tracer, err := NewFirehoseFromRawJSON(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	tracer := NewFirehose(&config)
-
 	return &tracers.Tracer{
-		Hooks: &tracing.Hooks{
-			OnBlockchainInit:       tracer.OnBlockchainInit,
-			OnGenesisBlock:         tracer.OnGenesisBlock,
-			OnBlockStart:           tracer.OnBlockStart,
-			OnBlockEnd:             tracer.OnBlockEnd,
-			OnBeaconBlockRootStart: tracer.OnBeaconBlockRootStart,
-			OnBeaconBlockRootEnd:   tracer.OnBeaconBlockRootEnd,
-
-			OnTxStart: tracer.OnTxStart,
-			OnTxEnd:   tracer.OnTxEnd,
-			OnEnter:   tracer.OnCallEnter,
-			OnExit:    tracer.OnCallExit,
-			OnOpcode:  tracer.OnOpcode,
-			OnFault:   tracer.OnOpcodeFault,
-
-			OnBalanceChange: tracer.OnBalanceChange,
-			OnNonceChange:   tracer.OnNonceChange,
-			OnCodeChange:    tracer.OnCodeChange,
-			OnStorageChange: tracer.OnStorageChange,
-			OnGasChange:     tracer.OnGasChange,
-			OnLog:           tracer.OnLog,
-
-			// This should actually be conditional but it's not possible to do it in the hooks
-			// directly because the chain ID will be known only after the `OnBlockchainInit` call.
-			// So we register it unconditionally and the actual `OnNewAccount` hook will decide
-			// what it needs to do.
-			OnNewAccount: tracer.OnNewAccount,
-		},
+		Hooks: NewTracingHooksFromFirehose(tracer),
 	}, nil
+}
+
+func NewTracingHooksFromFirehose(tracer *Firehose) *tracing.Hooks {
+	return &tracing.Hooks{
+		OnBlockchainInit:       tracer.OnBlockchainInit,
+		OnGenesisBlock:         tracer.OnGenesisBlock,
+		OnBlockStart:           tracer.OnBlockStart,
+		OnBlockEnd:             tracer.OnBlockEnd,
+		OnBeaconBlockRootStart: tracer.OnBeaconBlockRootStart,
+		OnBeaconBlockRootEnd:   tracer.OnBeaconBlockRootEnd,
+
+		OnTxStart: tracer.OnTxStart,
+		OnTxEnd:   tracer.OnTxEnd,
+		OnEnter:   tracer.OnCallEnter,
+		OnExit:    tracer.OnCallExit,
+		OnOpcode:  tracer.OnOpcode,
+		OnFault:   tracer.OnOpcodeFault,
+
+		OnBalanceChange: tracer.OnBalanceChange,
+		OnNonceChange:   tracer.OnNonceChange,
+		OnCodeChange:    tracer.OnCodeChange,
+		OnStorageChange: tracer.OnStorageChange,
+		OnGasChange:     tracer.OnGasChange,
+		OnLog:           tracer.OnLog,
+
+		// This should actually be conditional but it's not possible to do it in the hooks
+		// directly because the chain ID will be known only after the `OnBlockchainInit` call.
+		// So we register it unconditionally and the actual `OnNewAccount` hook will decide
+		// what it needs to do.
+		OnNewAccount: tracer.OnNewAccount,
+	}
 }
 
 type FirehoseConfig struct {
 	ApplyBackwardCompatibility *bool `json:"applyBackwardCompatibility"`
+
+	// Only used for testing, only possible through JSON configuration
+	private *privateFirehoseConfig
+}
+
+type privateFirehoseConfig struct {
+	FlushToTestBuffer  bool `json:"flushToTestBuffer"`
+	IgnoreGenesisBlock bool `json:"ignoreGenesisBlock"`
 }
 
 // LogKeValues returns a list of key-values to be logged when the config is printed.
@@ -171,14 +179,41 @@ type Firehose struct {
 	callStack               *CallStack
 	deferredCallState       *DeferredCallState
 	latestCallEnterSuicided bool
+
+	// Testing state, only used in tests and private configs
+	testingBuffer             *bytes.Buffer
+	testingIgnoreGenesisBlock bool
 }
 
 const FirehoseProtocolVersion = "3.0"
 
+func NewFirehoseFromRawJSON(cfg json.RawMessage) (*Firehose, error) {
+	var config FirehoseConfig
+	if len([]byte(cfg)) > 0 {
+		if err := json.Unmarshal(cfg, &config); err != nil {
+			return nil, fmt.Errorf("failed to parse Firehose config: %w", err)
+		}
+
+		// Special handling of some "private" fields
+		type privateConfigRoot struct {
+			Private *privateFirehoseConfig `json:"_private"`
+		}
+
+		var privateConfig privateConfigRoot
+		if err := json.Unmarshal(cfg, &privateConfig); err != nil {
+			log.Info("Firehose failed to parse private config, ignoring", "error", err)
+		} else {
+			config.private = privateConfig.Private
+		}
+	}
+
+	return NewFirehose(&config), nil
+}
+
 func NewFirehose(config *FirehoseConfig) *Firehose {
 	log.Info("Firehose tracer created", config.LogKeyValues()...)
 
-	return &Firehose{
+	firehose := &Firehose{
 		// Global state
 		outputBuffer:               bytes.NewBuffer(make([]byte, 0, 100*1024*1024)),
 		initSent:                   new(atomic.Bool),
@@ -200,6 +235,15 @@ func NewFirehose(config *FirehoseConfig) *Firehose {
 		deferredCallState:       NewDeferredCallState(),
 		latestCallEnterSuicided: false,
 	}
+
+	if config.private != nil {
+		firehose.testingIgnoreGenesisBlock = config.private.IgnoreGenesisBlock
+		if config.private.FlushToTestBuffer {
+			firehose.testingBuffer = bytes.NewBuffer(nil)
+		}
+	}
+
+	return firehose
 }
 
 func (f *Firehose) newIsolatedTransactionTracer(tracerID string) *Firehose {
@@ -262,7 +306,7 @@ func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
 	f.chainConfig = chainConfig
 
 	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
-		printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
+		f.printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
 	} else {
 		f.panicInvalidState("The OnBlockchainInit callback was called more than once", 0)
 	}
@@ -1002,6 +1046,12 @@ func computeCallSource(depth int) string {
 }
 
 func (f *Firehose) OnGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
+	firehoseInfo("genesis block (number=%d hash=%s)", b.NumberU64(), b.Hash())
+	if f.testingIgnoreGenesisBlock {
+		firehoseInfo("genesis block ignored due to testing config")
+		return
+	}
+
 	f.ensureBlockChainInit()
 
 	f.OnBlockStart(tracing.BlockEvent{Block: b, TD: big.NewInt(0), Finalized: nil, Safe: nil})
@@ -1427,7 +1477,7 @@ func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *Fina
 
 	f.outputBuffer.WriteString("\n")
 
-	flushToFirehose(f.outputBuffer.Bytes(), os.Stdout)
+	f.flushToFirehose(f.outputBuffer.Bytes())
 }
 
 // printToFirehose is an easy way to print to Firehose format, it essentially
@@ -1435,8 +1485,8 @@ func (f *Firehose) printBlockToFirehose(block *pbeth.Block, finalityStatus *Fina
 // as adding a newline at the end.
 //
 // It flushes this through [flushToFirehose] to the `os.Stdout` writer.
-func printToFirehose(input ...string) {
-	flushToFirehose([]byte("FIRE "+strings.Join(input, " ")+"\n"), os.Stdout)
+func (f *Firehose) printToFirehose(input ...string) {
+	f.flushToFirehose([]byte("FIRE " + strings.Join(input, " ") + "\n"))
 }
 
 // flushToFirehose sends data to Firehose via `io.Writter` checking for errors
@@ -1445,7 +1495,12 @@ func printToFirehose(input ...string) {
 // If error is still present after 10 retries, prints an error message to `writer`
 // as well as writing file `/tmp/firehose_writer_failed_print.log` with the same
 // error message.
-func flushToFirehose(in []byte, writer io.Writer) {
+func (f *Firehose) flushToFirehose(in []byte) {
+	var writer io.Writer = os.Stdout
+	if f.testingBuffer != nil {
+		writer = f.testingBuffer
+	}
+
 	var written int
 	var err error
 	loops := 10
@@ -1468,6 +1523,14 @@ func flushToFirehose(in []byte, writer io.Writer) {
 	}
 
 	fmt.Fprint(writer, errstr)
+}
+
+// TestingBuffer is an internal method only used for testing purposes
+// that should never be used in production code.
+//
+// There is no public api guaranteed for this method.
+func (f *Firehose) InternalTestingBuffer() *bytes.Buffer {
+	return f.testingBuffer
 }
 
 // FIXME: Create a unit test that is going to fail as soon as any header is added in
