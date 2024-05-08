@@ -51,9 +51,6 @@ func (s *StageState) LogPrefix() string { return s.state.LogPrefix() }
 
 // Update updates the stage state (current block number) in the database. Can be called multiple times during stage execution.
 func (s *StageState) Update(db kv.Putter, newBlockNum uint64) error {
-	if m, ok := syncMetrics[s.ID]; ok {
-		m.SetUint64(newBlockNum)
-	}
 	return stages.SaveStageProgress(db, s.ID, newBlockNum)
 }
 func (s *StageState) UpdatePrune(db kv.Putter, blockNum uint64) error {
@@ -64,13 +61,6 @@ func (s *StageState) UpdatePrune(db kv.Putter, blockNum uint64) error {
 func (s *StageState) ExecutionAt(db kv.Getter) (uint64, error) {
 	execution, err := stages.GetStageProgress(db, stages.Execution)
 	return execution, err
-}
-
-// IntermediateHashesAt gets the current state of the "IntermediateHashes" stage.
-// A block is fully validated after the IntermediateHashes stage is passed successfully.
-func (s *StageState) IntermediateHashesAt(db kv.Getter) (uint64, error) {
-	progress, err := stages.GetStageProgress(db, stages.IntermediateHashes)
-	return progress, err
 }
 
 type UnwindReason struct {
@@ -100,7 +90,9 @@ func ForkReset(badBlock libcommon.Hash) UnwindReason {
 // Unwinder allows the stage to cause an unwind.
 type Unwinder interface {
 	// UnwindTo begins staged sync unwind to the specified block.
-	UnwindTo(unwindPoint uint64, reason UnwindReason)
+	UnwindTo(unwindPoint uint64, reason UnwindReason, tx kv.Tx) error
+	HasUnwindPoint() bool
+	LogPrefix() string
 }
 
 // UnwindState contains the information about unwind.

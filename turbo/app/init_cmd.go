@@ -40,7 +40,7 @@ func initGenesis(cliCtx *cli.Context) error {
 	var logger log.Logger
 	var tracer *tracers.Tracer
 	var err error
-	if logger, tracer, _, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
+	if logger, tracer, _, _, err = debug.Setup(cliCtx, true /* rootLogger */); err != nil {
 		return err
 	}
 	// Make sure we have a valid genesis JSON

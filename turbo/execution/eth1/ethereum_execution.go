@@ -5,15 +5,16 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/ledgerwatch/erigon-lib/chain"
-	libcommon "github.com/ledgerwatch/erigon-lib/common"
-	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	"github.com/ledgerwatch/erigon-lib/gointerfaces/execution"
-	"github.com/ledgerwatch/erigon-lib/wrap"
-	"github.com/ledgerwatch/erigon/eth/ethconfig"
 	"github.com/ledgerwatch/log/v3"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	"github.com/ledgerwatch/erigon-lib/chain"
+	libcommon "github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces"
+	execution "github.com/ledgerwatch/erigon-lib/gointerfaces/executionproto"
+	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
 
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon/common/math"
@@ -34,6 +35,7 @@ const maxBlocksLookBehind = 32
 
 // EthereumExecutionModule describes ethereum execution logic and indexing.
 type EthereumExecutionModule struct {
+	bacgroundCtx context.Context
 	// Snapshots + MDBX
 	blockReader services.FullBlockReader
 
@@ -72,6 +74,7 @@ func NewEthereumExecutionModule(blockReader services.FullBlockReader, db kv.RwDB
 	stateChangeConsumer shards.StateChangeConsumer,
 	logger log.Logger, engine consensus.Engine,
 	historyV3 bool, syncCfg ethconfig.Sync,
+	ctx context.Context,
 ) *EthereumExecutionModule {
 	return &EthereumExecutionModule{
 		blockReader:         blockReader,
@@ -88,8 +91,9 @@ func NewEthereumExecutionModule(blockReader services.FullBlockReader, db kv.RwDB
 		stateChangeConsumer: stateChangeConsumer,
 		engine:              engine,
 
-		historyV3: historyV3,
-		syncCfg:   syncCfg,
+		historyV3:    historyV3,
+		syncCfg:      syncCfg,
+		bacgroundCtx: ctx,
 	}
 }
 
@@ -152,6 +156,7 @@ func (e *EthereumExecutionModule) canonicalHash(ctx context.Context, tx kv.Tx, b
 
 func (e *EthereumExecutionModule) ValidateChain(ctx context.Context, req *execution.ValidationRequest) (*execution.ValidationReceipt, error) {
 	if !e.semaphore.TryAcquire(1) {
+		e.logger.Trace("ethereumExecutionModule.ValidateChain: ExecutionStatus_Busy")
 		return &execution.ValidationReceipt{
 			LatestValidHash:  gointerfaces.ConvertHashToH256(libcommon.Hash{}),
 			ValidationStatus: execution.ExecutionStatus_Busy,
@@ -246,31 +251,50 @@ func (e *EthereumExecutionModule) Start(ctx context.Context) {
 	e.semaphore.Acquire(ctx, 1)
 	defer e.semaphore.Release(1)
 
-	more := true
-
-	for more {
-		var err error
-
-		if more, err = e.executionPipeline.Run(e.db, wrap.TxContainer{}, true); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				e.logger.Error("Could not start execution service", "err", err)
-			}
-			continue
-		}
-
-		if err := e.executionPipeline.RunPrune(e.db, nil, true); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				e.logger.Error("Could not start execution service", "err", err)
-			}
-			continue
+	if err := stages.ProcessFrozenBlocks(ctx, e.db, e.blockReader, e.executionPipeline); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			e.logger.Error("Could not start execution service", "err", err)
 		}
 	}
 }
 
 func (e *EthereumExecutionModule) Ready(context.Context, *emptypb.Empty) (*execution.ReadyResponse, error) {
 	if !e.semaphore.TryAcquire(1) {
+		e.logger.Trace("ethereumExecutionModule.Ready: ExecutionStatus_Busy")
 		return &execution.ReadyResponse{Ready: false}, nil
 	}
 	defer e.semaphore.Release(1)
 	return &execution.ReadyResponse{Ready: true}, nil
+}
+
+func (e *EthereumExecutionModule) HasBlock(ctx context.Context, in *execution.GetSegmentRequest) (*execution.HasBlockResponse, error) {
+	tx, err := e.db.BeginRo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if in.BlockHash == nil {
+		return nil, errors.New("block hash is nil, hasBlock support only by hash")
+	}
+	blockHash := gointerfaces.ConvertH256ToHash(in.BlockHash)
+
+	num := rawdb.ReadHeaderNumber(tx, blockHash)
+	if num == nil {
+		return &execution.HasBlockResponse{HasBlock: false}, nil
+	}
+	if *num <= e.blockReader.FrozenBlocks() {
+		return &execution.HasBlockResponse{HasBlock: true}, nil
+	}
+	has, err := tx.Has(kv.Headers, dbutils.HeaderKey(*num, blockHash))
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return &execution.HasBlockResponse{HasBlock: false}, nil
+	}
+	has, err = tx.Has(kv.BlockBody, dbutils.HeaderKey(*num, blockHash))
+	if err != nil {
+		return nil, err
+	}
+	return &execution.HasBlockResponse{HasBlock: has}, nil
 }
