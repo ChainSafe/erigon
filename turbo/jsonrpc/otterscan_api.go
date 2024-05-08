@@ -141,17 +141,19 @@ func (api *OtterscanAPIImpl) runTracer(ctx context.Context, tx kv.Tx, hash commo
 	}
 	vmenv := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
 
-	tracer.OnTxStart(vmenv.GetVMContext(), txn, msg.From())
+	if tracer != nil && tracer.Hooks.OnTxStart != nil {
+		tracer.Hooks.OnTxStart(vmenv.GetVMContext(), txn, msg.From())
+	}
 	result, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()).AddBlobGas(msg.BlobGas()), true, false /* gasBailout */)
 	if err != nil {
-		if tracer != nil {
-			tracer.OnTxEnd(nil, err)
+		if tracer != nil && tracer.Hooks.OnTxEnd != nil {
+			tracer.Hooks.OnTxEnd(nil, err)
 		}
 		return nil, fmt.Errorf("tracing failed: %v", err)
 	}
 
-	if tracer != nil {
-		tracer.OnTxEnd(&types.Receipt{GasUsed: result.UsedGas}, nil)
+	if tracer != nil && tracer.Hooks.OnTxEnd != nil {
+		tracer.Hooks.OnTxEnd(&types.Receipt{GasUsed: result.UsedGas}, nil)
 	}
 	return result, nil
 }

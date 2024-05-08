@@ -101,18 +101,18 @@ func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, bloc
 		TxContext := core.NewEVMTxContext(msg)
 
 		vmenv := vm.NewEVM(BlockContext, TxContext, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer.Tracer().Hooks})
-		if tracer != nil && tracer.Tracer().Hooks != nil && tracer.Tracer().Hooks.OnTxStart != nil {
+		if tracer != nil && tracer.Tracer().Hooks.OnTxStart != nil {
 			tracer.Tracer().Hooks.OnTxStart(vmenv.GetVMContext(), tx, msg.From())
 		}
 		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.GetGas()).AddBlobGas(tx.GetBlobGas()), true /* refunds */, false /* gasBailout */)
 		if err != nil {
-			if tracer != nil && tracer.Tracer().Hooks != nil && tracer.Tracer().Hooks.OnTxEnd != nil {
+			if tracer != nil && tracer.Tracer().Hooks.OnTxEnd != nil {
 				tracer.Tracer().Hooks.OnTxEnd(nil, err)
 			}
 			return err
 		}
 
-		if tracer != nil && tracer.Tracer().Hooks != nil && tracer.Tracer().Hooks.OnTxEnd != nil {
+		if tracer != nil && tracer.Tracer().Hooks.OnTxEnd != nil {
 			tracer.Tracer().Hooks.OnTxEnd(&types.Receipt{GasUsed: res.UsedGas}, nil)
 		}
 
