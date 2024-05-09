@@ -232,7 +232,7 @@ func (rw *Worker) RunTxTaskNoLock(txTask *state.TxTask) {
 		if msg.FeeCap().IsZero() && rw.engine != nil {
 			// Only zero-gas transactions may be service ones
 			syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-				return core.SysCallContract(contract, data, rw.chainConfig, ibs, header, rw.engine, true /* constCall */)
+				return core.SysCallContract(contract, data, rw.chainConfig, ibs, header, rw.engine, true /* constCall */, nil)
 			}
 			msg.SetIsFree(rw.engine.IsServiceTransaction(msg.From(), syscall))
 		}

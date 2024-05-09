@@ -141,7 +141,7 @@ func (rw *TraceWorker2) RunTxTask(txTask *state.TxTask) {
 
 		// Block initialisation
 		syscall := func(contract common.Address, data []byte, ibs *state.IntraBlockState, header *types.Header, constCall bool) ([]byte, error) {
-			return core.SysCallContract(contract, data, rw.execArgs.ChainConfig, ibs, header, rw.execArgs.Engine, constCall /* constCall */)
+			return core.SysCallContract(contract, data, rw.execArgs.ChainConfig, ibs, header, rw.execArgs.Engine, constCall /* constCall */, nil)
 		}
 		rw.execArgs.Engine.Initialize(rw.execArgs.ChainConfig, rw.chain, header, ibs, syscall, rw.logger, nil)
 		txTask.Error = ibs.FinalizeTx(rules, noop)
@@ -152,7 +152,7 @@ func (rw *TraceWorker2) RunTxTask(txTask *state.TxTask) {
 
 		// End of block transaction in a block
 		syscall := func(contract common.Address, data []byte) ([]byte, error) {
-			return core.SysCallContract(contract, data, rw.execArgs.ChainConfig, ibs, header, rw.execArgs.Engine, false /* constCall */)
+			return core.SysCallContract(contract, data, rw.execArgs.ChainConfig, ibs, header, rw.execArgs.Engine, false /* constCall */, nil)
 		}
 
 		_, _, err := rw.execArgs.Engine.Finalize(rw.execArgs.ChainConfig, types.CopyHeader(header), ibs, txTask.Txs, txTask.Uncles, txTask.BlockReceipts, txTask.Withdrawals, rw.chain, syscall, rw.logger)
@@ -175,7 +175,7 @@ func (rw *TraceWorker2) RunTxTask(txTask *state.TxTask) {
 		if msg.FeeCap().IsZero() {
 			// Only zero-gas transactions may be service ones
 			syscall := func(contract common.Address, data []byte) ([]byte, error) {
-				return core.SysCallContract(contract, data, rw.execArgs.ChainConfig, ibs, header, rw.execArgs.Engine, true /* constCall */)
+				return core.SysCallContract(contract, data, rw.execArgs.ChainConfig, ibs, header, rw.execArgs.Engine, true /* constCall */, nil)
 			}
 			msg.SetIsFree(rw.execArgs.Engine.IsServiceTransaction(msg.From(), syscall))
 		}
