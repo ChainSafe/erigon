@@ -131,7 +131,7 @@ func newCallTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, 
 	}
 	// First callframe contains tx context info
 	// and is populated on start and end.
-	t := &callTracer{callstack: make([]callFrame, 1), config: config}
+	t := &callTracer{callstack: make([]callFrame, 0, 1), config: config}
 	return &tracers.Tracer{
 		Hooks: &tracing.Hooks{
 			OnTxStart: t.OnTxStart,
@@ -164,6 +164,9 @@ func (t *callTracer) OnEnter(depth int, typ byte, from libcommon.Address, to lib
 		Gas:   gas,
 		Value: value.ToBig(),
 	}
+	if depth == 0 {
+		call.Gas = t.gasLimit
+	}
 	t.callstack = append(t.callstack, call)
 }
 
@@ -177,7 +180,6 @@ func (t *callTracer) OnExit(depth int, output []byte, gasUsed uint64, err error,
 	}
 
 	t.depth = depth - 1
-
 	if t.config.OnlyTopCall {
 		return
 	}
