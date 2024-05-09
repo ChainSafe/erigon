@@ -155,7 +155,7 @@ func TestTracer(t *testing.T) {
 		}, {
 			code:     "{res: [], step: function(log) { if (log.op.toString() === 'STOP') { this.res.push(log.memory.slice(5, 1025 * 1024)) } }, fault: function() {}, result: function() { return this.res }}",
 			want:     "",
-			fail:     "tracer reached limit for padding memory slice: end 1049600, memorySize 32 at step (<eval>:1:83(23))    in server-side tracer function 'step'",
+			fail:     "reached limit for padding memory slice: 1049568 at step (<eval>:1:83(23))    in server-side tracer function 'step'",
 			contract: []byte{byte(vm.PUSH1), byte(0xff), byte(vm.PUSH1), byte(0x00), byte(vm.MSTORE8), byte(vm.STOP)},
 		},
 	} {
@@ -201,14 +201,14 @@ func TestHaltBetweenSteps(t *testing.T) {
 	}
 }
 
-// testNoStepExec tests a regular value transfer (no exec), and accessing the statedb
+// TestNoStepExec tests a regular value transfer (no exec), and accessing the statedb
 // in 'result'
 func TestNoStepExec(t *testing.T) {
 	execTracer := func(code string) []byte {
 		t.Helper()
 		tracer, err := newJsTracer(code, nil, nil)
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
 		env := vm.NewEVM(evmtypes.BlockContext{BlockNumber: 1}, evmtypes.TxContext{GasPrice: uint256.NewInt(100)}, &dummyStatedb{}, params.TestChainConfig, vm.Config{Debug: true, Tracer: tracer.Hooks})
 		tracer.OnTxStart(env.GetVMContext(), types.NewTransaction(0, libcommon.Address{}, new(uint256.Int), 0, new(uint256.Int), nil), libcommon.Address{})
@@ -216,7 +216,7 @@ func TestNoStepExec(t *testing.T) {
 		tracer.OnExit(0, nil, 0, nil, false)
 		ret, err := tracer.GetResult()
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
 		return ret
 	}
