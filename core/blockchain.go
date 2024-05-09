@@ -304,7 +304,7 @@ func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain
 }
 
 // SysCreate is a special (system) contract creation methods for genesis constructors.
-func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header, bcLogger *tracing.Hooks) (result []byte, err error) {
+func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config, ibs *state.IntraBlockState, header *types.Header) (result []byte, err error) {
 	msg := types.NewMessage(
 		contract,
 		nil, // to
@@ -316,7 +316,7 @@ func SysCreate(contract libcommon.Address, data []byte, chainConfig chain.Config
 		true, // isFree
 		nil,  // maxFeePerBlobGas
 	)
-	vmConfig := vm.Config{NoReceipts: true, Tracer: bcLogger}
+	vmConfig := vm.Config{NoReceipts: true}
 	// Create a new context to be used in the EVM environment
 	author := &contract
 	txContext := NewEVMTxContext(msg)
