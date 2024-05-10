@@ -535,6 +535,11 @@ func (f *Firehose) OnTxStart(evm *tracing.VMContext, tx types.Transaction, from 
 func (f *Firehose) onTxStart(tx types.Transaction, hash libcommon.Hash, from, to libcommon.Address) {
 	v, r, s := tx.RawSignatureValues()
 
+	var blobGas *uint64
+	if tx.Type() == types.BlobTxType {
+		blobGas = ptr(tx.GetBlobGas())
+	}
+
 	f.transaction = &pbeth.TransactionTrace{
 		BeginOrdinal:         f.blockOrdinal.Next(),
 		Hash:                 hash.Bytes(),
@@ -552,6 +557,9 @@ func (f *Firehose) onTxStart(tx types.Transaction, hash libcommon.Hash, from, to
 		AccessList:           newAccessListFromChain(tx.GetAccessList()),
 		MaxFeePerGas:         maxFeePerGas(tx),
 		MaxPriorityFeePerGas: maxPriorityFeePerGas(tx),
+		BlobGas:              blobGas,
+		// BlobGasFeeCap:        firehoseBigIntFromNative(tx.BlobGasFeeCap()),
+		BlobHashes: newBlobHashesFromChain(tx.GetBlobHashes()),
 	}
 }
 
@@ -877,7 +885,7 @@ func (f *Firehose) captureInterpreterStep(activeCall *pbeth.Call) {
 }
 
 func (f *Firehose) callStart(source string, callType pbeth.CallType, from libcommon.Address, to libcommon.Address, precomile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	firehoseDebug("call start (source=%s index=%d type=%s input=%s)", source, f.callStack.NextIndex(), callType, inputView(input))
+	firehoseDebug("call start (source=%s index=%d type=%s gas=%d input=%s)", source, f.callStack.NextIndex(), callType, gas, inputView(input))
 	f.ensureInBlockAndInTrx()
 
 	if *f.applyBackwardCompatibility {
@@ -1638,6 +1646,11 @@ func newTxReceiptFromChain(receipt *types.Receipt, txType pbeth.TransactionTrace
 		CumulativeGasUsed: receipt.CumulativeGasUsed,
 		LogsBloom:         receipt.Bloom[:],
 	}
+
+	// if txType == pbeth.TransactionTrace_TRX_TYPE_BLOB {
+	// 	out.BlobGasUsed = &receipt.BlobGasUsed
+	// 	out.BlobGasPrice = firehoseBigIntFromNative(receipt.BlobGasPrice)
+	// }
 
 	if len(receipt.Logs) > 0 {
 		out.Logs = make([]*pbeth.Log, len(receipt.Logs))

@@ -11,10 +11,12 @@ import (
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/consensus"
 	"github.com/ledgerwatch/erigon/consensus/ethash"
+	"github.com/ledgerwatch/erigon/consensus/misc"
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
 	"github.com/ledgerwatch/log/v3"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,7 +93,7 @@ type callContext struct {
 	BaseFee    *math.HexOrDecimal256 `json:"baseFeePerGas"`
 }
 
-func (c *callContext) toBlockContext(genesis *types.Genesis) evmtypes.BlockContext {
+func (c *callContext) toBlockContext(genesis *types.Genesis) (evmtypes.BlockContext, error) {
 	context := evmtypes.BlockContext{
 		CanTransfer: core.CanTransfer,
 		Transfer:    core.Transfer,
@@ -107,5 +109,16 @@ func (c *callContext) toBlockContext(genesis *types.Genesis) evmtypes.BlockConte
 		context.BaseFee = baseFee
 	}
 
-	return context
+	if genesis.ExcessBlobGas != nil && genesis.BlobGasUsed != nil {
+		var logger = log.New("test")
+		genesisBlock, _, err := core.GenesisToBlock(genesis, "", logger, nil)
+		if err != nil {
+			return evmtypes.BlockContext{}, err
+		}
+
+		excessBlobGas := misc.CalcExcessBlobGas(genesis.Config, genesisBlock.Header())
+		context.ExcessBlobGas = &excessBlobGas
+	}
+
+	return context, nil
 }

@@ -1,6 +1,7 @@
 package firehose_test
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -25,7 +26,8 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 		t.Fatalf("failed to parse testcase input: %v", err)
 	}
 
-	context := prestate.Context.toBlockContext(prestate.Genesis)
+	context, err := prestate.Context.toBlockContext(prestate.Genesis)
+	require.NoError(t, err)
 	rules := prestate.Genesis.Config.Rules(context.BlockNumber, context.Time)
 
 	m := mock.Mock(t)
@@ -48,6 +50,8 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 		BaseFee:               context.BaseFee.ToBig(),
 		ParentBeaconBlockRoot: ptr(common.Hash{}),
 	}, []types.Transaction{tx}, nil, nil, nil)
+
+	fmt.Printf("%+v\n", block.GasLimit())
 
 	stateDB.SetLogger(hooks)
 	stateDB.SetTxContext(tx.Hash(), block.Hash(), 0)
