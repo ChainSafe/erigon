@@ -1,7 +1,6 @@
 package firehose_test
 
 import (
-	"fmt"
 	"math/big"
 	"testing"
 
@@ -50,8 +49,6 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 		BaseFee:               context.BaseFee.ToBig(),
 		ParentBeaconBlockRoot: ptr(common.Hash{}),
 	}, []types.Transaction{tx}, nil, nil, nil)
-
-	fmt.Printf("%+v\n", block.GasLimit())
 
 	stateDB.SetLogger(hooks)
 	stateDB.SetTxContext(tx.Hash(), block.Hash(), 0)

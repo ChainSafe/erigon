@@ -58,8 +58,6 @@ func (lines firehoseBlockLines) assertOnlyBlockEquals(t *testing.T, goldenDir st
 		require.NoError(t, protojson.Unmarshal(expected, expectedBlock))
 
 		if !proto.Equal(expectedBlock, line.Block) {
-			data, _ := protojson.Marshal(line.Block)
-			fmt.Println(string(data))
 			assert.EqualExportedValues(t, expectedBlock, line.Block, "Run 'GOLDEN_UPDATE=true go test ./... -run %q' to update golden file", t.Name())
 		}
 	}
