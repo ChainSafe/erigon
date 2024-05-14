@@ -127,6 +127,7 @@ func ExecuteBlockEphemerally(
 	includedTxs = make(types.Transactions, 0, block.Transactions().Len())
 	receipts = make(types.Receipts, 0, block.Transactions().Len())
 	noop := state.NewNoopWriter()
+	var allLogs types.Logs
 	for i, tx := range block.Transactions() {
 		ibs.SetTxContext(tx.Hash(), block.Hash(), i)
 		// writeTrace := false
@@ -158,6 +159,7 @@ func ExecuteBlockEphemerally(
 				receipts = append(receipts, receipt)
 			}
 		}
+		allLogs = append(allLogs, receipt.Logs...)
 	}
 
 	receiptSha := types.DeriveSha(receipts)
@@ -186,7 +188,7 @@ func ExecuteBlockEphemerally(
 	}
 	if !vmConfig.ReadOnly {
 		txs := block.Transactions()
-		if _, _, _, err := FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), chainReader, false, logger); err != nil {
+		if _, _, _, err := FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), block.Requests(), chainReader, false, logger); err != nil {
 			return nil, err
 		}
 	}
@@ -222,6 +224,19 @@ func ExecuteBlockEphemerally(
 		}
 
 		execRs.StateSyncReceipt = stateSyncReceipt
+	}
+
+	if chainConfig.IsPrague(block.Time()) {
+		requests, err := types.ParseDepositLogs(allLogs, chainConfig.DepositContract)
+		if err != nil {
+			return nil, fmt.Errorf("error: could not parse requests logs: %v", err)
+		}
+
+		rh := types.DeriveSha(requests)
+		if *block.Header().RequestsRoot != rh && !vmConfig.NoReceipts {
+			// TODO(racytech): do we have to check it here?
+			return nil, fmt.Errorf("error: invalid requests root hash, expected: %v, got :%v", *block.Header().RequestsRoot, rh)
+		}
 	}
 
 	return execRs, nil
@@ -338,7 +353,7 @@ func FinalizeBlockExecution(
 	header *types.Header, txs types.Transactions, uncles []*types.Header,
 	stateWriter state.StateWriter, cc *chain.Config,
 	ibs *state.IntraBlockState, receipts types.Receipts,
-	withdrawals []*types.Withdrawal, chainReader consensus.ChainReader,
+	withdrawals []*types.Withdrawal, requests []*types.Request, chainReader consensus.ChainReader,
 	isMining bool,
 	logger log.Logger,
 ) (newBlock *types.Block, newTxs types.Transactions, newReceipt types.Receipts, err error) {
@@ -346,9 +361,9 @@ func FinalizeBlockExecution(
 		return SysCallContract(contract, data, cc, ibs, header, engine, false /* constCall */, nil)
 	}
 	if isMining {
-		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, chainReader, syscall, nil, logger)
+		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, requests, chainReader, syscall, nil, logger)
 	} else {
-		_, _, err = engine.Finalize(cc, header, ibs, txs, uncles, receipts, withdrawals, chainReader, syscall, logger)
+		_, _, err = engine.Finalize(cc, header, ibs, txs, uncles, receipts, withdrawals, requests, chainReader, syscall, logger)
 	}
 	if err != nil {
 		return nil, nil, nil, err
