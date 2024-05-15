@@ -209,7 +209,10 @@ func Call(address libcommon.Address, input []byte, cfg *Config) ([]byte, uint64,
 
 	vmenv := NewEnv(cfg)
 
-	sender := cfg.State.GetOrNewStateObject(cfg.Origin)
+	// Hack for firehose
+	// we don't want to track the origin account creation
+	// sender := cfg.State.GetOrNewStateObject(cfg.Origin)
+	sender := vm.AccountRef(cfg.Origin)
 	statedb := cfg.State
 	rules := vmenv.ChainRules()
 	if cfg.EVMConfig.Tracer != nil && cfg.EVMConfig.Tracer.OnTxStart != nil {

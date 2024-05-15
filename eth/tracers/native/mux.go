@@ -178,6 +178,14 @@ func (t *muxTracer) OnStorageChange(addr libcommon.Address, slot *libcommon.Hash
 	}
 }
 
+func (t *muxTracer) OnNewAccount(a libcommon.Address, previousExisted bool) {
+	for _, t := range t.tracers {
+		if t.OnNewAccount != nil {
+			t.OnNewAccount(a, previousExisted)
+		}
+	}
+}
+
 // GetResult returns an empty json object.
 func (t *muxTracer) GetResult() (json.RawMessage, error) {
 	resObject := make(map[string]json.RawMessage)
