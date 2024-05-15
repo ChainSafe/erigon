@@ -18,7 +18,10 @@ import (
 func TestRebuildPatriciaTrieBasedOnFiles(t *testing.T) {
 	ctx := context.Background()
 	dirs := datadir.New(t.TempDir())
-	db, agg := temporaltest.NewTestDB(t, dirs)
+	v3, db, agg := temporaltest.NewTestDB(t, dirs)
+	if !v3 {
+		t.Skip("this test is v3 only")
+	}
 	logger := log.New()
 
 	tx, err := db.BeginRw(context.Background())
@@ -85,8 +88,7 @@ func TestRebuildPatriciaTrieBasedOnFiles(t *testing.T) {
 	}
 
 	// checkRoot is false since we do not pass blockReader and want to check root manually afterwards.
-	historyV3 := true
-	cfg := StageTrieCfg(db, false /* checkRoot */, true /* saveHashesToDb */, false /* badBlockHalt */, dirs.Tmp, nil, nil /* hd */, historyV3, agg)
+	cfg := StageTrieCfg(db, false /* checkRoot */, true /* saveHashesToDb */, false /* badBlockHalt */, dirs.Tmp, nil, nil /* hd */, v3, agg)
 
 	rebuiltRoot, err := RebuildPatriciaTrieBasedOnFiles(tx, cfg, context.Background(), log.New())
 	require.NoError(t, err)

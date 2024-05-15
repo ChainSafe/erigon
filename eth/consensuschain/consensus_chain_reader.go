@@ -34,6 +34,32 @@ func (cr Reader) GetHeader(hash common.Hash, number uint64) *types.Header {
 	}
 	return rawdb.ReadHeader(cr.tx, hash, number)
 }
+func (cr Reader) CurrentFinalizedHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceFinalized(cr.tx)
+	if hash == (common.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.tx, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.tx, hash, *number)
+}
+func (cr Reader) CurrentSafeHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceSafe(cr.tx)
+	if hash == (common.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.tx, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.tx, hash, *number)
+}
 func (cr Reader) GetHeaderByNumber(number uint64) *types.Header {
 	if cr.blockReader != nil {
 		h, _ := cr.blockReader.HeaderByNumber(context.Background(), cr.tx, number)

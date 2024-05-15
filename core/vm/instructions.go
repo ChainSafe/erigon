@@ -27,6 +27,7 @@ import (
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/common"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/params"
 )
@@ -464,57 +465,25 @@ func opGasprice(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([
 	return nil, nil
 }
 
-// opBlockhash executes the BLOCKHASH opcode pre-EIP-2935
 func opBlockhash(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
-	arg := scope.Stack.Peek()
-	arg64, overflow := arg.Uint64WithOverflow()
+	num := scope.Stack.Peek()
+	num64, overflow := num.Uint64WithOverflow()
 	if overflow {
-		arg.Clear()
+		num.Clear()
 		return nil, nil
 	}
 	var upper, lower uint64
 	upper = interpreter.evm.Context.BlockNumber
-	if upper <= params.BlockHashOldWindow {
+	if upper < 257 {
 		lower = 0
 	} else {
-		lower = upper - params.BlockHashOldWindow
+		lower = upper - 256
 	}
-	if arg64 >= lower && arg64 < upper {
-		arg.SetBytes(interpreter.evm.Context.GetHash(arg64).Bytes())
+	if num64 >= lower && num64 < upper {
+		num.SetBytes(interpreter.evm.Context.GetHash(num64).Bytes())
 	} else {
-		arg.Clear()
+		num.Clear()
 	}
-	return nil, nil
-}
-
-// opBlockhash2935 executes for the BLOCKHASH opcode post EIP-2935 by returning the
-// corresponding hash for the blocknumber from the state, if within range.
-// The range is defined by [head - params.BlockHashHistoryServeWindow - 1, head - 1]
-// This should not be used without activating EIP-2935
-func opBlockhash2935(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
-	arg := scope.Stack.Peek()
-	arg64, overflow := arg.Uint64WithOverflow()
-	if overflow {
-		arg.Clear()
-		return nil, nil
-	}
-
-	// Check if arg is within allowed window
-	var upper uint64
-	upper = interpreter.evm.Context.BlockNumber
-	if arg64 >= upper || arg64+params.BlockHashHistoryServeWindow < upper {
-		arg.Clear()
-		return nil, nil
-	}
-
-	// Return state read value from the slot
-	storageSlot := libcommon.BytesToHash(uint256.NewInt(arg64 % params.BlockHashHistoryServeWindow).Bytes())
-	interpreter.evm.intraBlockState.GetState(
-		params.HistoryStorageAddress,
-		&storageSlot,
-		arg,
-	)
-
 	return nil, nil
 }
 
@@ -684,7 +653,7 @@ func opCreate(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 	// reuse size int for stackvalue
 	stackvalue := size
 
-	scope.Contract.UseGas(gas)
+	scope.Contract.UseGas(gas, interpreter.evm.Config().Tracer, tracing.GasChangeCallContractCreation)
 
 	res, addr, returnGas, suberr := interpreter.evm.Create(scope.Contract, input, gas, &value)
 
@@ -699,7 +668,8 @@ func opCreate(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 	} else {
 		stackvalue.SetBytes(addr.Bytes())
 	}
-	scope.Contract.Gas += returnGas
+
+	scope.Contract.RefundGas(returnGas, interpreter.evm.config.Tracer, tracing.GasChangeCallLeftOverRefunded)
 
 	if suberr == ErrExecutionReverted {
 		interpreter.returnData = res // set REVERT data to return data buffer
@@ -723,7 +693,7 @@ func opCreate2(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 
 	// Apply EIP150
 	gas -= gas / 64
-	scope.Contract.UseGas(gas)
+	scope.Contract.UseGas(gas, interpreter.evm.Config().Tracer, tracing.GasChangeCallContractCreation2)
 	// reuse size int for stackvalue
 	stackValue := size
 	res, addr, returnGas, suberr := interpreter.evm.Create2(scope.Contract, input, gas, &endowment, &salt)
@@ -734,9 +704,9 @@ func opCreate2(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 	} else {
 		stackValue.SetBytes(addr.Bytes())
 	}
-
 	scope.Stack.Push(&stackValue)
-	scope.Contract.Gas += returnGas
+
+	scope.Contract.RefundGas(returnGas, interpreter.evm.config.Tracer, tracing.GasChangeCallLeftOverRefunded)
 
 	if suberr == ErrExecutionReverted {
 		interpreter.returnData = res // set REVERT data to return data buffer
@@ -778,7 +748,7 @@ func opCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byt
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
-	scope.Contract.Gas += returnGas
+	scope.Contract.RefundGas(returnGas, interpreter.evm.config.Tracer, tracing.GasChangeCallLeftOverRefunded)
 
 	interpreter.returnData = ret
 	return ret, nil
@@ -812,7 +782,7 @@ func opCallCode(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
-	scope.Contract.Gas += returnGas
+	scope.Contract.RefundGas(returnGas, interpreter.evm.config.Tracer, tracing.GasChangeCallLeftOverRefunded)
 
 	interpreter.returnData = ret
 	return ret, nil
@@ -842,7 +812,7 @@ func opDelegateCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
-	scope.Contract.Gas += returnGas
+	scope.Contract.RefundGas(returnGas, interpreter.evm.config.Tracer, tracing.GasChangeCallLeftOverRefunded)
 
 	interpreter.returnData = ret
 	return ret, nil
@@ -872,7 +842,7 @@ func opStaticCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) 
 		scope.Memory.Set(retOffset.Uint64(), retSize.Uint64(), ret)
 	}
 
-	scope.Contract.Gas += returnGas
+	scope.Contract.RefundGas(returnGas, interpreter.evm.config.Tracer, tracing.GasChangeCallLeftOverRefunded)
 
 	interpreter.returnData = ret
 	return ret, nil
@@ -906,15 +876,17 @@ func opSelfdestruct(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext
 	beneficiary := scope.Stack.Pop()
 	callerAddr := scope.Contract.Address()
 	beneficiaryAddr := libcommon.Address(beneficiary.Bytes20())
-	balance := interpreter.evm.IntraBlockState().GetBalance(callerAddr)
-	if interpreter.evm.Config().Debug {
-		if interpreter.cfg.Debug {
-			interpreter.cfg.Tracer.CaptureEnter(SELFDESTRUCT, callerAddr, beneficiaryAddr, false /* precompile */, false /* create */, []byte{}, 0, balance, nil /* code */)
-			interpreter.cfg.Tracer.CaptureExit([]byte{}, 0, nil)
+	balance := *interpreter.evm.IntraBlockState().GetBalance(callerAddr)
+	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance, tracing.BalanceIncreaseSelfdestruct)
+	interpreter.evm.IntraBlockState().Selfdestruct(callerAddr)
+	if interpreter.evm.Config().Tracer != nil {
+		if interpreter.evm.Config().Tracer.OnEnter != nil {
+			interpreter.evm.Config().Tracer.OnEnter(interpreter.depth, byte(SELFDESTRUCT), scope.Contract.Address(), beneficiary.Bytes20(), false, []byte{}, 0, &balance, nil)
+		}
+		if interpreter.evm.Config().Tracer.OnExit != nil {
+			interpreter.evm.Config().Tracer.OnExit(interpreter.depth, []byte{}, 0, nil, false)
 		}
 	}
-	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, balance)
-	interpreter.evm.IntraBlockState().Selfdestruct(callerAddr)
 	return nil, errStopToken
 }
 
@@ -926,15 +898,17 @@ func opSelfdestruct6780(pc *uint64, interpreter *EVMInterpreter, scope *ScopeCon
 	callerAddr := scope.Contract.Address()
 	beneficiaryAddr := libcommon.Address(beneficiary.Bytes20())
 	balance := *interpreter.evm.IntraBlockState().GetBalance(callerAddr)
-	if interpreter.evm.Config().Debug {
-		if interpreter.cfg.Debug {
-			interpreter.cfg.Tracer.CaptureEnter(SELFDESTRUCT, callerAddr, beneficiaryAddr, false /* precompile */, false /* create */, []byte{}, 0, &balance, nil /* code */)
-			interpreter.cfg.Tracer.CaptureExit([]byte{}, 0, nil)
+	interpreter.evm.IntraBlockState().SubBalance(callerAddr, &balance, tracing.BalanceDecreaseSelfdestruct)
+	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance, tracing.BalanceIncreaseSelfdestruct)
+	interpreter.evm.IntraBlockState().Selfdestruct6780(callerAddr)
+	if interpreter.evm.Config().Tracer != nil {
+		if interpreter.cfg.Tracer.OnEnter != nil {
+			interpreter.cfg.Tracer.OnEnter(interpreter.depth, byte(SELFDESTRUCT), scope.Contract.Address(), beneficiary.Bytes20(), false, []byte{}, 0, &balance, nil)
+		}
+		if interpreter.cfg.Tracer.OnExit != nil {
+			interpreter.cfg.Tracer.OnExit(interpreter.depth, []byte{}, 0, nil, false)
 		}
 	}
-	interpreter.evm.IntraBlockState().SubBalance(callerAddr, &balance)
-	interpreter.evm.IntraBlockState().AddBalance(beneficiaryAddr, &balance)
-	interpreter.evm.IntraBlockState().Selfdestruct6780(callerAddr)
 	return nil, errStopToken
 }
 

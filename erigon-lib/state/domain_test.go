@@ -1435,10 +1435,8 @@ func generateTestDataForDomainCommitment(tb testing.TB, keySize1, keySize2, tota
 		key1 := generateRandomKey(r, keySize1)
 		accs[key1] = generateAccountUpdates(r, totalTx, keyTxsLimit)
 		key2 := key1 + generateRandomKey(r, keySize2-keySize1)
-		stor[key2] = generateArbitraryValueUpdates(r, totalTx, keyTxsLimit, 32)
+		stor[key2] = generateStorageUpdates(r, totalTx, keyTxsLimit)
 	}
-	doms["accounts"] = accs
-	doms["storage"] = stor
 
 	return doms
 }
@@ -1496,15 +1494,14 @@ func generateAccountUpdates(r *rand.Rand, totalTx, keyTxsLimit uint64) []upd {
 	return updates
 }
 
-func generateArbitraryValueUpdates(r *rand.Rand, totalTx, keyTxsLimit, maxSize uint64) []upd {
+func generateStorageUpdates(r *rand.Rand, totalTx, keyTxsLimit uint64) []upd {
 	updates := make([]upd, 0)
 	usedTxNums := make(map[uint64]bool)
-	//maxStorageSize := 24 * (1 << 10) // limit on contract code
 
 	for i := uint64(0); i < keyTxsLimit; i++ {
 		txNum := generateRandomTxNum(r, totalTx, usedTxNums)
 
-		value := make([]byte, r.Intn(int(maxSize)))
+		value := make([]byte, r.Intn(24*(1<<10)))
 		r.Read(value)
 
 		updates = append(updates, upd{txNum: txNum, value: value})
@@ -1621,6 +1618,7 @@ func TestDomain_CanPruneAfterAggregation(t *testing.T) {
 	d.historyLargeValues = false
 	d.History.compression = CompressKeys | CompressVals
 	d.compression = CompressKeys | CompressVals
+	d.withExistenceIndex = true
 
 	dc := d.BeginFilesRo()
 	defer dc.Close()
@@ -2512,9 +2510,7 @@ func TestDomainContext_findShortenedKey(t *testing.T) {
 		lastFile := findFile(st, en)
 		require.NotNilf(t, lastFile, "%d-%d", st/dc.d.aggregationStep, en/dc.d.aggregationStep)
 
-		lf := NewArchiveGetter(lastFile.decompressor.MakeGetter(), d.compression)
-
-		shortenedKey, found := dc.findShortenedKey([]byte(key), lf, lastFile)
+		shortenedKey, found := dc.findShortenedKey([]byte(key), lastFile)
 		require.Truef(t, found, "key %d/%d %x file %d %d %s", ki, len(data), []byte(key), lastFile.startTxNum, lastFile.endTxNum, lastFile.decompressor.FileName())
 		require.NotNil(t, shortenedKey)
 		ki++

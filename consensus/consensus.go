@@ -26,6 +26,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/rpc"
@@ -41,6 +42,10 @@ type ChainHeaderReader interface {
 
 	// CurrentHeader retrieves the current header from the local chain.
 	CurrentHeader() *types.Header
+
+	CurrentFinalizedHeader() *types.Header
+
+	CurrentSafeHeader() *types.Header
 
 	// GetHeader retrieves a block header from the database by hash and number.
 	GetHeader(hash libcommon.Hash, number uint64) *types.Header
@@ -146,7 +151,7 @@ type EngineWriter interface {
 
 	// Initialize runs any pre-transaction state modifications (e.g. epoch start)
 	Initialize(config *chain.Config, chain ChainHeaderReader, header *types.Header,
-		state *state.IntraBlockState, syscall SysCallCustom, logger log.Logger)
+		state *state.IntraBlockState, syscall SysCallCustom, logger log.Logger, eLogger *tracing.Hooks)
 
 	// Finalize runs any post-transaction state modifications (e.g. block rewards)
 	// but does not assemble the block.
@@ -154,7 +159,8 @@ type EngineWriter interface {
 	// Note: The block header and state database might be updated to reflect any
 	// consensus rules that happen at finalization (e.g. block rewards).
 	Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
-		txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal, requests []*types.Request, chain ChainReader, syscall SystemCall, logger log.Logger,
+		txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
+		chain ChainReader, syscall SystemCall, logger log.Logger,
 	) (types.Transactions, types.Receipts, error)
 
 	// FinalizeAndAssemble runs any post-transaction state modifications (e.g. block
@@ -163,7 +169,8 @@ type EngineWriter interface {
 	// Note: The block header and state database might be updated to reflect any
 	// consensus rules that happen at finalization (e.g. block rewards).
 	FinalizeAndAssemble(config *chain.Config, header *types.Header, state *state.IntraBlockState,
-		txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal, requests []*types.Request, chain ChainReader, syscall SystemCall, call Call, logger log.Logger,
+		txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
+		chain ChainReader, syscall SystemCall, call Call, logger log.Logger,
 	) (*types.Block, types.Transactions, types.Receipts, error)
 
 	// Seal generates a new sealing request for the given input block and pushes

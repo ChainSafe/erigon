@@ -58,14 +58,7 @@ func makeBlock(txCount, uncleCount, withdrawalCount int) *types.Block {
 			Amount:    uint64(10 * i),
 		}
 	}
-	for i := range withdrawals {
-		withdrawals[i] = &types.Withdrawal{
-			Index:     uint64(i),
-			Validator: uint64(i),
-			Amount:    uint64(10 * i),
-		}
-	}
-	return types.NewBlock(header, txs, uncles, receipts, withdrawals, nil) // TODO(racytech): add requests
+	return types.NewBlock(header, txs, uncles, receipts, withdrawals)
 }
 
 func TestBlockRpcConversion(t *testing.T) {

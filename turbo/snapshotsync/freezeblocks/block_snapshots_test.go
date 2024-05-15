@@ -8,7 +8,6 @@ import (
 
 	"github.com/ledgerwatch/log/v3"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 
 	"github.com/ledgerwatch/erigon-lib/chain/networkname"
 	"github.com/ledgerwatch/erigon-lib/chain/snapcfg"
@@ -138,7 +137,6 @@ func TestMergeSnapshots(t *testing.T) {
 	{
 		merger := NewMerger(dir, 1, log.LvlInfo, nil, params.MainnetChainConfig, logger)
 		merger.DisableFsync()
-		s.ReopenSegments(coresnaptype.BlockSnapshotTypes, false)
 		ranges := merger.FindMergeRanges(s.Ranges(), s.SegmentsMax())
 		require.True(len(ranges) > 0)
 		err := merger.Merge(context.Background(), s, coresnaptype.BlockSnapshotTypes, ranges, s.Dir(), false, nil, nil)
@@ -155,91 +153,57 @@ func TestMergeSnapshots(t *testing.T) {
 	{
 		merger := NewMerger(dir, 1, log.LvlInfo, nil, params.MainnetChainConfig, logger)
 		merger.DisableFsync()
-		s.ReopenSegments(coresnaptype.BlockSnapshotTypes, false)
 		ranges := merger.FindMergeRanges(s.Ranges(), s.SegmentsMax())
 		require.True(len(ranges) == 0)
 		err := merger.Merge(context.Background(), s, coresnaptype.BlockSnapshotTypes, ranges, s.Dir(), false, nil, nil)
 		require.NoError(err)
 	}
 
-	// [0; N] merges are not supported anymore
+	expectedFileName = snaptype.SegmentFileName(coresnaptype.Transactions.Versions().Current, 600_000, 700_000, coresnaptype.Transactions.Enum())
+	d, err = seg.NewDecompressor(filepath.Join(dir, expectedFileName))
+	require.NoError(err)
+	defer d.Close()
+	a = d.Count()
+	require.Equal(10, a)
 
-	// expectedFileName = snaptype.SegmentFileName(coresnaptype.Transactions.Versions().Current, 600_000, 700_000, coresnaptype.Transactions.Enum())
-	// d, err = seg.NewDecompressor(filepath.Join(dir, expectedFileName))
-	// require.NoError(err)
-	// defer d.Close()
-	// a = d.Count()
-	// require.Equal(10, a)
-
-	// start := uint64(19_000_000)
-	// for i := uint64(0); i < N; i++ {
-	// 	createFile(start+i*10_000, start+(i+1)*10_000)
-	// }
-	// s = NewRoSnapshots(ethconfig.BlocksFreezing{Enabled: true}, dir, start, logger)
-	// defer s.Close()
-	// require.NoError(s.ReopenFolder())
-	// {
-	// 	merger := NewMerger(dir, 1, log.LvlInfo, nil, params.MainnetChainConfig, logger)
-	// 	merger.DisableFsync()
-	// 	fmt.Println(s.Ranges(), s.SegmentsMax())
-	// 	fmt.Println(s.Ranges(), s.SegmentsMax())
-	// 	ranges := merger.FindMergeRanges(s.Ranges(), s.SegmentsMax())
-	// 	require.True(len(ranges) > 0)
-	// 	err := merger.Merge(context.Background(), s, coresnaptype.BlockSnapshotTypes, ranges, s.Dir(), false, nil, nil)
-	// 	require.NoError(err)
-	// }
-
-	// expectedFileName = snaptype.SegmentFileName(coresnaptype.Transactions.Versions().Current, start+100_000, start+200_000, coresnaptype.Transactions.Enum())
-	// d, err = seg.NewDecompressor(filepath.Join(dir, expectedFileName))
-	// require.NoError(err)
-	// defer d.Close()
-	// a = d.Count()
-	// require.Equal(10, a)
-
-	// {
-	// 	merger := NewMerger(dir, 1, log.LvlInfo, nil, params.MainnetChainConfig, logger)
-	// 	merger.DisableFsync()
-	// 	s.ReopenSegments(coresnaptype.BlockSnapshotTypes, false)
-	// 	ranges := merger.FindMergeRanges(s.Ranges(), s.SegmentsMax())
-	// 	require.True(len(ranges) == 0)
-	// 	err := merger.Merge(context.Background(), s, coresnaptype.BlockSnapshotTypes, ranges, s.Dir(), false, nil, nil)
-	// 	require.NoError(err)
-	// }
-
-	// expectedFileName = snaptype.SegmentFileName(coresnaptype.Transactions.Versions().Current, start+600_000, start+700_000, coresnaptype.Transactions.Enum())
-	// d, err = seg.NewDecompressor(filepath.Join(dir, expectedFileName))
-	// require.NoError(err)
-	// defer d.Close()
-	// a = d.Count()
-	// require.Equal(10, a)
-}
-
-func TestDeleteSnapshots(t *testing.T) {
-	logger := log.New()
-	dir, require := t.TempDir(), require.New(t)
-	createFile := func(from, to uint64) {
-		for _, snT := range coresnaptype.BlockSnapshotTypes {
-			createTestSegmentFile(t, from, to, snT.Enum(), dir, 1, logger)
-		}
-	}
-
-	N := uint64(70)
-
+	start := uint64(19_000_000)
 	for i := uint64(0); i < N; i++ {
-		createFile(i*10_000, (i+1)*10_000)
+		createFile(start+i*10_000, start+(i+1)*10_000)
 	}
-	s := NewRoSnapshots(ethconfig.BlocksFreezing{Enabled: true}, dir, 0, logger)
+	s = NewRoSnapshots(ethconfig.BlocksFreezing{Enabled: true}, dir, start, logger)
 	defer s.Close()
-	retireFiles := []string{
-		"v1-000000-000010-bodies.seg",
-		"v1-000000-000010-headers.seg",
-		"v1-000000-000010-transactions.seg",
-	}
 	require.NoError(s.ReopenFolder())
-	for _, f := range retireFiles {
-		require.NoError(s.Delete(f))
-		require.False(slices.Contains(s.Files(), f))
+	{
+		merger := NewMerger(dir, 1, log.LvlInfo, nil, params.MainnetChainConfig, logger)
+		merger.DisableFsync()
+		ranges := merger.FindMergeRanges(s.Ranges(), s.SegmentsMax())
+		require.True(len(ranges) > 0)
+		err := merger.Merge(context.Background(), s, coresnaptype.BlockSnapshotTypes, ranges, s.Dir(), false, nil, nil)
+		require.NoError(err)
 	}
+
+	expectedFileName = snaptype.SegmentFileName(coresnaptype.Transactions.Versions().Current, start+100_000, start+200_000, coresnaptype.Transactions.Enum())
+	d, err = seg.NewDecompressor(filepath.Join(dir, expectedFileName))
+	require.NoError(err)
+	defer d.Close()
+	a = d.Count()
+	require.Equal(10, a)
+
+	{
+		merger := NewMerger(dir, 1, log.LvlInfo, nil, params.MainnetChainConfig, logger)
+		merger.DisableFsync()
+		ranges := merger.FindMergeRanges(s.Ranges(), s.SegmentsMax())
+		require.True(len(ranges) == 0)
+		err := merger.Merge(context.Background(), s, coresnaptype.BlockSnapshotTypes, ranges, s.Dir(), false, nil, nil)
+		require.NoError(err)
+	}
+
+	expectedFileName = snaptype.SegmentFileName(coresnaptype.Transactions.Versions().Current, start+600_000, start+700_000, coresnaptype.Transactions.Enum())
+	d, err = seg.NewDecompressor(filepath.Join(dir, expectedFileName))
+	require.NoError(err)
+	defer d.Close()
+	a = d.Count()
+	require.Equal(10, a)
 }
 
 func TestRemoveOverlaps(t *testing.T) {
@@ -270,7 +234,7 @@ func TestRemoveOverlaps(t *testing.T) {
 	s := NewRoSnapshots(ethconfig.BlocksFreezing{Enabled: true}, dir, 0, logger)
 
 	defer s.Close()
-	require.NoError(s.ReopenSegments(coresnaptype.BlockSnapshotTypes, false))
+	require.NoError(s.ReopenFolder())
 
 	list, err := snaptype.Segments(s.dir)
 	require.NoError(err)
@@ -348,8 +312,7 @@ func TestOpenAllSnapshot(t *testing.T) {
 		err = s.ReopenFolder()
 		require.NoError(err)
 		require.NotNil(getSegs(coresnaptype.Enums.Headers))
-		s.ReopenSegments(coresnaptype.BlockSnapshotTypes, false)
-		require.Equal(1, len(getSegs(coresnaptype.Enums.Headers).segments))
+		require.Equal(0, len(getSegs(coresnaptype.Enums.Headers).segments))
 		s.Close()
 
 		createFile(0, 500_000, coresnaptype.Bodies)

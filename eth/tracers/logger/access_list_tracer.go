@@ -17,15 +17,15 @@
 package logger
 
 import (
+	"encoding/json"
 	"sort"
 
-	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
 
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
-	"github.com/ledgerwatch/erigon/crypto"
 )
 
 // accessList is an accumulator for the set of accounts and storage slots an EVM
@@ -170,81 +170,42 @@ func NewAccessListTracer(acl types2.AccessList, exclude map[libcommon.Address]st
 	}
 }
 
-func (a *AccessListTracer) CaptureTxStart(gasLimit uint64) {}
-
-func (a *AccessListTracer) CaptureTxEnd(restGas uint64) {}
-
-func (a *AccessListTracer) CaptureStart(env *vm.EVM, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+func (a *AccessListTracer) Hooks() *tracing.Hooks {
+	return &tracing.Hooks{
+		OnOpcode: a.OnOpcode,
+	}
 }
 
-func (a *AccessListTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-}
-
-// CaptureState captures all opcodes that touch storage or addresses and adds them to the accesslist.
-func (a *AccessListTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
-	stack := scope.Stack
-	contract := scope.Contract
-	caller := contract.Address()
-
-	stackData := stack.Data
+// OnOpcode captures all opcodes that touch storage or addresses and adds them to the accesslist.
+func (a *AccessListTracer) OnOpcode(pc uint64, opcode byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
+	stackData := scope.StackData()
 	stackLen := len(stackData)
+	op := vm.OpCode(opcode)
 	if (op == vm.SLOAD || op == vm.SSTORE) && stackLen >= 1 {
-		addr := contract.Address()
 		slot := libcommon.Hash(stackData[stackLen-1].Bytes32())
-		if _, ok := a.excl[addr]; !ok {
-			a.list.addSlot(addr, slot)
-			if _, ok := a.createdContracts[addr]; !ok {
-				a.usedBeforeCreation[addr] = struct{}{}
-			}
-		}
+		a.list.addSlot(scope.Address(), slot)
 	}
 	if (op == vm.EXTCODECOPY || op == vm.EXTCODEHASH || op == vm.EXTCODESIZE || op == vm.BALANCE || op == vm.SELFDESTRUCT) && stackLen >= 1 {
 		addr := libcommon.Address(stackData[stackLen-1].Bytes20())
 		if _, ok := a.excl[addr]; !ok {
 			a.list.addAddress(addr)
-			if _, ok := a.createdContracts[addr]; !ok {
-				a.usedBeforeCreation[addr] = struct{}{}
-			}
 		}
 	}
 	if (op == vm.DELEGATECALL || op == vm.CALL || op == vm.STATICCALL || op == vm.CALLCODE) && stackLen >= 5 {
 		addr := libcommon.Address(stackData[stackLen-2].Bytes20())
 		if _, ok := a.excl[addr]; !ok {
 			a.list.addAddress(addr)
-			if _, ok := a.createdContracts[addr]; !ok {
-				a.usedBeforeCreation[addr] = struct{}{}
-			}
 		}
 	}
-	if op == vm.CREATE {
-		// contract address for CREATE can only be generated with state
-		if a.state != nil {
-			nonce := a.state.GetNonce(caller)
-			addr := crypto.CreateAddress(caller, nonce)
-			if _, ok := a.excl[addr]; !ok {
-				a.createdContracts[addr] = struct{}{}
-			}
-		}
-	}
-	if op == vm.CREATE2 && stackLen >= 4 {
-		offset := stackData[stackLen-2]
-		size := stackData[stackLen-3]
-		init := scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
-		inithash := crypto.Keccak256(init)
-		salt := stackData[stackLen-4]
-		addr := crypto.CreateAddress2(caller, salt.Bytes32(), inithash)
-		if _, ok := a.excl[addr]; !ok {
-			a.createdContracts[addr] = struct{}{}
-		}
-	}
-
 }
 
-func (*AccessListTracer) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, depth int, err error) {
+// GetResult returns an empty json object.
+func (a *AccessListTracer) GetResult() (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
 }
-func (*AccessListTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
-}
-func (*AccessListTracer) CaptureExit(output []byte, usedGas uint64, err error) {
+
+// Stop terminates execution of the tracer at the first opportune moment.
+func (a *AccessListTracer) Stop(err error) {
 }
 
 // AccessList returns the current accesslist maintained by the tracer.

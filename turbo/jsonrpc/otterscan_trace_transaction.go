@@ -11,7 +11,9 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/vm"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 )
 
 func (api *OtterscanAPIImpl) TraceTransaction(ctx context.Context, hash common.Hash) ([]*TraceEntry, error) {
@@ -22,7 +24,7 @@ func (api *OtterscanAPIImpl) TraceTransaction(ctx context.Context, hash common.H
 	defer tx.Rollback()
 
 	tracer := NewTransactionTracer(ctx)
-	if _, err := api.runTracer(ctx, tx, hash, tracer); err != nil {
+	if _, err := api.runTracer(ctx, tx, hash, tracer.Tracer()); err != nil {
 		return nil, err
 	}
 
@@ -52,6 +54,15 @@ func NewTransactionTracer(ctx context.Context) *TransactionTracer {
 		ctx:     ctx,
 		Results: make([]*TraceEntry, 0),
 		stack:   make([]*TraceEntry, 0),
+	}
+}
+
+func (t *TransactionTracer) Tracer() *tracers.Tracer {
+	return &tracers.Tracer{
+		Hooks: &tracing.Hooks{
+			OnEnter: t.OnEnter,
+			OnExit:  t.OnExit,
+		},
 	}
 }
 
@@ -94,18 +105,18 @@ func (t *TransactionTracer) captureStartOrEnter(typ vm.OpCode, from, to common.A
 	t.stack = append(t.stack, entry)
 }
 
-func (t *TransactionTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+func (t *TransactionTracer) CaptureStart(from common.Address, to common.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	t.depth = 0
 	t.captureStartOrEnter(vm.CALL, from, to, precompile, input, value)
 }
 
-func (t *TransactionTracer) CaptureEnter(typ vm.OpCode, from common.Address, to common.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	t.depth++
-	t.captureStartOrEnter(typ, from, to, precompile, input, value)
+func (t *TransactionTracer) OnEnter(depth int, typ byte, from common.Address, to common.Address, precompile bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+	t.depth = depth
+	t.captureStartOrEnter(vm.OpCode(typ), from, to, precompile, input, value)
 }
 
-func (t *TransactionTracer) captureEndOrExit(output []byte, usedGas uint64, err error) {
-	t.depth--
+func (t *TransactionTracer) OnExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
+	t.depth = depth
 
 	lastIdx := len(t.stack) - 1
 	pop := t.stack[lastIdx]
@@ -114,12 +125,4 @@ func (t *TransactionTracer) captureEndOrExit(output []byte, usedGas uint64, err 
 	outputCopy := make([]byte, len(output))
 	copy(outputCopy, output)
 	pop.Output = outputCopy
-}
-
-func (t *TransactionTracer) CaptureExit(output []byte, usedGas uint64, err error) {
-	t.captureEndOrExit(output, usedGas, err)
-}
-
-func (t *TransactionTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
-	t.captureEndOrExit(output, usedGas, err)
 }

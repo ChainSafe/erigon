@@ -23,6 +23,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/math"
 
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/vm/stack"
 	"github.com/ledgerwatch/erigon/params"
 )
@@ -163,7 +164,7 @@ func makeCallVariantGasCallEIP2929(oldCalculator gasFunc) gasFunc {
 		if addrMod {
 			// Charge the remaining difference here already, to correctly calculate available
 			// gas for call
-			if !contract.UseGas(coldCost) {
+			if !contract.UseGas(coldCost, evm.Config().Tracer, tracing.GasChangeCallStorageColdAccess) {
 				return 0, ErrOutOfGas
 			}
 		}
@@ -234,23 +235,4 @@ func makeSelfdestructGasFn(refundsEnabled bool) gasFunc {
 		return gas, nil
 	}
 	return gasFunc
-}
-
-// gasOpBlockhashEIP2935 returns the gas for the new BLOCKHASH operation post EIP-2935
-// If arg is outside of the params.BlockHashHistoryServeWindow, zero dynamic gas is returned
-// EIP-2929 Cold/Warm storage read cost is applicable here similar to SLOAD
-func gasOpBlockhashEIP2935(evm *EVM, contract *Contract, stack *stack.Stack, mem *Memory, memorySize uint64) (uint64, error) {
-	arg := stack.Peek()
-	arg64, overflow := arg.Uint64WithOverflow()
-	if overflow {
-		return 0, nil
-	}
-	if arg64 >= evm.Context.BlockNumber || arg64+params.BlockHashHistoryServeWindow < evm.Context.BlockNumber {
-		return 0, nil
-	}
-	storageSlot := libcommon.BytesToHash(uint256.NewInt(arg64 % params.BlockHashHistoryServeWindow).Bytes())
-	if _, slotMod := evm.IntraBlockState().AddSlotToAccessList(params.HistoryStorageAddress, storageSlot); slotMod {
-		return params.ColdSloadCostEIP2929, nil
-	}
-	return params.WarmStorageReadCostEIP2929, nil
 }

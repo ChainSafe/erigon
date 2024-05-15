@@ -34,6 +34,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	common2 "github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/memdb"
 	"github.com/ledgerwatch/erigon/cmd/utils/flags"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -46,6 +47,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/runtime"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/eth/tracers/logger"
 	"github.com/ledgerwatch/erigon/params"
 )
@@ -133,7 +135,7 @@ func runCmd(ctx *cli.Context) error {
 	}
 
 	var (
-		tracer        vm.EVMLogger
+		tracer        *tracers.Tracer
 		debugLogger   *logger.StructLogger
 		statedb       *state.IntraBlockState
 		chainConfig   *chain.Config
@@ -145,7 +147,7 @@ func runCmd(ctx *cli.Context) error {
 		tracer = logger.NewJSONLogger(logconfig, os.Stdout)
 	} else if ctx.Bool(DebugFlag.Name) {
 		debugLogger = logger.NewStructLogger(logconfig)
-		tracer = debugLogger
+		tracer = debugLogger.Tracer()
 	} else {
 		debugLogger = logger.NewStructLogger(logconfig)
 	}
@@ -153,7 +155,7 @@ func runCmd(ctx *cli.Context) error {
 	defer db.Close()
 	if ctx.String(GenesisFlag.Name) != "" {
 		gen := readGenesis(ctx.String(GenesisFlag.Name))
-		core.MustCommitGenesis(gen, db, "", log.Root())
+		core.MustCommitGenesis(gen, db, "", log.Root(), nil)
 		genesisConfig = gen
 		chainConfig = gen.Config
 	} else {
@@ -236,7 +238,7 @@ func runCmd(ctx *cli.Context) error {
 		Coinbase:    genesisConfig.Coinbase,
 		BlockNumber: new(big.Int).SetUint64(genesisConfig.Number),
 		EVMConfig: vm.Config{
-			Tracer: tracer,
+			Tracer: tracer.Hooks,
 			Debug:  ctx.Bool(DebugFlag.Name) || ctx.Bool(MachineFlag.Name),
 		},
 	}
@@ -300,7 +302,11 @@ func runCmd(ctx *cli.Context) error {
 			fmt.Println("Could not commit state: ", err)
 			os.Exit(1)
 		}
-		fmt.Println(string(state.NewDumper(tx, 0, true).DefaultDump()))
+		historyV3, err := kvcfg.HistoryV3.Enabled(tx)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(state.NewDumper(tx, 0, historyV3).DefaultDump()))
 	}
 
 	if memProfilePath := ctx.String(MemProfileFlag.Name); memProfilePath != "" {

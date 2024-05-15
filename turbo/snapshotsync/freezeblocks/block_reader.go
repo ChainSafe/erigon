@@ -520,6 +520,7 @@ func (r *BlockReader) BodyWithTransactions(ctx context.Context, tx kv.Getter, ha
 			log.Info(dbgPrefix + "found in db=false")
 		}
 	}
+
 	view := r.sn.View()
 	defer view.Close()
 
@@ -702,7 +703,7 @@ func (r *BlockReader) blockWithSenders(ctx context.Context, tx kv.Getter, hash c
 		return
 	}
 	if txsAmount == 0 {
-		block = types.NewBlockFromStorage(hash, h, nil, b.Uncles, b.Withdrawals, b.Requests)
+		block = types.NewBlockFromStorage(hash, h, nil, b.Uncles, b.Withdrawals)
 		if len(senders) != block.Transactions().Len() {
 			if dbgLogs {
 				log.Info(dbgPrefix + fmt.Sprintf("found block with %d transactions, but %d senders", block.Transactions().Len(), len(senders)))
@@ -725,7 +726,7 @@ func (r *BlockReader) blockWithSenders(ctx context.Context, tx kv.Getter, hash c
 	if err != nil {
 		return nil, nil, err
 	}
-	block = types.NewBlockFromStorage(hash, h, txs, b.Uncles, b.Withdrawals, b.Requests)
+	block = types.NewBlockFromStorage(hash, h, txs, b.Uncles, b.Withdrawals)
 	if len(senders) != block.Transactions().Len() {
 		if dbgLogs {
 			log.Info(dbgPrefix + fmt.Sprintf("found block with %d transactions, but %d senders", block.Transactions().Len(), len(senders)))
@@ -810,10 +811,10 @@ func (r *BlockReader) bodyFromSnapshot(blockHeight uint64, sn *Segment, buf []by
 	if b == nil {
 		return nil, 0, 0, buf, nil
 	}
+
 	body := new(types.Body)
 	body.Uncles = b.Uncles
 	body.Withdrawals = b.Withdrawals
-	body.Requests = b.Requests
 	var txsAmount uint32
 	if b.TxAmount >= 2 {
 		txsAmount = b.TxAmount - 2
@@ -1046,6 +1047,7 @@ func (r *BlockReader) FirstTxnNumNotInSnapshots() uint64 {
 func (r *BlockReader) IterateFrozenBodies(f func(blockNum, baseTxNum, txAmount uint64) error) error {
 	view := r.sn.View()
 	defer view.Close()
+
 	for _, sn := range view.Bodies() {
 		sn := sn
 		defer sn.EnableReadAhead().DisableReadAhead()

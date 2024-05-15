@@ -47,6 +47,7 @@ type HeadersCfg struct {
 	batchSize         datasize.ByteSize
 	noP2PDiscovery    bool
 	tmpdir            string
+	historyV3         bool
 
 	blockReader   services.FullBlockReader
 	blockWriter   *blockio.BlockWriter
@@ -70,6 +71,7 @@ func StageHeadersCfg(
 	blockReader services.FullBlockReader,
 	blockWriter *blockio.BlockWriter,
 	tmpdir string,
+	historyV3 bool,
 	notifications *shards.Notifications,
 	loopBreakCheck func(int) bool) HeadersCfg {
 	return HeadersCfg{
@@ -83,6 +85,7 @@ func StageHeadersCfg(
 		penalize:          penalize,
 		batchSize:         batchSize,
 		tmpdir:            tmpdir,
+		historyV3:         historyV3,
 		noP2PDiscovery:    noP2PDiscovery,
 		blockReader:       blockReader,
 		blockWriter:       blockWriter,
@@ -324,24 +327,29 @@ Loop:
 		timer.Stop()
 	}
 	if headerInserter.Unwind() {
-		unwindTo := headerInserter.UnwindPoint()
-		doms, err := state.NewSharedDomains(tx, logger) //TODO: if remove this line TestBlockchainHeaderchainReorgConsistency failing
-		if err != nil {
-			return err
-		}
-		defer doms.Close()
+		if cfg.historyV3 {
+			unwindTo := headerInserter.UnwindPoint()
+			doms, err := state.NewSharedDomains(tx, logger) //TODO: if remove this line TestBlockchainHeaderchainReorgConsistency failing
+			if err != nil {
+				return err
+			}
+			defer doms.Close()
 
-		allowedUnwindTo, ok, err := tx.(state.HasAggTx).AggTx().(*state.AggregatorRoTx).CanUnwindBeforeBlockNum(unwindTo, tx)
-		if err != nil {
-			return err
+			allowedUnwindTo, ok, err := tx.(state.HasAggCtx).AggCtx().(*state.AggregatorRoTx).CanUnwindBeforeBlockNum(unwindTo, tx)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("too far unwind. requested=%d, minAllowed=%d", unwindTo, allowedUnwindTo)
+			}
+			if err := u.UnwindTo(allowedUnwindTo, StagedUnwind, tx); err != nil {
+				return err
+			}
+		} else {
+			if err := u.UnwindTo(headerInserter.UnwindPoint(), StagedUnwind, tx); err != nil {
+				return err
+			}
 		}
-		if !ok {
-			return fmt.Errorf("too far unwind. requested=%d, minAllowed=%d", unwindTo, allowedUnwindTo)
-		}
-		if err := u.UnwindTo(allowedUnwindTo, StagedUnwind, tx); err != nil {
-			return err
-		}
-
 	}
 	if headerInserter.GetHighest() != 0 {
 		if !headerInserter.Unwind() {
@@ -589,6 +597,32 @@ func NewChainReaderImpl(config *chain.Config, tx kv.Tx, blockReader services.Ful
 
 func (cr ChainReaderImpl) Config() *chain.Config        { return cr.config }
 func (cr ChainReaderImpl) CurrentHeader() *types.Header { panic("") }
+func (cr ChainReaderImpl) CurrentFinalizedHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceFinalized(cr.tx)
+	if hash == (libcommon.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.tx, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.tx, hash, *number)
+}
+func (cr ChainReaderImpl) CurrentSafeHeader() *types.Header {
+	hash := rawdb.ReadForkchoiceSafe(cr.tx)
+	if hash == (libcommon.Hash{}) {
+		return nil
+	}
+
+	number := rawdb.ReadHeaderNumber(cr.tx, hash)
+	if number == nil {
+		return nil
+	}
+
+	return rawdb.ReadHeader(cr.tx, hash, *number)
+}
 func (cr ChainReaderImpl) GetHeader(hash libcommon.Hash, number uint64) *types.Header {
 	if cr.blockReader != nil {
 		h, _ := cr.blockReader.Header(context.Background(), cr.tx, hash, number)

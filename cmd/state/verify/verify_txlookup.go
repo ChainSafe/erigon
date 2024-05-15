@@ -13,6 +13,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	datadir2 "github.com/ledgerwatch/erigon-lib/common/datadir"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon/core/rawdb/blockio"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
@@ -22,9 +23,16 @@ import (
 )
 
 func blocksIO(db kv.RoDB) (services.FullBlockReader, *blockio.BlockWriter) {
+	var histV3 bool
+	if err := db.View(context.Background(), func(tx kv.Tx) error {
+		histV3, _ = kvcfg.HistoryV3.Enabled(tx)
+		return nil
+	}); err != nil {
+		panic(err)
+	}
 	dirs := datadir2.New(filepath.Dir(db.(*mdbx.MdbxKV).Path()))
 	br := freezeblocks.NewBlockReader(freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{Enabled: false}, dirs.Snap, 0, log.New()), nil /* BorSnapshots */)
-	bw := blockio.NewBlockWriter()
+	bw := blockio.NewBlockWriter(histV3)
 	return br, bw
 }
 

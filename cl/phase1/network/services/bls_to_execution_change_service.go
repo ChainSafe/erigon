@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Giulio2002/bls"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon/cl/beacon/beaconevents"
 	"github.com/ledgerwatch/erigon/cl/beacon/synced_data"
@@ -18,14 +19,14 @@ import (
 type blsToExecutionChangeService struct {
 	operationsPool    pool.OperationsPool
 	emitters          *beaconevents.Emitters
-	syncedDataManager synced_data.SyncedData
+	syncedDataManager *synced_data.SyncedDataManager
 	beaconCfg         *clparams.BeaconChainConfig
 }
 
 func NewBLSToExecutionChangeService(
 	operationsPool pool.OperationsPool,
 	emitters *beaconevents.Emitters,
-	syncedDataManager synced_data.SyncedData,
+	syncedDataManager *synced_data.SyncedDataManager,
 	beaconCfg *clparams.BeaconChainConfig,
 ) BLSToExecutionChangeService {
 	return &blsToExecutionChangeService{
@@ -45,24 +46,20 @@ func (s *blsToExecutionChangeService) ProcessMessage(ctx context.Context, subnet
 		return ErrIgnore
 	}
 	change := msg.Message
-	stateReader := s.syncedDataManager.HeadStateReader()
-	if stateReader == nil {
-		return ErrIgnore
-	}
-	stateMutator := s.syncedDataManager.HeadStateMutator()
-	if stateMutator == nil {
+	state := s.syncedDataManager.HeadState()
+	if state == nil {
 		return ErrIgnore
 	}
 
 	// [IGNORE] current_epoch >= CAPELLA_FORK_EPOCH, where current_epoch is defined by the current wall-clock time.
-	if !(stateReader.Version() >= clparams.CapellaVersion) {
+	if !(state.Version() >= clparams.CapellaVersion) {
 		return ErrIgnore
 	}
 	// ref: https://github.com/ethereum/consensus-specs/blob/dev/specs/capella/beacon-chain.md#new-process_bls_to_execution_change
 	// assert address_change.validator_index < len(state.validators)
-	validator, err := stateReader.ValidatorForValidatorIndex(int(change.ValidatorIndex))
+	validator, err := state.ValidatorForValidatorIndex(int(change.ValidatorIndex))
 	if err != nil {
-		return fmt.Errorf("unable to retrieve validator: %v", err)
+		return fmt.Errorf("unable to retrieve state: %v", err)
 	}
 	wc := validator.WithdrawalCredentials()
 
@@ -76,20 +73,20 @@ func (s *blsToExecutionChangeService) ProcessMessage(ctx context.Context, subnet
 	// Check the validator's withdrawal credentials against the provided message.
 	hashedFrom := utils.Sha256(change.From[:])
 	if !bytes.Equal(hashedFrom[1:], wc[1:]) {
-		return fmt.Errorf("invalid withdrawal credentials hash")
+		return fmt.Errorf("invalid withdrawal credentials")
 	}
 
 	// assert bls.Verify(address_change.from_bls_pubkey, signing_root, signed_address_change.signature)
-	genesisValidatorRoot := stateReader.GenesisValidatorsRoot()
+	genesisValidatorRoot := state.GenesisValidatorsRoot()
 	domain, err := fork.ComputeDomain(s.beaconCfg.DomainBLSToExecutionChange[:], utils.Uint32ToBytes4(uint32(s.beaconCfg.GenesisForkVersion)), genesisValidatorRoot)
 	if err != nil {
 		return err
 	}
-	signedRoot, err := computeSigningRoot(change, domain)
+	signedRoot, err := fork.ComputeSigningRoot(change, domain)
 	if err != nil {
 		return err
 	}
-	valid, err := blsVerify(msg.Signature[:], signedRoot[:], change.From[:])
+	valid, err := bls.Verify(msg.Signature[:], signedRoot[:], change.From[:])
 	if err != nil {
 		return err
 	}
@@ -104,9 +101,9 @@ func (s *blsToExecutionChangeService) ProcessMessage(ctx context.Context, subnet
 	// )
 	newWc := libcommon.Hash{}
 	newWc[0] = byte(s.beaconCfg.ETH1AddressWithdrawalPrefixByte)
-	copy(newWc[1:], make([]byte, 11))
-	copy(newWc[12:], change.To[:])
-	stateMutator.SetWithdrawalCredentialForValidatorAtIndex(int(change.ValidatorIndex), newWc)
+	copy(wc[1:], make([]byte, 11))
+	copy(wc[12:], change.To[:])
+	state.SetWithdrawalCredentialForValidatorAtIndex(int(change.ValidatorIndex), newWc)
 
 	s.operationsPool.BLSToExecutionChangesPool.Insert(msg.Signature, msg)
 	return nil

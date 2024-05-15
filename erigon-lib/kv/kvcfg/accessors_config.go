@@ -24,6 +24,10 @@ import (
 
 type ConfigKey []byte
 
+var (
+	HistoryV3 = ConfigKey("history.v3")
+)
+
 func (k ConfigKey) Enabled(tx kv.Tx) (bool, error) { return kv.GetBool(tx, kv.DatabaseInfo, k) }
 func (k ConfigKey) FromDB(db kv.RoDB) (enabled bool) {
 	if err := db.View(context.Background(), func(tx kv.Tx) error {

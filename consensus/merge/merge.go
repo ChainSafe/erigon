@@ -14,6 +14,7 @@ import (
 	"github.com/ledgerwatch/erigon/consensus/aura"
 	"github.com/ledgerwatch/erigon/consensus/misc"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/rpc"
@@ -131,11 +132,11 @@ func (s *Merge) CalculateRewards(config *chain.Config, header *types.Header, unc
 }
 
 func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
-	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal, requests []*types.Request,
+	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
 	chain consensus.ChainReader, syscall consensus.SystemCall, logger log.Logger,
 ) (types.Transactions, types.Receipts, error) {
 	if !misc.IsPoSHeader(header) {
-		return s.eth1Engine.Finalize(config, header, state, txs, uncles, r, withdrawals, requests, chain, syscall, logger)
+		return s.eth1Engine.Finalize(config, header, state, txs, uncles, r, withdrawals, chain, syscall, logger)
 	}
 
 	rewards, err := s.CalculateRewards(config, header, uncles, syscall)
@@ -143,7 +144,14 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 		return nil, nil, err
 	}
 	for _, r := range rewards {
-		state.AddBalance(r.Beneficiary, &r.Amount)
+		switch r.Kind {
+		case consensus.RewardAuthor:
+			state.AddBalance(r.Beneficiary, &r.Amount, tracing.BalanceIncreaseRewardMineBlock)
+		case consensus.RewardUncle:
+			state.AddBalance(r.Beneficiary, &r.Amount, tracing.BalanceIncreaseRewardMineUncle)
+		default:
+			state.AddBalance(r.Beneficiary, &r.Amount, tracing.BalanceChangeUnspecified)
+		}
 	}
 
 	if withdrawals != nil {
@@ -154,7 +162,7 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 		} else {
 			for _, w := range withdrawals {
 				amountInWei := new(uint256.Int).Mul(uint256.NewInt(w.Amount), uint256.NewInt(params.GWei))
-				state.AddBalance(w.Address, amountInWei)
+				state.AddBalance(w.Address, amountInWei, tracing.BalanceIncreaseWithdrawal)
 			}
 		}
 	}
@@ -163,16 +171,17 @@ func (s *Merge) Finalize(config *chain.Config, header *types.Header, state *stat
 }
 
 func (s *Merge) FinalizeAndAssemble(config *chain.Config, header *types.Header, state *state.IntraBlockState,
-	txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal, requests []*types.Request, chain consensus.ChainReader, syscall consensus.SystemCall, call consensus.Call, logger log.Logger,
+	txs types.Transactions, uncles []*types.Header, receipts types.Receipts, withdrawals []*types.Withdrawal,
+	chain consensus.ChainReader, syscall consensus.SystemCall, call consensus.Call, logger log.Logger,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
 	if !misc.IsPoSHeader(header) {
-		return s.eth1Engine.FinalizeAndAssemble(config, header, state, txs, uncles, receipts, withdrawals, requests, chain, syscall, call, logger)
+		return s.eth1Engine.FinalizeAndAssemble(config, header, state, txs, uncles, receipts, withdrawals, chain, syscall, call, logger)
 	}
-	outTxs, outReceipts, err := s.Finalize(config, header, state, txs, uncles, receipts, withdrawals, requests, chain, syscall, logger)
+	outTxs, outReceipts, err := s.Finalize(config, header, state, txs, uncles, receipts, withdrawals, chain, syscall, logger)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return types.NewBlock(header, outTxs, uncles, outReceipts, withdrawals, requests), outTxs, outReceipts, nil
+	return types.NewBlock(header, outTxs, uncles, outReceipts, withdrawals), outTxs, outReceipts, nil
 }
 
 func (s *Merge) SealHash(header *types.Header) (hash libcommon.Hash) {
@@ -271,18 +280,15 @@ func (s *Merge) IsServiceTransaction(sender libcommon.Address, syscall consensus
 }
 
 func (s *Merge) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, header *types.Header,
-	state *state.IntraBlockState, syscall consensus.SysCallCustom, logger log.Logger,
+	state *state.IntraBlockState, syscall consensus.SysCallCustom, logger log.Logger, eLogger *tracing.Hooks,
 ) {
 	if !misc.IsPoSHeader(header) {
-		s.eth1Engine.Initialize(config, chain, header, state, syscall, logger)
+		s.eth1Engine.Initialize(config, chain, header, state, syscall, logger, eLogger)
 	}
 	if chain.Config().IsCancun(header.Time) {
 		misc.ApplyBeaconRootEip4788(header.ParentBeaconBlockRoot, func(addr libcommon.Address, data []byte) ([]byte, error) {
 			return syscall(addr, data, state, header, false /* constCall */)
-		})
-	}
-	if chain.Config().IsPrague(header.Time) {
-		misc.StoreBlockHashesEip2935(header, state, config, chain)
+		}, eLogger)
 	}
 }
 

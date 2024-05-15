@@ -367,7 +367,7 @@ func GenerateChain(config *chain.Config, parent *types.Block, engine consensus.E
 			}
 		}
 		if b.engine != nil {
-			err := InitializeBlockExecution(b.engine, nil, b.header, config, ibs, logger)
+			err := InitializeBlockExecution(b.engine, nil, b.header, config, ibs, logger, nil)
 			if err != nil {
 				return nil, nil, fmt.Errorf("call to InitializeBlockExecution: %w", err)
 			}
@@ -379,7 +379,7 @@ func GenerateChain(config *chain.Config, parent *types.Block, engine consensus.E
 		txNumIncrement()
 		if b.engine != nil {
 			// Finalize and seal the block
-			if _, _, _, err := b.engine.FinalizeAndAssemble(config, b.header, ibs, b.txs, b.uncles, b.receipts, nil, nil, nil, nil, nil, logger); err != nil {
+			if _, _, _, err := b.engine.FinalizeAndAssemble(config, b.header, ibs, b.txs, b.uncles, b.receipts, nil, nil, nil, nil, logger); err != nil {
 				return nil, nil, fmt.Errorf("call to FinaliseAndAssemble: %w", err)
 			}
 			// Write state changes to db
@@ -407,7 +407,7 @@ func GenerateChain(config *chain.Config, parent *types.Block, engine consensus.E
 			}
 			_ = err
 			// Recreating block to make sure Root makes it into the header
-			block := types.NewBlock(b.header, b.txs, b.uncles, b.receipts, nil /* withdrawals */, nil /*requests*/)
+			block := types.NewBlock(b.header, b.txs, b.uncles, b.receipts, nil /* withdrawals */)
 			return block, b.receipts, nil
 		}
 		return nil, nil, fmt.Errorf("no engine to generate blocks")
@@ -477,7 +477,7 @@ func CalcHashRootForTests(tx kv.RwTx, header *types.Header, histV4, trace bool) 
 		h := libcommon.NewHasher()
 		defer libcommon.ReturnHasherToPool(h)
 
-		it, err := tx.(state2.HasAggTx).AggTx().(*state2.AggregatorRoTx).DomainRangeLatest(tx, kv.AccountsDomain, nil, nil, -1)
+		it, err := tx.(state2.HasAggCtx).AggCtx().(*state2.AggregatorRoTx).DomainRangeLatest(tx, kv.AccountsDomain, nil, nil, -1)
 		if err != nil {
 			return libcommon.Hash{}, err
 		}
@@ -502,7 +502,7 @@ func CalcHashRootForTests(tx kv.RwTx, header *types.Header, histV4, trace bool) 
 			}
 		}
 
-		it, err = tx.(state2.HasAggTx).AggTx().(*state2.AggregatorRoTx).DomainRangeLatest(tx, kv.StorageDomain, nil, nil, -1)
+		it, err = tx.(state2.HasAggCtx).AggCtx().(*state2.AggregatorRoTx).DomainRangeLatest(tx, kv.StorageDomain, nil, nil, -1)
 		if err != nil {
 			return libcommon.Hash{}, err
 		}
@@ -692,6 +692,8 @@ func (cr *FakeChainReader) Config() *chain.Config {
 }
 
 func (cr *FakeChainReader) CurrentHeader() *types.Header                               { return cr.current.Header() }
+func (cr *FakeChainReader) CurrentFinalizedHeader() *types.Header                      { return cr.current.Header() }
+func (cr *FakeChainReader) CurrentSafeHeader() *types.Header                           { return cr.current.Header() }
 func (cr *FakeChainReader) GetHeaderByNumber(number uint64) *types.Header              { return nil }
 func (cr *FakeChainReader) GetHeaderByHash(hash libcommon.Hash) *types.Header          { return nil }
 func (cr *FakeChainReader) GetHeader(hash libcommon.Hash, number uint64) *types.Header { return nil }

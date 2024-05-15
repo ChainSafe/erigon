@@ -135,7 +135,7 @@ func (api *OverlayAPIImpl) CallConstructor(ctx context.Context, address common.A
 
 	replayTransactions = block.Transactions()[:transactionIndex]
 
-	stateReader, err := rpchelper.CreateStateReader(ctx, tx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(blockNum-1)), 0, api.filters, api.stateCache, chainConfig.ChainName)
+	stateReader, err := rpchelper.CreateStateReader(ctx, tx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(blockNum-1)), 0, api.filters, api.stateCache, api.historyV3(tx), chainConfig.ChainName)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +218,9 @@ func (api *OverlayAPIImpl) CallConstructor(ctx context.Context, address common.A
 	}
 	txCtx = core.NewEVMTxContext(msg)
 	ct := OverlayCreateTracer{contractAddress: address, code: *code, gasCap: api.GasCap}
-	evm = vm.NewEVM(blockCtx, txCtx, evm.IntraBlockState(), chainConfig, vm.Config{Debug: true, Tracer: &ct})
+	evm = vm.NewEVM(blockCtx, txCtx, evm.IntraBlockState(), chainConfig, vm.Config{Debug: true, Tracer: ct.Tracer().Hooks})
 
+	ct.evm = evm
 	// Execute the transaction message
 	_, err = core.ApplyMessage(evm, msg, gp, true /* refunds */, true /* gasBailout */)
 	if ct.err != nil {
@@ -309,7 +310,7 @@ func (api *OverlayAPIImpl) GetLogs(ctx context.Context, crit filters.FilterCrite
 				}
 
 				// try to recompute the state
-				stateReader, err := rpchelper.CreateStateReader(ctx, tx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(blockNumber-1)), 0, api.filters, api.stateCache, chainConfig.ChainName)
+				stateReader, err := rpchelper.CreateStateReader(ctx, tx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(blockNumber-1)), 0, api.filters, api.stateCache, api.historyV3(tx), chainConfig.ChainName)
 				if err != nil {
 					results[task.idx] = &blockReplayResult{BlockNumber: task.BlockNumber, Error: err.Error()}
 					continue

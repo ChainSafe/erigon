@@ -24,10 +24,13 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
+
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/consensus/ethash"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 )
@@ -60,7 +63,6 @@ type stEnv struct {
 	UncleHash        libcommon.Hash                         `json:"uncleHash,omitempty"`
 	Withdrawals      []*types.Withdrawal                    `json:"withdrawals,omitempty"`
 	WithdrawalsHash  *libcommon.Hash                        `json:"withdrawalsRoot,omitempty"`
-	Requests         []*types.Request                       `json:"requests,omitempty"`
 }
 
 type stEnvMarshaling struct {
@@ -77,13 +79,14 @@ type stEnvMarshaling struct {
 
 func MakePreState(chainRules *chain.Rules, tx kv.RwTx, accounts types.GenesisAlloc) (state.StateReader, *state.PlainStateWriter) {
 	var blockNr uint64 = 0
-	stateReader, stateWriter := rpchelper.NewLatestStateReader(tx), state.NewPlainStateWriter(tx, tx, blockNr)
+	histV3, _ := kvcfg.HistoryV3.Enabled(tx)
+	stateReader, stateWriter := rpchelper.NewLatestStateReader(tx, histV3), state.NewPlainStateWriter(tx, tx, blockNr)
 	statedb := state.New(stateReader) //ibs
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
 		statedb.SetNonce(addr, a.Nonce)
 		balance, _ := uint256.FromBig(a.Balance)
-		statedb.SetBalance(addr, balance)
+		statedb.SetBalance(addr, balance, tracing.BalanceIncreaseGenesisBalance)
 		for k, v := range a.Storage {
 			key := k
 			val := uint256.NewInt(0).SetBytes(v.Bytes())

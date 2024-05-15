@@ -116,7 +116,7 @@ func (h test_heimdall) FetchCheckpointCount(ctx context.Context) (int64, error) 
 	return 0, fmt.Errorf("TODO")
 }
 
-func (h *test_heimdall) FetchCheckpoints(ctx context.Context, page uint64, limit uint64) ([]*heimdall.Checkpoint, error) {
+func (h *test_heimdall) FetchCheckpoints(ctx context.Context, page uint64, limit uint64) (heimdall.Checkpoints, error) {
 	return nil, fmt.Errorf("TODO")
 }
 
@@ -169,6 +169,14 @@ func (r headerReader) FrozenBlocks() uint64 {
 }
 
 func (r headerReader) CurrentHeader() *types.Header {
+	return nil
+}
+
+func (cr headerReader) CurrentFinalizedHeader() *types.Header {
+	return nil
+}
+
+func (cr headerReader) CurrentSafeHeader() *types.Header {
 	return nil
 }
 

@@ -35,6 +35,7 @@ import (
 	"github.com/ledgerwatch/erigon/common/u256"
 	"github.com/ledgerwatch/erigon/consensus"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
@@ -83,13 +84,14 @@ func ExecuteBlockEphemerally(
 	blockHashFunc func(n uint64) libcommon.Hash,
 	engine consensus.Engine, block *types.Block,
 	stateReader state.StateReader, stateWriter state.WriterWithChangeSets,
-	chainReader consensus.ChainReader, getTracer func(txIndex int, txHash libcommon.Hash) (vm.EVMLogger, error),
+	chainReader consensus.ChainReader, getTracer func(txIndex int, txHash libcommon.Hash) (*tracing.Hooks, error),
 	logger log.Logger,
-) (*EphemeralExecResult, error) {
+) (res *EphemeralExecResult, executeBlockErr error) {
 
 	defer blockExecutionTimer.ObserveDuration(time.Now())
 	block.Uncles()
 	ibs := state.New(stateReader)
+	ibs.SetLogger(vmConfig.Tracer)
 	header := block.Header()
 
 	usedGas := new(uint64)
@@ -97,34 +99,54 @@ func ExecuteBlockEphemerally(
 	gp := new(GasPool)
 	gp.AddGas(block.GasLimit()).AddBlobGas(chainConfig.GetMaxBlobGasPerBlock())
 
-	if err := InitializeBlockExecution(engine, chainReader, block.Header(), chainConfig, ibs, logger); err != nil {
+	var (
+		rejectedTxs []*RejectedTx
+		includedTxs types.Transactions
+		receipts    types.Receipts
+	)
+
+	if vmConfig.Tracer != nil && vmConfig.Tracer.OnBlockStart != nil {
+		td := chainReader.GetTd(block.ParentHash(), block.NumberU64()-1)
+		vmConfig.Tracer.OnBlockStart(tracing.BlockEvent{
+			Block:     block,
+			TD:        td,
+			Finalized: chainReader.CurrentFinalizedHeader(),
+			Safe:      chainReader.CurrentSafeHeader(),
+		})
+	}
+	if vmConfig.Tracer != nil && vmConfig.Tracer.OnBlockEnd != nil {
+		defer func() {
+			vmConfig.Tracer.OnBlockEnd(executeBlockErr)
+		}()
+	}
+
+	if err := InitializeBlockExecution(engine, chainReader, block.Header(), chainConfig, ibs, logger, vmConfig.Tracer); err != nil {
 		return nil, err
 	}
 
-	var rejectedTxs []*RejectedTx
-	includedTxs := make(types.Transactions, 0, block.Transactions().Len())
-	receipts := make(types.Receipts, 0, block.Transactions().Len())
+	includedTxs = make(types.Transactions, 0, block.Transactions().Len())
+	receipts = make(types.Receipts, 0, block.Transactions().Len())
 	noop := state.NewNoopWriter()
-	var allLogs types.Logs
 	for i, tx := range block.Transactions() {
 		ibs.SetTxContext(tx.Hash(), block.Hash(), i)
-		writeTrace := false
+		// writeTrace := false
 		if vmConfig.Debug && vmConfig.Tracer == nil {
 			tracer, err := getTracer(i, tx.Hash())
 			if err != nil {
 				return nil, fmt.Errorf("could not obtain tracer: %w", err)
 			}
 			vmConfig.Tracer = tracer
-			writeTrace = true
+			// writeTrace = true
 		}
 		receipt, _, err := ApplyTransaction(chainConfig, blockHashFunc, engine, nil, gp, ibs, noop, header, tx, usedGas, usedBlobGas, *vmConfig)
-		if writeTrace {
-			if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
-				ftracer.Flush(tx)
-			}
+		// Todo: check how to implement flushable tracer
+		// if writeTrace {
+		// 	if ftracer, ok := vmConfig.Tracer.(vm.FlushableTracer); ok {
+		// 		ftracer.Flush(tx)
+		// 	}
 
-			vmConfig.Tracer = nil
-		}
+		// 	vmConfig.Tracer = nil
+		// }
 		if err != nil {
 			if !vmConfig.StatelessExec {
 				return nil, fmt.Errorf("could not apply tx %d from block %d [%v]: %w", i, block.NumberU64(), tx.Hash().Hex(), err)
@@ -136,7 +158,6 @@ func ExecuteBlockEphemerally(
 				receipts = append(receipts, receipt)
 			}
 		}
-		allLogs = append(allLogs, receipt.Logs...)
 	}
 
 	receiptSha := types.DeriveSha(receipts)
@@ -165,7 +186,7 @@ func ExecuteBlockEphemerally(
 	}
 	if !vmConfig.ReadOnly {
 		txs := block.Transactions()
-		if _, _, _, err := FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), block.Requests(), chainReader, false, logger); err != nil {
+		if _, _, _, err := FinalizeBlockExecution(engine, stateReader, block.Header(), txs, block.Uncles(), stateWriter, chainConfig, ibs, receipts, block.Withdrawals(), chainReader, false, logger); err != nil {
 			return nil, err
 		}
 	}
@@ -201,19 +222,6 @@ func ExecuteBlockEphemerally(
 		}
 
 		execRs.StateSyncReceipt = stateSyncReceipt
-	}
-
-	if chainConfig.IsPrague(block.Time()) {
-		requests, err := types.ParseDepositLogs(allLogs, chainConfig.DepositContract)
-		if err != nil {
-			return nil, fmt.Errorf("error: could not parse requests logs: %v", err)
-		}
-
-		rh := types.DeriveSha(requests)
-		if *block.Header().RequestsRoot != rh && !vmConfig.NoReceipts {
-			// TODO(racytech): do we have to check it here?
-			return nil, fmt.Errorf("error: invalid requests root hash, expected: %v, got :%v", *block.Header().RequestsRoot, rh)
-		}
 	}
 
 	return execRs, nil
@@ -254,7 +262,7 @@ func rlpHash(x interface{}) (h libcommon.Hash) {
 	return h
 }
 
-func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool) (result []byte, err error) {
+func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain.Config, ibs *state.IntraBlockState, header *types.Header, engine consensus.EngineReader, constCall bool, bcLogger *tracing.Hooks) (result []byte, err error) {
 	msg := types.NewMessage(
 		state.SystemAddress,
 		&contract,
@@ -266,7 +274,7 @@ func SysCallContract(contract libcommon.Address, data []byte, chainConfig *chain
 		true, // isFree
 		nil,  // maxFeePerBlobGas
 	)
-	vmConfig := vm.Config{NoReceipts: true, RestoreState: constCall}
+	vmConfig := vm.Config{NoReceipts: true, RestoreState: constCall, Tracer: bcLogger}
 	// Create a new context to be used in the EVM environment
 	isBor := chainConfig.Bor != nil
 	var txContext evmtypes.TxContext
@@ -330,17 +338,17 @@ func FinalizeBlockExecution(
 	header *types.Header, txs types.Transactions, uncles []*types.Header,
 	stateWriter state.StateWriter, cc *chain.Config,
 	ibs *state.IntraBlockState, receipts types.Receipts,
-	withdrawals []*types.Withdrawal, requests []*types.Request, chainReader consensus.ChainReader,
+	withdrawals []*types.Withdrawal, chainReader consensus.ChainReader,
 	isMining bool,
 	logger log.Logger,
 ) (newBlock *types.Block, newTxs types.Transactions, newReceipt types.Receipts, err error) {
 	syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-		return SysCallContract(contract, data, cc, ibs, header, engine, false /* constCall */)
+		return SysCallContract(contract, data, cc, ibs, header, engine, false /* constCall */, nil)
 	}
 	if isMining {
-		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, requests, chainReader, syscall, nil, logger)
+		newBlock, newTxs, newReceipt, err = engine.FinalizeAndAssemble(cc, header, ibs, txs, uncles, receipts, withdrawals, chainReader, syscall, nil, logger)
 	} else {
-		_, _, err = engine.Finalize(cc, header, ibs, txs, uncles, receipts, withdrawals, requests, chainReader, syscall, logger)
+		_, _, err = engine.Finalize(cc, header, ibs, txs, uncles, receipts, withdrawals, chainReader, syscall, logger)
 	}
 	if err != nil {
 		return nil, nil, nil, err
@@ -359,11 +367,11 @@ func FinalizeBlockExecution(
 }
 
 func InitializeBlockExecution(engine consensus.Engine, chain consensus.ChainHeaderReader, header *types.Header,
-	cc *chain.Config, ibs *state.IntraBlockState, logger log.Logger,
+	cc *chain.Config, ibs *state.IntraBlockState, logger log.Logger, bcLogger *tracing.Hooks,
 ) error {
 	engine.Initialize(cc, chain, header, ibs, func(contract libcommon.Address, data []byte, ibState *state.IntraBlockState, header *types.Header, constCall bool) ([]byte, error) {
-		return SysCallContract(contract, data, cc, ibState, header, engine, constCall)
-	}, logger)
+		return SysCallContract(contract, data, cc, ibState, header, engine, constCall, bcLogger)
+	}, logger, bcLogger)
 	noop := state.NewNoopWriter()
 	ibs.FinalizeTx(cc.Rules(header.Number.Uint64(), header.Time), noop)
 	return nil

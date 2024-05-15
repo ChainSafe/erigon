@@ -35,6 +35,11 @@ import (
 func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *GasPool, ibs *state.IntraBlockState,
 	stateWriter state.StateWriter, header *types.Header, tx types.Transaction, usedGas, usedBlobGas *uint64,
 	evm *vm.EVM, cfg vm.Config) (*types.Receipt, []byte, error) {
+	var (
+		receipt *types.Receipt
+		err     error
+	)
+
 	rules := evm.ChainRules()
 	msg, err := tx.AsMessage(*types.MakeSigner(config, header.Number.Uint64(), header.Time), header.BaseFee, rules)
 	if err != nil {
@@ -42,10 +47,21 @@ func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *G
 	}
 	msg.SetCheckNonce(!cfg.StatelessExec)
 
+	if evm.Config().Tracer != nil {
+		if evm.Config().Tracer != nil && evm.Config().Tracer.OnTxStart != nil {
+			evm.Config().Tracer.OnTxStart(evm.GetVMContext(), tx, msg.From())
+		}
+		if evm.Config().Tracer.OnTxEnd != nil {
+			defer func() {
+				evm.Config().Tracer.OnTxEnd(receipt, err)
+			}()
+		}
+	}
+
 	if msg.FeeCap().IsZero() && engine != nil {
 		// Only zero-gas transactions may be service ones
 		syscall := func(contract libcommon.Address, data []byte) ([]byte, error) {
-			return SysCallContract(contract, data, config, ibs, header, engine, true /* constCall */)
+			return SysCallContract(contract, data, config, ibs, header, engine, true /* constCall */, evm.Config().Tracer)
 		}
 		msg.SetIsFree(engine.IsServiceTransaction(msg.From(), syscall))
 	}
@@ -58,7 +74,8 @@ func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *G
 	// Update the evm with the new transaction context.
 	evm.Reset(txContext, ibs)
 
-	result, err := ApplyMessage(evm, msg, gp, true /* refunds */, false /* gasBailout */)
+	var result *ExecutionResult
+	result, err = ApplyMessage(evm, msg, gp, true /* refunds */, false /* gasBailout */)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -73,7 +90,6 @@ func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *G
 
 	// Set the receipt logs and create the bloom filter.
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	var receipt *types.Receipt
 	if !cfg.NoReceipts {
 		// by the tx.
 		receipt = &types.Receipt{Type: tx.Type(), CumulativeGasUsed: *usedGas}

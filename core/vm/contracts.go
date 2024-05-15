@@ -35,6 +35,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/math"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/crypto/bn256"
 	"github.com/ledgerwatch/erigon/crypto/secp256r1"
@@ -209,11 +210,14 @@ func ActivePrecompiles(rules *chain.Rules) []libcommon.Address {
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
-func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64,
+func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks,
 ) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
+	}
+	if logger != nil && logger.OnGasChange != nil {
+		logger.OnGasChange(suppliedGas, suppliedGas-gasCost, tracing.GasChangeCallPrecompiledContract)
 	}
 	suppliedGas -= gasCost
 	output, err := p.Run(input)
@@ -1121,6 +1125,9 @@ func (c *bls12381MapFpToG1) Run(input []byte) ([]byte, error) {
 
 	// Compute mapping
 	r := bls12381.MapToG1(fe)
+	if err != nil {
+		return nil, err
+	}
 
 	// Encode the G1 point to 128 bytes
 	return encodePointG1(&r), nil
@@ -1154,6 +1161,9 @@ func (c *bls12381MapFp2ToG2) Run(input []byte) ([]byte, error) {
 
 	// Compute mapping
 	r := bls12381.MapToG2(bls12381.E2{A0: c0, A1: c1})
+	if err != nil {
+		return nil, err
+	}
 
 	// Encode the G2 point to 256 bytes
 	return encodePointG2(&r), nil

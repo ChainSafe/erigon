@@ -43,6 +43,7 @@ import (
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/crypto"
@@ -186,7 +187,7 @@ func (t *StateTest) RunNoVerify(tx kv.RwTx, subtest StateSubtest, vmconfig vm.Co
 		return nil, libcommon.Hash{}, UnsupportedForkError{subtest.Fork}
 	}
 	vmconfig.ExtraEips = eips
-	block, _, err := core.GenesisToBlock(t.genesis(config), "", log.Root())
+	block, _, err := core.GenesisToBlock(t.genesis(config), "", log.Root(), nil)
 	if err != nil {
 		return nil, libcommon.Hash{}, UnsupportedForkError{subtest.Fork}
 	}
@@ -212,8 +213,8 @@ func (t *StateTest) RunNoVerify(tx kv.RwTx, subtest StateSubtest, vmconfig vm.Co
 		defer domains.Close()
 		txc.Doms = domains
 	}
-	r = rpchelper.NewLatestStateReader(tx)
-	w = rpchelper.NewLatestStateWriter(txc, writeBlockNr)
+	r = rpchelper.NewLatestStateReader(tx, config3.EnableHistoryV4InTest)
+	w = rpchelper.NewLatestStateWriter(txc, writeBlockNr, config3.EnableHistoryV4InTest)
 	statedb := state.New(r)
 
 	var baseFee *big.Int
@@ -327,7 +328,7 @@ func (t *StateTest) RunNoVerify(tx kv.RwTx, subtest StateSubtest, vmconfig vm.Co
 }
 
 func MakePreState(rules *chain.Rules, tx kv.RwTx, accounts types.GenesisAlloc, blockNr uint64, histV3 bool) (*state.IntraBlockState, error) {
-	r := rpchelper.NewLatestStateReader(tx)
+	r := rpchelper.NewLatestStateReader(tx, histV3)
 	statedb := state.New(r)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
@@ -336,7 +337,7 @@ func MakePreState(rules *chain.Rules, tx kv.RwTx, accounts types.GenesisAlloc, b
 		if a.Balance != nil {
 			balance, _ = uint256.FromBig(a.Balance)
 		}
-		statedb.SetBalance(addr, balance)
+		statedb.SetBalance(addr, balance, tracing.BalanceChangeUnspecified)
 		for k, v := range a.Storage {
 			key := k
 			val := uint256.NewInt(0).SetBytes(v.Bytes())
@@ -368,7 +369,7 @@ func MakePreState(rules *chain.Rules, tx kv.RwTx, accounts types.GenesisAlloc, b
 		defer domains.Flush(context2.Background(), tx)
 		txc.Doms = domains
 	}
-	w = rpchelper.NewLatestStateWriter(txc, blockNr-1)
+	w = rpchelper.NewLatestStateWriter(txc, blockNr-1, histV3)
 
 	// Commit and re-open to start with a clean state.
 	if err := statedb.FinalizeTx(rules, w); err != nil {

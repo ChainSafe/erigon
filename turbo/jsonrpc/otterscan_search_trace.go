@@ -52,7 +52,7 @@ func (api *OtterscanAPIImpl) traceBlock(dbtx kv.Tx, ctx context.Context, blockNu
 		return false, nil, err
 	}
 
-	reader, err := rpchelper.CreateHistoryStateReader(dbtx, blockNum, 0, chainConfig.ChainName)
+	reader, err := rpchelper.CreateHistoryStateReader(dbtx, blockNum, 0, api.historyV3(dbtx), chainConfig.ChainName)
 	if err != nil {
 		return false, nil, err
 	}
@@ -91,12 +91,25 @@ func (api *OtterscanAPIImpl) traceBlock(dbtx kv.Tx, ctx context.Context, blockNu
 		msg, _ := tx.AsMessage(*signer, header.BaseFee, rules)
 
 		tracer := NewTouchTracer(searchAddr)
+		ibs.SetLogger(tracer.Tracer().Hooks)
 		BlockContext := core.NewEVMBlockContext(header, core.GetHashFn(header, getHeader), engine, nil)
 		TxContext := core.NewEVMTxContext(msg)
 
-		vmenv := vm.NewEVM(BlockContext, TxContext, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer})
-		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.GetGas()).AddBlobGas(tx.GetBlobGas()), true /* refunds */, false /* gasBailout */); err != nil {
+		vmenv := vm.NewEVM(BlockContext, TxContext, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer.Tracer().Hooks})
+
+		if tracer != nil && tracer.Tracer().Hooks.OnTxStart != nil {
+			tracer.Tracer().Hooks.OnTxStart(vmenv.GetVMContext(), tx, msg.From())
+		}
+		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.GetGas()).AddBlobGas(tx.GetBlobGas()), true /* refunds */, false /* gasBailout */)
+		if err != nil {
+			if tracer != nil && tracer.Tracer().Hooks.OnTxEnd != nil {
+				tracer.Tracer().Hooks.OnTxEnd(nil, err)
+			}
 			return false, nil, err
+		}
+
+		if tracer != nil && tracer.Tracer().Hooks.OnTxEnd != nil {
+			tracer.Tracer().OnTxEnd(&types.Receipt{GasUsed: res.UsedGas}, nil)
 		}
 		_ = ibs.FinalizeTx(rules, cachedWriter)
 

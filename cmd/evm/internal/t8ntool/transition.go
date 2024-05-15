@@ -30,6 +30,7 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
 	"github.com/ledgerwatch/erigon-lib/kv/temporal/temporaltest"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/eth/consensuschain"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
@@ -39,6 +40,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon-lib/common/length"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/consensus/ethash"
 	"github.com/ledgerwatch/erigon/consensus/merge"
@@ -99,7 +101,7 @@ func Main(ctx *cli.Context) error {
 		err     error
 		baseDir = ""
 	)
-	var getTracer func(txIndex int, txHash libcommon.Hash) (vm.EVMLogger, error)
+	var getTracer func(txIndex int, txHash libcommon.Hash) (*tracing.Hooks, error)
 
 	// If user specified a basedir, make sure it exists
 	if ctx.IsSet(OutputBasedir.Name) {
@@ -126,7 +128,7 @@ func Main(ctx *cli.Context) error {
 				prevFile.Close()
 			}
 		}()
-		getTracer = func(txIndex int, txHash libcommon.Hash) (vm.EVMLogger, error) {
+		getTracer = func(txIndex int, txHash libcommon.Hash) (*tracing.Hooks, error) {
 			if prevFile != nil {
 				prevFile.Close()
 			}
@@ -135,10 +137,10 @@ func Main(ctx *cli.Context) error {
 				return nil, NewError(ErrorIO, fmt.Errorf("failed creating trace-file: %v", err2))
 			}
 			prevFile = traceFile
-			return trace_logger.NewJSONLogger(logConfig, traceFile), nil
+			return trace_logger.NewJSONLogger(logConfig, traceFile).Hooks, nil
 		}
 	} else {
-		getTracer = func(txIndex int, txHash libcommon.Hash) (tracer vm.EVMLogger, err error) {
+		getTracer = func(txIndex int, txHash libcommon.Hash) (tracer *tracing.Hooks, err error) {
 			return nil, nil
 		}
 	}
@@ -278,7 +280,7 @@ func Main(ctx *cli.Context) error {
 		ommerN.SetUint64(header.Number.Uint64() - ommer.Delta)
 		ommerHeaders[i] = &types.Header{Coinbase: ommer.Address, Number: &ommerN}
 	}
-	block := types.NewBlock(header, txs, ommerHeaders, nil /* receipts */, prestate.Env.Withdrawals, prestate.Env.Requests)
+	block := types.NewBlock(header, txs, ommerHeaders, nil /* receipts */, prestate.Env.Withdrawals)
 
 	var hashError error
 	getHash := func(num uint64) libcommon.Hash {
@@ -293,7 +295,7 @@ func Main(ctx *cli.Context) error {
 		return h
 	}
 
-	db, _ := temporaltest.NewTestDB(nil, datadir.New(""))
+	_, db, _ := temporaltest.NewTestDB(nil, datadir.New(""))
 	defer db.Close()
 
 	tx, err := db.BeginRw(context.Background())
@@ -330,7 +332,11 @@ func Main(ctx *cli.Context) error {
 	body, _ := rlp.EncodeToBytes(txs)
 	collector := make(Alloc)
 
-	dumper := state.NewDumper(tx, prestate.Env.Number, true)
+	historyV3, err := kvcfg.HistoryV3.Enabled(tx)
+	if err != nil {
+		return err
+	}
+	dumper := state.NewDumper(tx, prestate.Env.Number, historyV3)
 	dumper.DumpToCollector(collector, false, false, libcommon.Address{}, 0)
 	return dispatchOutput(ctx, baseDir, result, collector, body)
 }

@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/ethutils"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/adapter/ethapi"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
@@ -110,7 +112,7 @@ func (api *OtterscanAPIImpl) getTransactionByHash(ctx context.Context, tx kv.Tx,
 	return txn, block, blockHash, blockNum, txnIndex, nil
 }
 
-func (api *OtterscanAPIImpl) runTracer(ctx context.Context, tx kv.Tx, hash common.Hash, tracer vm.EVMLogger) (*core.ExecutionResult, error) {
+func (api *OtterscanAPIImpl) runTracer(ctx context.Context, tx kv.Tx, hash common.Hash, tracer *tracers.Tracer) (*core.ExecutionResult, error) {
 	txn, block, _, _, txIndex, err := api.getTransactionByHash(ctx, tx, hash)
 	if err != nil {
 		return nil, err
@@ -125,24 +127,34 @@ func (api *OtterscanAPIImpl) runTracer(ctx context.Context, tx kv.Tx, hash commo
 	}
 	engine := api.engine()
 
-	msg, blockCtx, txCtx, ibs, _, err := transactions.ComputeTxEnv(ctx, engine, block, chainConfig, api._blockReader, tx, int(txIndex))
+	msg, blockCtx, txCtx, ibs, _, err := transactions.ComputeTxEnv(ctx, engine, block, chainConfig, api._blockReader, tx, int(txIndex), api.historyV3(tx))
 	if err != nil {
 		return nil, err
 	}
 
+	ibs.SetLogger(tracer.Hooks)
 	var vmConfig vm.Config
 	if tracer == nil {
 		vmConfig = vm.Config{}
 	} else {
-		vmConfig = vm.Config{Debug: true, Tracer: tracer}
+		vmConfig = vm.Config{Debug: true, Tracer: tracer.Hooks}
 	}
 	vmenv := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
 
+	if tracer != nil && tracer.Hooks.OnTxStart != nil {
+		tracer.Hooks.OnTxStart(vmenv.GetVMContext(), txn, msg.From())
+	}
 	result, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()).AddBlobGas(msg.BlobGas()), true, false /* gasBailout */)
 	if err != nil {
+		if tracer != nil && tracer.Hooks.OnTxEnd != nil {
+			tracer.Hooks.OnTxEnd(nil, err)
+		}
 		return nil, fmt.Errorf("tracing failed: %v", err)
 	}
 
+	if tracer != nil && tracer.Hooks.OnTxEnd != nil {
+		tracer.Hooks.OnTxEnd(&types.Receipt{GasUsed: result.UsedGas}, nil)
+	}
 	return result, nil
 }
 
@@ -154,7 +166,7 @@ func (api *OtterscanAPIImpl) GetInternalOperations(ctx context.Context, hash com
 	defer tx.Rollback()
 
 	tracer := NewOperationsTracer(ctx)
-	if _, err := api.runTracer(ctx, tx, hash, tracer); err != nil {
+	if _, err := api.runTracer(ctx, tx, hash, tracer.Tracer()); err != nil {
 		return nil, err
 	}
 
@@ -180,7 +192,76 @@ func (api *OtterscanAPIImpl) SearchTransactionsBefore(ctx context.Context, addr 
 	}
 	defer dbtx.Rollback()
 
-	return api.searchTransactionsBeforeV3(dbtx.(kv.TemporalTx), ctx, addr, blockNum, pageSize)
+	if api.historyV3(dbtx) {
+		return api.searchTransactionsBeforeV3(dbtx.(kv.TemporalTx), ctx, addr, blockNum, pageSize)
+	}
+
+	callFromCursor, err := dbtx.Cursor(kv.CallFromIndex)
+	if err != nil {
+		return nil, err
+	}
+	defer callFromCursor.Close()
+
+	callToCursor, err := dbtx.Cursor(kv.CallToIndex)
+	if err != nil {
+		return nil, err
+	}
+	defer callToCursor.Close()
+
+	chainConfig, err := api.chainConfig(ctx, dbtx)
+	if err != nil {
+		return nil, err
+	}
+
+	isFirstPage := false
+	if blockNum == 0 {
+		isFirstPage = true
+	} else {
+		// Internal search code considers blockNum [including], so adjust the value
+		blockNum--
+	}
+
+	// Initialize search cursors at the first shard >= desired block number
+	callFromProvider := NewCallCursorBackwardBlockProvider(callFromCursor, addr, blockNum)
+	callToProvider := NewCallCursorBackwardBlockProvider(callToCursor, addr, blockNum)
+	callFromToProvider := newCallFromToBlockProvider(false, callFromProvider, callToProvider)
+
+	txs := make([]*RPCTransaction, 0, pageSize)
+	receipts := make([]map[string]interface{}, 0, pageSize)
+
+	resultCount := uint16(0)
+	hasMore := true
+	for {
+		if resultCount >= pageSize || !hasMore {
+			break
+		}
+
+		var results []*TransactionsWithReceipts
+		results, hasMore, err = api.traceBlocks(ctx, addr, chainConfig, pageSize, resultCount, callFromToProvider)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, r := range results {
+			if r == nil {
+				return nil, errors.New("internal error during search tracing")
+			}
+
+			for i := len(r.Txs) - 1; i >= 0; i-- {
+				txs = append(txs, r.Txs[i])
+			}
+			for i := len(r.Receipts) - 1; i >= 0; i-- {
+				receipts = append(receipts, r.Receipts[i])
+			}
+
+			resultCount += uint16(len(r.Txs))
+			if resultCount >= pageSize {
+				break
+			}
+		}
+	}
+
+	return &TransactionsWithReceipts{txs, receipts, isFirstPage, !hasMore}, nil
 }
 
 // Search transactions that touch a certain address.
@@ -202,7 +283,78 @@ func (api *OtterscanAPIImpl) SearchTransactionsAfter(ctx context.Context, addr c
 	}
 	defer dbtx.Rollback()
 
-	return api.searchTransactionsAfterV3(dbtx.(kv.TemporalTx), ctx, addr, blockNum, pageSize)
+	if api.historyV3(dbtx) {
+		return api.searchTransactionsAfterV3(dbtx.(kv.TemporalTx), ctx, addr, blockNum, pageSize)
+	}
+
+	callFromCursor, err := dbtx.Cursor(kv.CallFromIndex)
+	if err != nil {
+		return nil, err
+	}
+	defer callFromCursor.Close()
+
+	callToCursor, err := dbtx.Cursor(kv.CallToIndex)
+	if err != nil {
+		return nil, err
+	}
+	defer callToCursor.Close()
+
+	chainConfig, err := api.chainConfig(ctx, dbtx)
+	if err != nil {
+		return nil, err
+	}
+
+	isLastPage := false
+	if blockNum == 0 {
+		isLastPage = true
+	} else {
+		// Internal search code considers blockNum [including], so adjust the value
+		blockNum++
+	}
+
+	// Initialize search cursors at the first shard >= desired block number
+	callFromProvider := NewCallCursorForwardBlockProvider(callFromCursor, addr, blockNum)
+	callToProvider := NewCallCursorForwardBlockProvider(callToCursor, addr, blockNum)
+	callFromToProvider := newCallFromToBlockProvider(true, callFromProvider, callToProvider)
+
+	txs := make([]*RPCTransaction, 0, pageSize)
+	receipts := make([]map[string]interface{}, 0, pageSize)
+
+	resultCount := uint16(0)
+	hasMore := true
+	for {
+		if resultCount >= pageSize || !hasMore {
+			break
+		}
+
+		var results []*TransactionsWithReceipts
+		results, hasMore, err = api.traceBlocks(ctx, addr, chainConfig, pageSize, resultCount, callFromToProvider)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, r := range results {
+			if r == nil {
+				return nil, errors.New("internal error during search tracing")
+			}
+
+			txs = append(txs, r.Txs...)
+			receipts = append(receipts, r.Receipts...)
+
+			resultCount += uint16(len(r.Txs))
+			if resultCount >= pageSize {
+				break
+			}
+		}
+	}
+
+	// Reverse results
+	lentxs := len(txs)
+	for i := 0; i < lentxs/2; i++ {
+		txs[i], txs[lentxs-1-i] = txs[lentxs-1-i], txs[i]
+		receipts[i], receipts[lentxs-1-i] = receipts[lentxs-1-i], receipts[i]
+	}
+	return &TransactionsWithReceipts{txs, receipts, !hasMore, isLastPage}, nil
 }
 
 func (api *OtterscanAPIImpl) traceBlocks(ctx context.Context, addr common.Address, chainConfig *chain.Config, pageSize, resultCount uint16, callFromToProvider BlockProvider) ([]*TransactionsWithReceipts, bool, error) {

@@ -37,6 +37,7 @@ import (
 	"github.com/ledgerwatch/erigon/consensus"
 	"github.com/ledgerwatch/erigon/consensus/misc"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/rlp"
@@ -553,7 +554,7 @@ func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.H
 }
 
 func (ethash *Ethash) Initialize(config *chain.Config, chain consensus.ChainHeaderReader, header *types.Header,
-	state *state.IntraBlockState, syscall consensus.SysCallCustom, logger log.Logger) {
+	state *state.IntraBlockState, syscall consensus.SysCallCustom, logger log.Logger, eLogger *tracing.Hooks) {
 	if config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(state)
 	}
@@ -562,7 +563,7 @@ func (ethash *Ethash) Initialize(config *chain.Config, chain consensus.ChainHead
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards,
 // setting the final state on the header
 func (ethash *Ethash) Finalize(config *chain.Config, header *types.Header, state *state.IntraBlockState,
-	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal, requests []*types.Request,
+	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
 	chain consensus.ChainReader, syscall consensus.SystemCall, logger log.Logger,
 ) (types.Transactions, types.Receipts, error) {
 	// Accumulate any block and uncle rewards and commit the final state root
@@ -573,17 +574,17 @@ func (ethash *Ethash) Finalize(config *chain.Config, header *types.Header, state
 // FinalizeAndAssemble implements consensus.Engine, accumulating the block and
 // uncle rewards, setting the final state and assembling the block.
 func (ethash *Ethash) FinalizeAndAssemble(chainConfig *chain.Config, header *types.Header, state *state.IntraBlockState,
-	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal, requests []*types.Request,
+	txs types.Transactions, uncles []*types.Header, r types.Receipts, withdrawals []*types.Withdrawal,
 	chain consensus.ChainReader, syscall consensus.SystemCall, call consensus.Call, logger log.Logger,
 ) (*types.Block, types.Transactions, types.Receipts, error) {
 
 	// Finalize block
-	outTxs, outR, err := ethash.Finalize(chainConfig, header, state, txs, uncles, r, withdrawals, requests, chain, syscall, logger)
+	outTxs, outR, err := ethash.Finalize(chainConfig, header, state, txs, uncles, r, withdrawals, chain, syscall, logger)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// Header seems complete, assemble into a block and return
-	return types.NewBlock(header, outTxs, uncles, outR, withdrawals, requests), outTxs, outR, nil
+	return types.NewBlock(header, outTxs, uncles, outR, withdrawals), outTxs, outR, nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
@@ -668,8 +669,8 @@ func accumulateRewards(config *chain.Config, state *state.IntraBlockState, heade
 	minerReward, uncleRewards := AccumulateRewards(config, header, uncles)
 	for i, uncle := range uncles {
 		if i < len(uncleRewards) {
-			state.AddBalance(uncle.Coinbase, &uncleRewards[i])
+			state.AddBalance(uncle.Coinbase, &uncleRewards[i], tracing.BalanceIncreaseRewardMineUncle)
 		}
 	}
-	state.AddBalance(header.Coinbase, &minerReward)
+	state.AddBalance(header.Coinbase, &minerReward, tracing.BalanceIncreaseRewardMineBlock)
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"embed"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -35,6 +36,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
 	"github.com/ledgerwatch/erigon/common"
@@ -42,6 +44,7 @@ import (
 	"github.com/ledgerwatch/erigon/consensus/merge"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/params"
@@ -64,17 +67,17 @@ var allocs embed.FS
 // error is a *params.ConfigCompatError and the new, unwritten config is returned.
 //
 // The returned chain configuration is never nil.
-func CommitGenesisBlock(db kv.RwDB, genesis *types.Genesis, tmpDir string, logger log.Logger) (*chain.Config, *types.Block, error) {
-	return CommitGenesisBlockWithOverride(db, genesis, nil, tmpDir, logger)
+func CommitGenesisBlock(db kv.RwDB, genesis *types.Genesis, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) (*chain.Config, *types.Block, error) {
+	return CommitGenesisBlockWithOverride(db, genesis, nil, tmpDir, logger, bcLogger)
 }
 
-func CommitGenesisBlockWithOverride(db kv.RwDB, genesis *types.Genesis, overridePragueTime *big.Int, tmpDir string, logger log.Logger) (*chain.Config, *types.Block, error) {
+func CommitGenesisBlockWithOverride(db kv.RwDB, genesis *types.Genesis, overridePragueTime *big.Int, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) (*chain.Config, *types.Block, error) {
 	tx, err := db.BeginRw(context.Background())
 	if err != nil {
 		return nil, nil, err
 	}
 	defer tx.Rollback()
-	c, b, err := WriteGenesisBlock(tx, genesis, overridePragueTime, tmpDir, logger)
+	c, b, err := WriteGenesisBlock(tx, genesis, overridePragueTime, tmpDir, logger, bcLogger)
 	if err != nil {
 		return c, b, err
 	}
@@ -85,7 +88,7 @@ func CommitGenesisBlockWithOverride(db kv.RwDB, genesis *types.Genesis, override
 	return c, b, nil
 }
 
-func WriteGenesisBlock(tx kv.RwTx, genesis *types.Genesis, overridePragueTime *big.Int, tmpDir string, logger log.Logger) (*chain.Config, *types.Block, error) {
+func WriteGenesisBlock(tx kv.RwTx, genesis *types.Genesis, overridePragueTime *big.Int, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) (*chain.Config, *types.Block, error) {
 	var storedBlock *types.Block
 	if genesis != nil && genesis.Config == nil {
 		return params.AllProtocolChanges, nil, types.ErrGenesisNoConfig
@@ -110,7 +113,7 @@ func WriteGenesisBlock(tx kv.RwTx, genesis *types.Genesis, overridePragueTime *b
 			custom = false
 		}
 		applyOverrides(genesis.Config)
-		block, _, err1 := write(tx, genesis, tmpDir, logger)
+		block, _, err1 := write(tx, genesis, tmpDir, logger, bcLogger)
 		if err1 != nil {
 			return genesis.Config, nil, err1
 		}
@@ -122,7 +125,7 @@ func WriteGenesisBlock(tx kv.RwTx, genesis *types.Genesis, overridePragueTime *b
 
 	// Check whether the genesis block is already written.
 	if genesis != nil {
-		block, _, err1 := GenesisToBlock(genesis, tmpDir, logger)
+		block, _, err1 := GenesisToBlock(genesis, tmpDir, logger, nil)
 		if err1 != nil {
 			return genesis.Config, nil, err1
 		}
@@ -179,14 +182,32 @@ func WriteGenesisBlock(tx kv.RwTx, genesis *types.Genesis, overridePragueTime *b
 	return newCfg, storedBlock, nil
 }
 
-func WriteGenesisState(g *types.Genesis, tx kv.RwTx, tmpDir string, logger log.Logger) (*types.Block, *state.IntraBlockState, error) {
-	block, statedb, err := GenesisToBlock(g, tmpDir, logger)
+func WriteGenesisState(g *types.Genesis, tx kv.RwTx, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) (*types.Block, *state.IntraBlockState, error) {
+	block, statedb, err := GenesisToBlock(g, tmpDir, logger, bcLogger)
 	if err != nil {
 		return nil, nil, err
 	}
+	histV3, err := kvcfg.HistoryV3.Enabled(tx)
+	if err != nil {
+		panic(err)
+	}
 
 	var stateWriter state.StateWriter
-	stateWriter = state.NewNoopWriter()
+	if histV3 {
+		stateWriter = state.NewNoopWriter()
+	} else {
+		for addr, account := range g.Alloc {
+			if len(account.Code) > 0 || len(account.Storage) > 0 {
+				// Special case for weird tests - inaccessible storage
+				var b [8]byte
+				binary.BigEndian.PutUint64(b[:], state.FirstContractIncarnation)
+				if err := tx.Put(kv.IncarnationMap, addr[:], b[:]); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		stateWriter = state.NewPlainStateWriter(tx, tx, 0)
+	}
 
 	if block.Number().Sign() != 0 {
 		return nil, statedb, fmt.Errorf("can't commit genesis block with number > 0")
@@ -195,16 +216,26 @@ func WriteGenesisState(g *types.Genesis, tx kv.RwTx, tmpDir string, logger log.L
 		return nil, statedb, fmt.Errorf("cannot write state: %w", err)
 	}
 
+	if !histV3 {
+		if csw, ok := stateWriter.(state.WriterWithChangeSets); ok {
+			if err := csw.WriteChangeSets(); err != nil {
+				return nil, statedb, fmt.Errorf("cannot write change sets: %w", err)
+			}
+			if err := csw.WriteHistory(); err != nil {
+				return nil, statedb, fmt.Errorf("cannot write history: %w", err)
+			}
+		}
+	}
 	return block, statedb, nil
 }
 
-func MustCommitGenesis(g *types.Genesis, db kv.RwDB, tmpDir string, logger log.Logger) *types.Block {
+func MustCommitGenesis(g *types.Genesis, db kv.RwDB, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) *types.Block {
 	tx, err := db.BeginRw(context.Background())
 	if err != nil {
 		panic(err)
 	}
 	defer tx.Rollback()
-	block, _, err := write(tx, g, tmpDir, logger)
+	block, _, err := write(tx, g, tmpDir, logger, bcLogger)
 	if err != nil {
 		panic(err)
 	}
@@ -217,8 +248,8 @@ func MustCommitGenesis(g *types.Genesis, db kv.RwDB, tmpDir string, logger log.L
 
 // Write writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
-func write(tx kv.RwTx, g *types.Genesis, tmpDir string, logger log.Logger) (*types.Block, *state.IntraBlockState, error) {
-	block, statedb, err2 := WriteGenesisState(g, tx, tmpDir, logger)
+func write(tx kv.RwTx, g *types.Genesis, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) (*types.Block, *state.IntraBlockState, error) {
+	block, statedb, err2 := WriteGenesisState(g, tx, tmpDir, logger, bcLogger)
 	if err2 != nil {
 		return block, statedb, err2
 	}
@@ -255,6 +286,10 @@ func write(tx kv.RwTx, g *types.Genesis, tmpDir string, logger log.Logger) (*typ
 		return nil, nil, err
 	}
 
+	if bcLogger != nil && bcLogger.OnGenesisBlock != nil {
+		bcLogger.OnGenesisBlock(block, g.Alloc)
+	}
+
 	// We support ethash/merge for issuance (for now)
 	if g.Config.Consensus != chain.EtHashConsensus {
 		return block, statedb, nil
@@ -280,7 +315,7 @@ func write(tx kv.RwTx, g *types.Genesis, tmpDir string, logger log.Logger) (*typ
 // GenesisBlockForTesting creates and writes a block in which addr has the given wei balance.
 func GenesisBlockForTesting(db kv.RwDB, addr libcommon.Address, balance *big.Int, tmpDir string, logger log.Logger) *types.Block {
 	g := types.Genesis{Alloc: types.GenesisAlloc{addr: {Balance: balance}}, Config: params.TestChainConfig}
-	block := MustCommitGenesis(&g, db, tmpDir, logger)
+	block := MustCommitGenesis(&g, db, tmpDir, logger, nil)
 	return block
 }
 
@@ -289,14 +324,14 @@ type GenAccount struct {
 	Balance *big.Int
 }
 
-func GenesisWithAccounts(db kv.RwDB, accs []GenAccount, tmpDir string, logger log.Logger) *types.Block {
+func GenesisWithAccounts(db kv.RwDB, accs []GenAccount, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) *types.Block {
 	g := types.Genesis{Config: params.TestChainConfig}
 	allocs := make(map[libcommon.Address]types.GenesisAccount)
 	for _, acc := range accs {
 		allocs[acc.Addr] = types.GenesisAccount{Balance: acc.Balance}
 	}
 	g.Alloc = allocs
-	block := MustCommitGenesis(&g, db, tmpDir, logger)
+	block := MustCommitGenesis(&g, db, tmpDir, logger, bcLogger)
 	return block
 }
 
@@ -461,7 +496,7 @@ func DeveloperGenesisBlock(period uint64, faucet libcommon.Address) *types.Genes
 
 // ToBlock creates the genesis block and writes state of a genesis specification
 // to the given database (or discards it if nil).
-func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger) (*types.Block, *state.IntraBlockState, error) {
+func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger, bcLogger *tracing.Hooks) (*types.Block, *state.IntraBlockState, error) {
 	_ = g.Alloc //nil-check
 
 	head := &types.Header{
@@ -518,11 +553,6 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger) (*types.
 		}
 	}
 
-	var requests []*types.Request // TODO(racytech): revisit this after merge, make sure everythin is correct
-	if g.Config != nil && g.Config.IsPrague(g.Timestamp) {
-		requests = []*types.Request{}
-	}
-
 	var root libcommon.Hash
 	var statedb *state.IntraBlockState
 	wg := sync.WaitGroup{}
@@ -566,7 +596,9 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger) (*types.
 			if overflow {
 				panic("overflow at genesis allocs")
 			}
-			statedb.AddBalance(addr, balance)
+			// This is not actually logged via tracer because OnGenesisBlock
+			// already captures the allocations.
+			statedb.AddBalance(addr, balance, tracing.BalanceIncreaseGenesisBalance)
 			statedb.SetCode(addr, account.Code)
 			statedb.SetNonce(addr, account.Nonce)
 			for key, value := range account.Storage {
@@ -599,7 +631,7 @@ func GenesisToBlock(g *types.Genesis, tmpDir string, logger log.Logger) (*types.
 
 	head.Root = root
 
-	return types.NewBlock(head, nil, nil, nil, withdrawals, requests), statedb, nil
+	return types.NewBlock(head, nil, nil, nil, withdrawals), statedb, nil
 }
 
 func sortedAllocKeys(m types.GenesisAlloc) []string {

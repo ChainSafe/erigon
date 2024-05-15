@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Giulio2002/bls"
 	"github.com/ledgerwatch/erigon/cl/beacon/synced_data"
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
+	"github.com/ledgerwatch/erigon/cl/fork"
 	st "github.com/ledgerwatch/erigon/cl/phase1/core/state"
 	"github.com/ledgerwatch/erigon/cl/phase1/core/state/lru"
 	"github.com/ledgerwatch/erigon/cl/pool"
@@ -15,7 +17,7 @@ import (
 
 type proposerSlashingService struct {
 	operationsPool    pool.OperationsPool
-	syncedDataManager synced_data.SyncedData
+	syncedDataManager *synced_data.SyncedDataManager
 	beaconCfg         *clparams.BeaconChainConfig
 	ethClock          eth_clock.EthereumClock
 	cache             *lru.Cache[uint64, struct{}]
@@ -23,7 +25,7 @@ type proposerSlashingService struct {
 
 func NewProposerSlashingService(
 	operationsPool pool.OperationsPool,
-	syncedDataManager synced_data.SyncedData,
+	syncedDataManager *synced_data.SyncedDataManager,
 	beaconCfg *clparams.BeaconChainConfig,
 	ethClock eth_clock.EthereumClock,
 ) *proposerSlashingService {
@@ -71,7 +73,7 @@ func (s *proposerSlashingService) ProcessMessage(ctx context.Context, subnet *ui
 	}
 
 	// Verify the proposer is slashable
-	state := s.syncedDataManager.HeadStateReader()
+	state := s.syncedDataManager.HeadState()
 	if state == nil {
 		return ErrIgnore
 	}
@@ -85,16 +87,16 @@ func (s *proposerSlashingService) ProcessMessage(ctx context.Context, subnet *ui
 
 	// Verify signatures for both headers
 	for _, signedHeader := range []*cltypes.SignedBeaconBlockHeader{msg.Header1, msg.Header2} {
-		domain, err := state.GetDomain(s.beaconCfg.DomainBeaconProposer, st.GetEpochAtSlot(s.beaconCfg, signedHeader.Header.Slot))
+		domain, err := state.GetDomain(state.BeaconConfig().DomainBeaconProposer, st.GetEpochAtSlot(state.BeaconConfig(), signedHeader.Header.Slot))
 		if err != nil {
 			return fmt.Errorf("unable to get domain: %v", err)
 		}
 		pk := proposer.PublicKey()
-		signingRoot, err := computeSigningRoot(signedHeader, domain)
+		signingRoot, err := fork.ComputeSigningRoot(signedHeader, domain)
 		if err != nil {
 			return fmt.Errorf("unable to compute signing root: %v", err)
 		}
-		valid, err := blsVerify(signedHeader.Signature[:], signingRoot[:], pk[:])
+		valid, err := bls.Verify(signedHeader.Signature[:], signingRoot[:], pk[:])
 		if err != nil {
 			return fmt.Errorf("unable to verify signature: %v", err)
 		}
