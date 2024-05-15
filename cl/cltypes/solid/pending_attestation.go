@@ -133,8 +133,6 @@ func (a *PendingAttestation) UnmarshalJSON(input []byte) error {
 		InclusionDelay  uint64           `json:"inclusion_delay,string"`
 		ProposerIndex   uint64           `json:"proposer_index,string"`
 	}
-	tmp.AttestationData = NewAttestationData()
-
 	if err = json.Unmarshal(input, &tmp); err != nil {
 		return err
 	}

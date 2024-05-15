@@ -11,22 +11,19 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
+	"github.com/ledgerwatch/erigon-lib/diagnostics"
 	"github.com/ledgerwatch/erigon/cl/gossip"
 	"github.com/ledgerwatch/erigon/cl/sentinel"
 	"github.com/ledgerwatch/erigon/cl/sentinel/httpreqresp"
 
-	"github.com/ledgerwatch/erigon-lib/diagnostics"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	sentinelrpc "github.com/ledgerwatch/erigon-lib/gointerfaces/sentinelproto"
+	sentinelrpc "github.com/ledgerwatch/erigon-lib/gointerfaces/sentinel"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
 	"github.com/ledgerwatch/erigon/cl/utils"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
-
-const gracePeerCount = 8
 
 var _ sentinelrpc.SentinelServer = (*SentinelServer)(nil)
 
@@ -39,6 +36,8 @@ type SentinelServer struct {
 
 	mu     sync.RWMutex
 	logger log.Logger
+
+	peerStatistics map[string]*diagnostics.PeerStatistics
 }
 
 func NewSentinelServer(ctx context.Context, sentinel *sentinel.Sentinel, logger log.Logger) *SentinelServer {
@@ -47,25 +46,20 @@ func NewSentinelServer(ctx context.Context, sentinel *sentinel.Sentinel, logger 
 		ctx:            ctx,
 		gossipNotifier: newGossipNotifier(),
 		logger:         logger,
+		peerStatistics: make(map[string]*diagnostics.PeerStatistics),
 	}
 }
 
-// extractSubnetIndexByGossipTopic takes a topic and extract the blob sidecar
-func extractSubnetIndexByGossipTopic(name string) int {
-	// e.g blob_sidecar_3, we want to extract 3
-	// reject if last character is not a number
-	if !unicode.IsNumber(rune(name[len(name)-1])) {
-		return -1
-	}
-	// get the last part of the topic
-	parts := strings.Split(name, "_")
-	// convert it to int
-	index, err := strconv.Atoi(parts[len(parts)-1])
+// extractBlobSideCarIndex takes a topic and extract the blob sidecar
+func extractBlobSideCarIndex(topic string) int {
+	// compute the index prefixless
+	startIndex := strings.Index(topic, gossip.TopicNamePrefixBlobSidecar) + len(gossip.TopicNamePrefixBlobSidecar)
+	endIndex := strings.Index(topic[:startIndex], "/")
+	blobIndex, err := strconv.Atoi(topic[startIndex:endIndex])
 	if err != nil {
-		log.Warn("[Sentinel] failed to parse subnet index", "topic", name, "err", err)
-		return -1
+		panic(fmt.Sprintf("should not be substribed to %s", topic))
 	}
-	return index
+	return blobIndex
 }
 
 //BanPeer(context.Context, *Peer) (*EmptyMessage, error)
@@ -86,42 +80,33 @@ func (s *SentinelServer) PublishGossip(_ context.Context, msg *sentinelrpc.Gossi
 	// Snappify payload before sending it to gossip
 	compressedData := utils.CompressSnappy(msg.Data)
 
-	//trackPeerStatistics(msg.GetPeer().Pid, false, msg.Name, "unknown", len(compressedData))
+	s.trackPeerStatistics(msg.GetPeer().Pid, false, msg.Name, "unknown", len(compressedData))
 
 	var subscription *sentinel.GossipSubscription
 
+	// TODO: this is still wrong... we should build a subscription here to match exactly, meaning that downstream consumers should be
+	// in charge of keeping track of fork id.
 	switch msg.Name {
-	case gossip.TopicNameBeaconBlock,
-		gossip.TopicNameBeaconAggregateAndProof,
-		gossip.TopicNameVoluntaryExit,
-		gossip.TopicNameProposerSlashing,
-		gossip.TopicNameSyncCommitteeContributionAndProof,
-		gossip.TopicNameAttesterSlashing:
+	case gossip.TopicNameBeaconBlock:
+		subscription = manager.GetMatchingSubscription(msg.Name)
+	case gossip.TopicNameBeaconAggregateAndProof:
+		subscription = manager.GetMatchingSubscription(msg.Name)
+	case gossip.TopicNameVoluntaryExit:
+		subscription = manager.GetMatchingSubscription(msg.Name)
+	case gossip.TopicNameProposerSlashing:
+		subscription = manager.GetMatchingSubscription(msg.Name)
+	case gossip.TopicNameAttesterSlashing:
 		subscription = manager.GetMatchingSubscription(msg.Name)
 	default:
-		// check subnets
 		switch {
 		case gossip.IsTopicBlobSidecar(msg.Name):
-			if msg.SubnetId == nil {
-				return nil, fmt.Errorf("subnetId is required for blob sidecar")
-			}
-			subscription = manager.GetMatchingSubscription(gossip.TopicNameBlobSidecar(*msg.SubnetId))
-		case gossip.IsTopicSyncCommittee(msg.Name):
-			if msg.SubnetId == nil {
-				return nil, fmt.Errorf("subnetId is required for sync_committee")
-			}
-			subscription = manager.GetMatchingSubscription(gossip.TopicNameSyncCommittee(int(*msg.SubnetId)))
-		case gossip.IsTopicBeaconAttestation(msg.Name):
-			if msg.SubnetId == nil {
-				return nil, fmt.Errorf("subnetId is required for beacon attestation")
-			}
-			subscription = manager.GetMatchingSubscription(gossip.TopicNameBeaconAttestation(*msg.SubnetId))
+			subscription = manager.GetMatchingSubscription(msg.Name)
 		default:
-			return &sentinelrpc.EmptyMessage{}, fmt.Errorf("unknown topic %s", msg.Name)
+			return &sentinelrpc.EmptyMessage{}, nil
 		}
 	}
 	if subscription == nil {
-		return &sentinelrpc.EmptyMessage{}, fmt.Errorf("unknown topic %s", msg.Name)
+		return &sentinelrpc.EmptyMessage{}, nil
 	}
 	return &sentinelrpc.EmptyMessage{}, subscription.Publish(compressedData)
 }
@@ -149,7 +134,6 @@ func (s *SentinelServer) SubscribeGossip(data *sentinelrpc.SubscriptionData, str
 				Peer: &sentinelrpc.Peer{
 					Pid: packet.pid,
 				},
-				SubnetId: packet.subnetId,
 			}); err != nil {
 				s.logger.Warn("[Sentinel] Could not relay gossip packet", "reason", err)
 			}
@@ -208,7 +192,6 @@ func (s *SentinelServer) requestPeer(ctx context.Context, pid peer.ID, req *sent
 		s.sentinel.Peers().RemovePeer(pid)
 		s.sentinel.Host().Peerstore().RemovePeer(pid)
 		s.sentinel.Host().Network().ClosePeer(pid)
-
 		return nil, errorMessage
 	}
 	// we should never get an invalid response to this. our responder should always set it on non-error response
@@ -218,14 +201,18 @@ func (s *SentinelServer) requestPeer(ctx context.Context, pid peer.ID, req *sent
 		return nil, err
 	}
 	// known error codes, just remove the peer
-	if isError != 0 {
-		s.sentinel.Peers().RemovePeer(pid)
+	if isError == 3 || isError == 2 {
 		s.sentinel.Host().Peerstore().RemovePeer(pid)
 		s.sentinel.Host().Network().ClosePeer(pid)
-
 		return nil, fmt.Errorf("peer error code: %d", isError)
 	}
-
+	// unknown error codes
+	if isError > 3 {
+		s.logger.Debug("peer returned unknown erro", "id", pid.String())
+		s.sentinel.Host().Peerstore().RemovePeer(pid)
+		s.sentinel.Host().Network().ClosePeer(pid)
+		return nil, fmt.Errorf("peer returned unknown error: %d", isError)
+	}
 	// read the body from the response
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -343,19 +330,6 @@ func (s *SentinelServer) ListenToGossip() {
 	}
 }
 
-func (s *SentinelServer) SetSubscribeExpiry(ctx context.Context, expiryReq *sentinelrpc.RequestSubscribeExpiry) (*sentinelrpc.EmptyMessage, error) {
-	var (
-		topic      = expiryReq.GetTopic()
-		expiryTime = time.Unix(int64(expiryReq.GetExpiryUnixSecs()), 0)
-	)
-	subs := s.sentinel.GossipManager().GetMatchingSubscription(topic)
-	if subs == nil {
-		return nil, fmt.Errorf("no such subscription")
-	}
-	subs.OverwriteSubscriptionExpiry(expiryTime)
-	return &sentinelrpc.EmptyMessage{}, nil
-}
-
 func (s *SentinelServer) handleGossipPacket(pkt *sentinel.GossipMessage) error {
 	var err error
 	s.logger.Trace("[Sentinel Gossip] Received Packet", "topic", pkt.TopicName)
@@ -374,59 +348,67 @@ func (s *SentinelServer) handleGossipPacket(pkt *sentinel.GossipMessage) error {
 		return err
 	}
 
-	msgType, gossipTopic := parseTopic(topic)
-	trackPeerStatistics(string(textPid), true, msgType, gossipTopic, len(data))
+	msgType, msgCap := parseTopic(topic)
+	s.trackPeerStatistics(string(textPid), true, msgType, msgCap, len(data))
 
-	switch gossipTopic {
-	case gossip.TopicNameBeaconBlock,
-		gossip.TopicNameBeaconAggregateAndProof,
-		gossip.TopicNameVoluntaryExit,
-		gossip.TopicNameProposerSlashing,
-		gossip.TopicNameAttesterSlashing,
-		gossip.TopicNameBlsToExecutionChange,
-		gossip.TopicNameSyncCommitteeContributionAndProof:
-		s.gossipNotifier.notify(&gossipObject{
-			data:     data,
-			t:        gossipTopic,
-			pid:      string(textPid),
-			subnetId: nil,
-		})
-	default:
-		// case for:
-		// TopicNamePrefixBlobSidecar
-		// TopicNamePrefixBeaconAttestation
-		// TopicNamePrefixSyncCommittee
-		subnet := extractSubnetIndexByGossipTopic(gossipTopic)
-		if subnet < 0 {
-			break
-		}
-		subnetId := uint64(subnet)
-		s.gossipNotifier.notify(&gossipObject{
-			data:     data,
-			t:        gossipTopic,
-			pid:      string(textPid),
-			subnetId: &subnetId,
-		})
+	// Check to which gossip it belongs to.
+	if strings.Contains(topic, string(gossip.TopicNameBeaconBlock)) {
+		s.gossipNotifier.notify(gossip.TopicNameBeaconBlock, data, string(textPid))
+	} else if strings.Contains(topic, string(gossip.TopicNameBeaconAggregateAndProof)) {
+		s.gossipNotifier.notify(gossip.TopicNameBeaconAggregateAndProof, data, string(textPid))
+	} else if strings.Contains(topic, string(gossip.TopicNameVoluntaryExit)) {
+		s.gossipNotifier.notify(gossip.TopicNameVoluntaryExit, data, string(textPid))
+	} else if strings.Contains(topic, string(gossip.TopicNameProposerSlashing)) {
+		s.gossipNotifier.notify(gossip.TopicNameProposerSlashing, data, string(textPid))
+	} else if strings.Contains(topic, string(gossip.TopicNameAttesterSlashing)) {
+		s.gossipNotifier.notify(gossip.TopicNameAttesterSlashing, data, string(textPid))
+	} else if strings.Contains(topic, string(gossip.TopicNameBlsToExecutionChange)) {
+		s.gossipNotifier.notify(gossip.TopicNameBlsToExecutionChange, data, string(textPid))
+	} else if gossip.IsTopicBlobSidecar(topic) {
+		// extract the index
+		s.gossipNotifier.notifyBlob(data, string(textPid), extractBlobSideCarIndex(topic))
 	}
 	return nil
 }
 
-func trackPeerStatistics(peerID string, inbound bool, msgType string, msgCap string, bytes int) {
-	isDiagEnabled := diagnostics.TypeOf(diagnostics.PeerStatisticMsgUpdate{}).Enabled()
-	if isDiagEnabled {
-		diagnostics.Send(diagnostics.PeerStatisticMsgUpdate{
-			PeerType: "Sentinel",
-			PeerID:   peerID,
-			Inbound:  inbound,
-			MsgType:  msgType,
-			MsgCap:   msgCap,
-			Bytes:    bytes,
-		})
+func (s *SentinelServer) GetPeersStatistics() map[string]*diagnostics.PeerStatistics {
+	stats := make(map[string]*diagnostics.PeerStatistics)
+	for k, v := range s.peerStatistics {
+		stats[k] = v
+		delete(s.peerStatistics, k)
+	}
+
+	return stats
+}
+
+func (s *SentinelServer) trackPeerStatistics(peerID string, inbound bool, msgType string, msgCap string, bytes int) {
+	if s.peerStatistics == nil {
+		s.peerStatistics = make(map[string]*diagnostics.PeerStatistics)
+	}
+
+	if _, exists := s.peerStatistics[peerID]; !exists {
+		s.peerStatistics[peerID] = &diagnostics.PeerStatistics{
+			CapBytesIn:   make(map[string]uint64),
+			CapBytesOut:  make(map[string]uint64),
+			TypeBytesIn:  make(map[string]uint64),
+			TypeBytesOut: make(map[string]uint64),
+		}
+	}
+
+	stats := s.peerStatistics[peerID]
+
+	if inbound {
+		stats.BytesIn += uint64(bytes)
+		stats.CapBytesIn[msgCap] += uint64(bytes)
+		stats.TypeBytesIn[msgType] += uint64(bytes)
+	} else {
+		stats.BytesOut += uint64(bytes)
+		stats.CapBytesOut[msgCap] += uint64(bytes)
+		stats.TypeBytesOut[msgType] += uint64(bytes)
 	}
 }
 
 func parseTopic(input string) (string, string) {
-	// e.g /eth2/d31f6191/blob_sidecar_3/ssz_snappy
 	parts := strings.Split(input, "/")
 
 	if len(parts) < 4 {

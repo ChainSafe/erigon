@@ -8,10 +8,6 @@ import (
 )
 
 func SetupFlagsAccess(ctx *cli.Context, metricsMux *http.ServeMux) {
-	if metricsMux == nil {
-		return
-	}
-
 	metricsMux.HandleFunc("/flags", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")

@@ -37,7 +37,7 @@ import (
 	"github.com/ledgerwatch/erigon/eth/tracers"
 )
 
-//go:generate gencodec -type account -field-override accountMarshaling -out gen_account_json.go
+//go:generate go run github.com/fjl/gencodec -type account -field-override accountMarshaling -out gen_account_json.go
 
 func init() {
 	register("prestateTracer", newPrestateTracer)

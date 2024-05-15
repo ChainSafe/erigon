@@ -15,7 +15,7 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
-	sentry "github.com/ledgerwatch/erigon-lib/gointerfaces/sentryproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/sentry"
 	"github.com/ledgerwatch/erigon-lib/kv/memdb"
 	"github.com/ledgerwatch/erigon/consensus"
 	"github.com/ledgerwatch/erigon/core"
@@ -53,10 +53,6 @@ func (h *test_heimdall) BorConfig() *borcfg.BorConfig {
 }
 
 func (h test_heimdall) FetchStateSyncEvents(ctx context.Context, fromID uint64, to time.Time, limit int) ([]*heimdall.EventRecordWithTime, error) {
-	return nil, nil
-}
-
-func (h *test_heimdall) FetchStateSyncEvent(ctx context.Context, id uint64) (*heimdall.EventRecordWithTime, error) {
 	return nil, nil
 }
 
@@ -114,10 +110,6 @@ func (h test_heimdall) FetchCheckpoint(ctx context.Context, number int64) (*heim
 
 func (h test_heimdall) FetchCheckpointCount(ctx context.Context) (int64, error) {
 	return 0, fmt.Errorf("TODO")
-}
-
-func (h *test_heimdall) FetchCheckpoints(ctx context.Context, page uint64, limit uint64) (heimdall.Checkpoints, error) {
-	return nil, fmt.Errorf("TODO")
 }
 
 func (h test_heimdall) FetchMilestone(ctx context.Context, number int64) (*heimdall.Milestone, error) {

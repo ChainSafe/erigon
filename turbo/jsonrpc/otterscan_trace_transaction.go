@@ -32,13 +32,12 @@ func (api *OtterscanAPIImpl) TraceTransaction(ctx context.Context, hash common.H
 }
 
 type TraceEntry struct {
-	Type   string           `json:"type"`
-	Depth  int              `json:"depth"`
-	From   common.Address   `json:"from"`
-	To     common.Address   `json:"to"`
-	Value  *hexutil.Big     `json:"value"`
-	Input  hexutility.Bytes `json:"input"`
-	Output hexutility.Bytes `json:"output"`
+	Type  string           `json:"type"`
+	Depth int              `json:"depth"`
+	From  common.Address   `json:"from"`
+	To    common.Address   `json:"to"`
+	Value *hexutil.Big     `json:"value"`
+	Input hexutility.Bytes `json:"input"`
 }
 
 type TransactionTracer struct {
@@ -46,14 +45,12 @@ type TransactionTracer struct {
 	ctx     context.Context
 	Results []*TraceEntry
 	depth   int // computed from CaptureStart, CaptureEnter, and CaptureExit calls
-	stack   []*TraceEntry
 }
 
 func NewTransactionTracer(ctx context.Context) *TransactionTracer {
 	return &TransactionTracer{
 		ctx:     ctx,
 		Results: make([]*TraceEntry, 0),
-		stack:   make([]*TraceEntry, 0),
 	}
 }
 
@@ -67,42 +64,45 @@ func (t *TransactionTracer) Tracer() *tracers.Tracer {
 }
 
 func (t *TransactionTracer) captureStartOrEnter(typ vm.OpCode, from, to common.Address, precompile bool, input []byte, value *uint256.Int) {
+	if precompile {
+		return
+	}
+
 	inputCopy := make([]byte, len(input))
 	copy(inputCopy, input)
 	_value := new(big.Int)
 	if value != nil {
 		_value.Set(value.ToBig())
 	}
-
-	var entry *TraceEntry
 	if typ == vm.CALL {
-		entry = &TraceEntry{"CALL", t.depth, from, to, (*hexutil.Big)(_value), inputCopy, nil}
-	} else if typ == vm.STATICCALL {
-		entry = &TraceEntry{"STATICCALL", t.depth, from, to, nil, inputCopy, nil}
-	} else if typ == vm.DELEGATECALL {
-		entry = &TraceEntry{"DELEGATECALL", t.depth, from, to, nil, inputCopy, nil}
-	} else if typ == vm.CALLCODE {
-		entry = &TraceEntry{"CALLCODE", t.depth, from, to, (*hexutil.Big)(_value), inputCopy, nil}
-	} else if typ == vm.CREATE {
-		entry = &TraceEntry{"CREATE", t.depth, from, to, (*hexutil.Big)(value.ToBig()), inputCopy, nil}
-	} else if typ == vm.CREATE2 {
-		entry = &TraceEntry{"CREATE2", t.depth, from, to, (*hexutil.Big)(value.ToBig()), inputCopy, nil}
-	} else if typ == vm.SELFDESTRUCT {
+		t.Results = append(t.Results, &TraceEntry{"CALL", t.depth, from, to, (*hexutil.Big)(_value), inputCopy})
+		return
+	}
+	if typ == vm.STATICCALL {
+		t.Results = append(t.Results, &TraceEntry{"STATICCALL", t.depth, from, to, nil, inputCopy})
+		return
+	}
+	if typ == vm.DELEGATECALL {
+		t.Results = append(t.Results, &TraceEntry{"DELEGATECALL", t.depth, from, to, nil, inputCopy})
+		return
+	}
+	if typ == vm.CALLCODE {
+		t.Results = append(t.Results, &TraceEntry{"CALLCODE", t.depth, from, to, (*hexutil.Big)(_value), inputCopy})
+		return
+	}
+	if typ == vm.CREATE {
+		t.Results = append(t.Results, &TraceEntry{"CREATE", t.depth, from, to, (*hexutil.Big)(value.ToBig()), inputCopy})
+		return
+	}
+	if typ == vm.CREATE2 {
+		t.Results = append(t.Results, &TraceEntry{"CREATE2", t.depth, from, to, (*hexutil.Big)(value.ToBig()), inputCopy})
+		return
+	}
+
+	if typ == vm.SELFDESTRUCT {
 		last := t.Results[len(t.Results)-1]
-		entry = &TraceEntry{"SELFDESTRUCT", last.Depth + 1, from, to, (*hexutil.Big)(value.ToBig()), nil, nil}
-	} else {
-		// safeguard in case new CALL-like opcodes are introduced but not handled,
-		// otherwise CaptureExit/stack will get out of sync
-		entry = &TraceEntry{"UNKNOWN", t.depth, from, to, (*hexutil.Big)(value.ToBig()), inputCopy, nil}
+		t.Results = append(t.Results, &TraceEntry{"SELFDESTRUCT", last.Depth + 1, from, to, (*hexutil.Big)(value.ToBig()), nil})
 	}
-
-	// Ignore precompiles in the returned trace (maybe we shouldn't?)
-	if !precompile {
-		t.Results = append(t.Results, entry)
-	}
-
-	// stack precompiles in order to match captureEndOrExit
-	t.stack = append(t.stack, entry)
 }
 
 func (t *TransactionTracer) CaptureStart(from common.Address, to common.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
@@ -117,12 +117,4 @@ func (t *TransactionTracer) OnEnter(depth int, typ byte, from common.Address, to
 
 func (t *TransactionTracer) OnExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
 	t.depth = depth
-
-	lastIdx := len(t.stack) - 1
-	pop := t.stack[lastIdx]
-	t.stack = t.stack[:lastIdx]
-
-	outputCopy := make([]byte, len(output))
-	copy(outputCopy, output)
-	pop.Output = outputCopy
 }

@@ -7,10 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 	"runtime"
 	"time"
-
-	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
@@ -323,7 +322,6 @@ func parallelWarmup(ctx context.Context, db kv.RoDB, bucket string, workers int)
 				if err != nil {
 					return err
 				}
-				defer it.Close()
 				for it.HasNext() {
 					_, _, err = it.Next()
 					if err != nil {
@@ -570,7 +568,6 @@ func (p *Promoter) PromoteOnHistoryV3(logPrefix string, from, to uint64, storage
 		if err != nil {
 			return err
 		}
-		defer it.Close()
 		for it.HasNext() {
 			k, _, err := it.Next()
 			if err != nil {
@@ -617,7 +614,6 @@ func (p *Promoter) PromoteOnHistoryV3(logPrefix string, from, to uint64, storage
 	if err != nil {
 		return err
 	}
-	defer it.Close()
 	for it.HasNext() {
 		k, _, err := it.Next()
 		if err != nil {
@@ -737,7 +733,6 @@ func (p *Promoter) UnwindOnHistoryV3(logPrefix string, unwindFrom, unwindTo uint
 		if err != nil {
 			return err
 		}
-		defer it.Close()
 		for it.HasNext() {
 			k, v, err := it.Next()
 			if err != nil {
@@ -777,7 +772,6 @@ func (p *Promoter) UnwindOnHistoryV3(logPrefix string, unwindFrom, unwindTo uint
 		if err != nil {
 			return err
 		}
-		defer it.Close()
 		for it.HasNext() {
 			k, v, err := it.Next()
 			if err != nil {
@@ -808,7 +802,6 @@ func (p *Promoter) UnwindOnHistoryV3(logPrefix string, unwindFrom, unwindTo uint
 	if err != nil {
 		return err
 	}
-	defer it.Close()
 	for it.HasNext() {
 		k, v, err := it.Next()
 		if err != nil {

@@ -1,16 +1,19 @@
 package synced_data
 
 import (
-	"sync/atomic"
+	"sync"
 
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/cl/phase1/core/state"
+	"github.com/ledgerwatch/log/v3"
 )
 
 type SyncedDataManager struct {
 	enabled   bool
 	cfg       *clparams.BeaconChainConfig
-	headState atomic.Value
+	headState *state.CachingBeaconState
+
+	mu sync.RWMutex
 }
 
 func NewSyncedDataManager(enabled bool, cfg *clparams.BeaconChainConfig) *SyncedDataManager {
@@ -24,47 +27,47 @@ func (s *SyncedDataManager) OnHeadState(newState *state.CachingBeaconState) (err
 	if !s.enabled {
 		return
 	}
-	st, err := newState.Copy()
-	if err != nil {
-		return err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.headState == nil {
+		s.headState, err = newState.Copy()
+		if err != nil {
+			return err
+		}
 	}
-	s.headState.Store(st)
+	err = newState.CopyInto(s.headState)
+	if err != nil {
+		log.Error("failed to copy head state", "err", err)
+	}
 
 	return
 }
 
-func (s *SyncedDataManager) HeadState() *state.CachingBeaconState {
+func (s *SyncedDataManager) HeadState() (state *state.CachingBeaconState, cancel func()) {
 	if !s.enabled {
-		return nil
+		return nil, func() {}
 	}
-	if ret, ok := s.headState.Load().(*state.CachingBeaconState); ok {
-		return ret
-	}
-	return nil
-}
-
-func (s *SyncedDataManager) HeadStateReader() state.BeaconStateReader {
-	headstate := s.HeadState()
-	if headstate == nil {
-		return nil
-	}
-	return headstate
+	s.mu.RLock()
+	return s.headState, s.mu.RUnlock
 }
 
 func (s *SyncedDataManager) Syncing() bool {
 	if !s.enabled {
 		return false
 	}
-	return s.headState.Load() == nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.headState == nil
 }
 
 func (s *SyncedDataManager) HeadSlot() uint64 {
 	if !s.enabled {
 		return 0
 	}
-	st, ok := s.headState.Load().(*state.CachingBeaconState)
-	if !ok {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.headState == nil {
 		return 0
 	}
-	return st.Slot()
+	return s.headState.Slot()
 }

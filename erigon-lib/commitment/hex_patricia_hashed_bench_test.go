@@ -1,7 +1,6 @@
 package commitment
 
 import (
-	"context"
 	"encoding/hex"
 	"math/rand"
 	"testing"
@@ -11,8 +10,7 @@ import (
 
 func Benchmark_HexPatriciaHahsed_ReviewKeys(b *testing.B) {
 	ms := NewMockState(&testing.T{})
-	ctx := context.Background()
-	hph := NewHexPatriciaHashed(length.Addr, ms)
+	hph := NewHexPatriciaHashed(length.Addr, ms.branchFn, ms.accountFn, ms.storageFn)
 	hph.SetTrace(false)
 
 	builder := NewUpdateBuilder()
@@ -30,7 +28,7 @@ func Benchmark_HexPatriciaHahsed_ReviewKeys(b *testing.B) {
 		builder.Balance(hex.EncodeToString(key), rnd.Uint64())
 	}
 
-	pk, _ := builder.Build()
+	pk, hk, _ := builder.Build()
 
 	b.Run("review_keys", func(b *testing.B) {
 		for i, j := 0, 0; i < b.N; i, j = i+1, j+1 {
@@ -38,7 +36,7 @@ func Benchmark_HexPatriciaHahsed_ReviewKeys(b *testing.B) {
 				j = 0
 			}
 
-			hph.ProcessKeys(ctx, pk[j:j+1], "")
+			hph.ReviewKeys(pk[j:j+1], hk[j:j+1])
 		}
 	})
 }

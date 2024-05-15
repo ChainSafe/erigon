@@ -15,9 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ledgerwatch/erigon-lib/common"
-	"github.com/ledgerwatch/erigon-lib/downloader/snaptype"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -27,8 +26,6 @@ import (
 	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/turbo/services"
 )
-
-var _ services.FullBlockReader = &RemoteBackend{}
 
 type RemoteBackend struct {
 	remoteEthBackend remote.ETHBACKENDClient
@@ -95,7 +92,6 @@ func (back *RemoteBackend) BlockByHash(ctx context.Context, db kv.Tx, hash commo
 func (back *RemoteBackend) TxsV3Enabled() bool                    { panic("not implemented") }
 func (back *RemoteBackend) Snapshots() services.BlockSnapshots    { panic("not implemented") }
 func (back *RemoteBackend) BorSnapshots() services.BlockSnapshots { panic("not implemented") }
-func (back *RemoteBackend) AllTypes() []snaptype.Type             { panic("not implemented") }
 func (back *RemoteBackend) FrozenBlocks() uint64                  { return back.blockReader.FrozenBlocks() }
 func (back *RemoteBackend) FrozenBorBlocks() uint64               { return back.blockReader.FrozenBorBlocks() }
 func (back *RemoteBackend) FrozenFiles() (list []string)          { return back.blockReader.FrozenFiles() }
@@ -292,9 +288,6 @@ func (back *RemoteBackend) EventLookup(ctx context.Context, tx kv.Getter, txnHas
 }
 func (back *RemoteBackend) EventsByBlock(ctx context.Context, tx kv.Tx, hash common.Hash, blockNum uint64) ([]rlp.RawValue, error) {
 	return back.blockReader.EventsByBlock(ctx, tx, hash, blockNum)
-}
-func (back *RemoteBackend) BorStartEventID(ctx context.Context, tx kv.Tx, hash common.Hash, blockNum uint64) (uint64, error) {
-	return back.blockReader.BorStartEventID(ctx, tx, hash, blockNum)
 }
 
 func (back *RemoteBackend) LastSpanId(ctx context.Context, tx kv.Tx) (uint64, bool, error) {

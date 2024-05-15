@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/ledgerwatch/erigon-lib/common"
-	"github.com/ledgerwatch/erigon-lib/kv/backup"
 
 	"github.com/c2h5oh/datasize"
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
@@ -14,6 +13,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/cmd/utils/flags"
+	"github.com/ledgerwatch/erigon/turbo/backup"
 	"github.com/ledgerwatch/erigon/turbo/debug"
 	"github.com/urfave/cli/v2"
 )
@@ -55,7 +55,7 @@ var (
 		Required: true,
 	}
 	BackupLabelsFlag = cli.StringFlag{
-		Name:  "labels",
+		Name:  "lables",
 		Usage: "Name of component to backup. Example: chaindata,txpool,downloader",
 	}
 	BackupTablesFlag = cli.StringFlag{
@@ -77,7 +77,7 @@ CloudDrives (and ssd) have bad-latency and good-parallel-throughput - then havin
 )
 
 func doBackup(cliCtx *cli.Context) error {
-	logger, _, _, _, err := debug.Setup(cliCtx, true /* rootLogger */)
+	logger, _, _, err := debug.Setup(cliCtx, true /* rootLogger */)
 	if err != nil {
 		return err
 	}

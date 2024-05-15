@@ -1,5 +1,5 @@
 {
-  "chainName": "bor-devnet",
+  "ChainName": "bor-devnet",
   "chainId": 1337,
   "consensus": "bor",
   "homesteadBlock": 0,
@@ -51,7 +51,6 @@
     "jaipurBlock": 0,
     "delhiBlock": 0,
     "indoreBlock": 0,
-    "agraBlock": 100,
-    "napoliBlock": 100
+    "agraBlock": 100
   }
 }

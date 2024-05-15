@@ -3,9 +3,8 @@ package jsonrpc
 import (
 	"context"
 	"encoding/json"
-	"testing"
-
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
+	"testing"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"

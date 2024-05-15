@@ -1,7 +1,5 @@
 package clparams
 
-import "fmt"
-
 type StateVersion uint8
 
 const (
@@ -13,20 +11,20 @@ const (
 )
 
 // stringToClVersion converts the string to the current state version.
-func StringToClVersion(s string) (StateVersion, error) {
+func StringToClVersion(s string) StateVersion {
 	switch s {
 	case "phase0":
-		return Phase0Version, nil
+		return Phase0Version
 	case "altair":
-		return AltairVersion, nil
+		return AltairVersion
 	case "bellatrix":
-		return BellatrixVersion, nil
+		return BellatrixVersion
 	case "capella":
-		return CapellaVersion, nil
+		return CapellaVersion
 	case "deneb":
-		return DenebVersion, nil
+		return DenebVersion
 	default:
-		return 0, fmt.Errorf("unsupported fork version %s", s)
+		panic("unsupported fork version: " + s)
 	}
 }
 

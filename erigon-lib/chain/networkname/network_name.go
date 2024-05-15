@@ -13,7 +13,6 @@ const (
 	GnosisChainName         = "gnosis"
 	BorE2ETestChain2ValName = "bor-e2e-test-2Val"
 	ChiadoChainName         = "chiado"
-	Test                    = "test"
 )
 
 var All = []string{
@@ -27,5 +26,4 @@ var All = []string{
 	BorDevnetChainName,
 	GnosisChainName,
 	ChiadoChainName,
-	Test,
 }

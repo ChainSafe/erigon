@@ -20,27 +20,25 @@ import (
 	"context"
 	"sync"
 
-	"google.golang.org/protobuf/types/known/emptypb"
-
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	sentry "github.com/ledgerwatch/erigon-lib/gointerfaces/sentryproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/sentry"
 	"github.com/ledgerwatch/erigon-lib/types"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+//go:generate moq -stub -out mocks_test.go . Pool
 
 type MockSentry struct {
 	ctx context.Context
-	*sentry.MockSentryServer
+	*sentry.SentryServerMock
 	streams      map[sentry.MessageId][]sentry.Sentry_MessagesServer
 	peersStreams []sentry.Sentry_PeerEventsServer
 	StreamWg     sync.WaitGroup
 	lock         sync.RWMutex
 }
 
-func NewMockSentry(ctx context.Context, sentryServer *sentry.MockSentryServer) *MockSentry {
-	return &MockSentry{
-		ctx:              ctx,
-		MockSentryServer: sentryServer,
-	}
+func NewMockSentry(ctx context.Context) *MockSentry {
+	return &MockSentry{ctx: ctx, SentryServerMock: &sentry.SentryServerMock{}}
 }
 
 var peerID types.PeerID = gointerfaces.ConvertHashToH512([64]byte{0x12, 0x34, 0x50}) // "12345"

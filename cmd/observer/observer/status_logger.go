@@ -5,10 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ledgerwatch/log/v3"
-
-	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon/cmd/observer/database"
+	"github.com/ledgerwatch/erigon/cmd/observer/utils"
+	"github.com/ledgerwatch/log/v3"
 )
 
 func StatusLoggerLoop(ctx context.Context, db database.DB, networkID uint, period time.Duration, logger log.Logger) {
@@ -17,7 +16,7 @@ func StatusLoggerLoop(ctx context.Context, db database.DB, networkID uint, perio
 	var prevDistinctIPCount uint
 
 	for ctx.Err() == nil {
-		libcommon.Sleep(ctx, period)
+		utils.Sleep(ctx, period)
 
 		totalCount, err := db.CountNodes(ctx, maxPingTries, networkID)
 		if err != nil {

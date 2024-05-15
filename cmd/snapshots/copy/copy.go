@@ -8,14 +8,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/urfave/cli/v2"
-
 	"github.com/ledgerwatch/erigon-lib/downloader"
 	"github.com/ledgerwatch/erigon-lib/downloader/snaptype"
 	"github.com/ledgerwatch/erigon/cmd/snapshots/flags"
 	"github.com/ledgerwatch/erigon/cmd/snapshots/sync"
 	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/turbo/logging"
+	"github.com/urfave/cli/v2"
 )
 
 var (
@@ -127,8 +126,7 @@ func copy(cliCtx *cli.Context) error {
 
 	switch src.LType {
 	case sync.TorrentFs:
-		config := sync.NewTorrentClientConfigFromCobra(cliCtx, dst.Chain)
-		torrentCli, err = sync.NewTorrentClient(config)
+		torrentCli, err = sync.NewTorrentClient(cliCtx, dst.Chain)
 		if err != nil {
 			return fmt.Errorf("can't create torrent: %w", err)
 		}
@@ -244,7 +242,7 @@ func remoteToLocal(ctx context.Context, rcCli *downloader.RCloneClient, src *syn
 		return fmt.Errorf("no remote downloader")
 	}
 
-	session, err := rcCli.NewSession(ctx, dst.Root, src.Src+":"+src.Root, nil)
+	session, err := rcCli.NewSession(ctx, dst.Root, src.Src+":"+src.Root)
 
 	if err != nil {
 		return err
@@ -299,12 +297,8 @@ func selectFiles(entries []fs.DirEntry, version snaptype.Version, firstBlock, la
 				if ext := filepath.Ext(info.Name()); ext == ".torrent" {
 					fileName := strings.TrimSuffix(info.Name(), ".torrent")
 
-					if fileInfo, isStateFile, ok := snaptype.ParseFileName("", fileName); ok {
-						if isStateFile {
-							//TODO
-						} else {
-							snapInfo = sinf{fileInfo}
-						}
+					if fileInfo, ok := snaptype.ParseFileName("", fileName); ok {
+						snapInfo = sinf{fileInfo}
 					}
 				}
 			}

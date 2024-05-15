@@ -17,6 +17,7 @@ import (
 )
 
 type SentinelCliCfg struct {
+	GenesisCfg     *clparams.GenesisConfig
 	BeaconCfg      *clparams.BeaconChainConfig
 	NetworkCfg     *clparams.NetworkConfig
 	NetworkType    clparams.NetworkType
@@ -34,7 +35,7 @@ func SetupSentinelCli(ctx *cli.Context) (*SentinelCliCfg, error) {
 	cfg := &SentinelCliCfg{}
 	chainName := ctx.String(utils.ChainFlag.Name)
 	var err error
-	cfg.NetworkCfg, cfg.BeaconCfg, cfg.NetworkType, err = clparams.GetConfigsByNetworkName(chainName)
+	cfg.GenesisCfg, cfg.NetworkCfg, cfg.BeaconCfg, cfg.NetworkType, err = clparams.GetConfigsByNetworkName(chainName)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +47,7 @@ func SetupSentinelCli(ctx *cli.Context) (*SentinelCliCfg, error) {
 		if ctx.String(sentinelflags.GenesisSSZFlag.Name) == "" {
 			return nil, fmt.Errorf("no genesis file provided")
 		}
+		cfg.GenesisCfg = new(clparams.GenesisConfig)
 
 	}
 	cfg.ServerAddr = fmt.Sprintf("%s:%d", ctx.String(sentinelflags.SentinelServerAddr.Name), ctx.Int(sentinelflags.SentinelServerPort.Name))

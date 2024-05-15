@@ -8,8 +8,8 @@ import (
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	execution "github.com/ledgerwatch/erigon-lib/gointerfaces/executionproto"
-	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/typesproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/execution"
+	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/types"
 	"github.com/ledgerwatch/erigon/core/types"
 )
 
@@ -65,10 +65,7 @@ func HeaderToHeaderRPC(header *types.Header) *execution.Header {
 }
 
 func HeadersToHeadersRPC(headers []*types.Header) []*execution.Header {
-	if headers == nil {
-		return nil
-	}
-	ret := make([]*execution.Header, 0, len(headers))
+	ret := []*execution.Header{}
 	for _, header := range headers {
 		ret = append(ret, HeaderToHeaderRPC(header))
 	}
@@ -139,21 +136,6 @@ func HeaderRpcToHeader(header *execution.Header) (*types.Header, error) {
 	return h, nil
 }
 
-func HeadersRpcToHeaders(headers []*execution.Header) ([]*types.Header, error) {
-	if headers == nil {
-		return nil, nil
-	}
-	out := make([]*types.Header, 0, len(headers))
-	for _, h := range headers {
-		header, err := HeaderRpcToHeader(h)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, header)
-	}
-	return out, nil
-}
-
 func ConvertWithdrawalsFromRpc(in []*types2.Withdrawal) []*types.Withdrawal {
 	if in == nil {
 		return nil
@@ -195,7 +177,6 @@ func ConvertRawBlockBodyToRpc(in *types.RawBody, blockNumber uint64, blockHash l
 		BlockNumber:  blockNumber,
 		BlockHash:    gointerfaces.ConvertHashToH256(blockHash),
 		Transactions: in.Transactions,
-		Uncles:       HeadersToHeadersRPC(in.Uncles),
 		Withdrawals:  ConvertWithdrawalsToRpc(in.Withdrawals),
 	}
 }
@@ -209,19 +190,14 @@ func ConvertRawBlockBodiesToRpc(in []*types.RawBody, blockNumbers []uint64, bloc
 	return ret
 }
 
-func ConvertRawBlockBodyFromRpc(in *execution.BlockBody) (*types.RawBody, error) {
+func ConvertRawBlockBodyFromRpc(in *execution.BlockBody) *types.RawBody {
 	if in == nil {
-		return nil, nil
-	}
-	uncles, err := HeadersRpcToHeaders(in.Uncles)
-	if err != nil {
-		return nil, err
+		return nil
 	}
 	return &types.RawBody{
 		Transactions: in.Transactions,
-		Uncles:       uncles,
 		Withdrawals:  ConvertWithdrawalsFromRpc(in.Withdrawals),
-	}, nil
+	}
 }
 
 func ConvertBigIntFromRpc(in *types2.H256) *big.Int {

@@ -17,11 +17,10 @@
 package ethash
 
 import (
+	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"math/big"
 	"testing"
 	"time"
-
-	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 

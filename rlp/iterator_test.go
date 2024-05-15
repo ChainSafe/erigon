@@ -17,9 +17,8 @@
 package rlp
 
 import (
-	"testing"
-
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
+	"testing"
 )
 
 // TestIterator tests some basic things about the ListIterator. A more

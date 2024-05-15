@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math/bits"
-	"slices"
-	"sync/atomic"
-
 	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
+	"math/bits"
+	"sync/atomic"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
@@ -21,6 +19,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv/temporal/historyv2"
 	"github.com/ledgerwatch/erigon-lib/state"
 	"github.com/ledgerwatch/log/v3"
+	"golang.org/x/exp/slices"
 
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/consensus"
@@ -41,10 +40,10 @@ type TrieCfg struct {
 	hd                *headerdownload.HeaderDownload
 
 	historyV3 bool
-	agg       *state.Aggregator
+	agg       *state.AggregatorV3
 }
 
-func StageTrieCfg(db kv.RwDB, checkRoot, saveNewHashesToDB, badBlockHalt bool, tmpDir string, blockReader services.FullBlockReader, hd *headerdownload.HeaderDownload, historyV3 bool, agg *state.Aggregator) TrieCfg {
+func StageTrieCfg(db kv.RwDB, checkRoot, saveNewHashesToDB, badBlockHalt bool, tmpDir string, blockReader services.FullBlockReader, hd *headerdownload.HeaderDownload, historyV3 bool, agg *state.AggregatorV3) TrieCfg {
 	return TrieCfg{
 		db:                db,
 		checkRoot:         checkRoot,
@@ -58,8 +57,6 @@ func StageTrieCfg(db kv.RwDB, checkRoot, saveNewHashesToDB, badBlockHalt bool, t
 		agg:       agg,
 	}
 }
-
-var ErrInvalidStateRootHash = fmt.Errorf("invalid state root hash")
 
 func SpawnIntermediateHashesStage(s *StageState, u Unwinder, tx kv.RwTx, cfg TrieCfg, ctx context.Context, logger log.Logger) (libcommon.Hash, error) {
 	quit := ctx.Done()
@@ -138,9 +135,7 @@ func SpawnIntermediateHashesStage(s *StageState, u Unwinder, tx kv.RwTx, cfg Tri
 		if to > s.BlockNumber {
 			unwindTo := (to + s.BlockNumber) / 2 // Binary search for the correct block, biased to the lower numbers
 			logger.Warn("Unwinding due to incorrect root hash", "to", unwindTo)
-			if err := u.UnwindTo(unwindTo, BadBlock(headerHash, ErrInvalidStateRootHash), tx); err != nil {
-				return trie.EmptyRoot, err
-			}
+			u.UnwindTo(unwindTo, BadBlock(headerHash, fmt.Errorf("Incorrect root hash")))
 		}
 	} else if err = s.Update(tx, to); err != nil {
 		return trie.EmptyRoot, err
@@ -228,7 +223,6 @@ func (p *HashPromoter) PromoteOnHistoryV3(logPrefix string, from, to uint64, sto
 		if err != nil {
 			return err
 		}
-		defer it.Close()
 		for it.HasNext() {
 			k, v, err := it.Next()
 			if err != nil {
@@ -258,7 +252,6 @@ func (p *HashPromoter) PromoteOnHistoryV3(logPrefix string, from, to uint64, sto
 	if err != nil {
 		return err
 	}
-	defer it.Close()
 	for it.HasNext() {
 		k, v, err := it.Next()
 		if err != nil {
@@ -382,7 +375,6 @@ func (p *HashPromoter) UnwindOnHistoryV3(logPrefix string, unwindFrom, unwindTo 
 		if err != nil {
 			return err
 		}
-		defer it.Close()
 		for it.HasNext() {
 			k, _, err := it.Next()
 			if err != nil {
@@ -416,7 +408,6 @@ func (p *HashPromoter) UnwindOnHistoryV3(logPrefix string, unwindFrom, unwindTo 
 	if err != nil {
 		return err
 	}
-	defer it.Close()
 	for it.HasNext() {
 		k, v, err := it.Next()
 		if err != nil {

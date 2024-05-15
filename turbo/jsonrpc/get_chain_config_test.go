@@ -2,14 +2,13 @@ package jsonrpc
 
 import (
 	"context"
-	"testing"
-
 	"github.com/ledgerwatch/erigon/cmd/rpcdaemon/rpcdaemontest"
+	"testing"
 )
 
 func TestGetChainConfig(t *testing.T) {
 	m, _, _ := rpcdaemontest.CreateTestSentry(t)
-	db, ctx := m.DB, m.Ctx
+	db := m.DB
 	api := newBaseApiForTest(m)
 	config := m.ChainConfig
 
@@ -19,14 +18,14 @@ func TestGetChainConfig(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	config1, err1 := api.chainConfig(ctx, tx)
+	config1, err1 := api.chainConfig(tx)
 	if err1 != nil {
 		t.Fatalf("reading chain config: %v", err1)
 	}
 	if config.String() != config1.String() {
 		t.Fatalf("read different config: %s, expected %s", config1.String(), config.String())
 	}
-	config2, err2 := api.chainConfig(ctx, tx)
+	config2, err2 := api.chainConfig(tx)
 	if err2 != nil {
 		t.Fatalf("reading chain config: %v", err2)
 	}

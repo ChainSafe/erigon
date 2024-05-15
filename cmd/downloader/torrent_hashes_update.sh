@@ -13,7 +13,7 @@ if [ -z "$network" ]; then
 fi
 
 #git reset --hard
-#git checkout main
+#git checkout devel
 #git pull
 
 # clean

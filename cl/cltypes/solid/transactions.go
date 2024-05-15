@@ -11,7 +11,7 @@ import (
 )
 
 type TransactionsSSZ struct {
-	underlying [][]byte       // underlying transaction list
+	underlying [][]byte       // underlying tranaction list
 	root       libcommon.Hash // root
 }
 

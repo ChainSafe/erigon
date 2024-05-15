@@ -2,9 +2,7 @@ package fork_graph
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/golang/snappy"
@@ -33,38 +31,35 @@ func (f *forkGraphDisk) readBeaconStateFromDisk(blockRoot libcommon.Hash) (bs *s
 	// Read the version
 	v := []byte{0}
 	if _, err := file.Read(v); err != nil {
-		return nil, fmt.Errorf("failed to read hard fork version: %w, root: %x", err, blockRoot)
+		return nil, err
 	}
 	// Read the length
 	lengthBytes := make([]byte, 8)
-	var n int
-	n, err = io.ReadFull(file, lengthBytes)
+	_, err = file.Read(lengthBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read length: %w, root: %x", err, blockRoot)
-	}
-	if n != 8 {
-		return nil, fmt.Errorf("failed to read length: %d, want 8, root: %x", n, blockRoot)
+		return
 	}
 	// Grow the snappy buffer
 	f.sszSnappyBuffer.Grow(int(binary.BigEndian.Uint64(lengthBytes)))
 	// Read the snappy buffer
 	sszSnappyBuffer := f.sszSnappyBuffer.Bytes()
 	sszSnappyBuffer = sszSnappyBuffer[:cap(sszSnappyBuffer)]
-	n, err = io.ReadFull(file, sszSnappyBuffer)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("failed to read snappy buffer: %w, root: %x", err, blockRoot)
+	var n int
+	n, err = file.Read(sszSnappyBuffer)
+	if err != nil {
+		return
 	}
 
 	decLen, err := snappy.DecodedLen(sszSnappyBuffer[:n])
 	if err != nil {
-		return nil, fmt.Errorf("failed to get decoded length: %w, root: %x, len: %d", err, blockRoot, n)
+		return
 	}
 	// Grow the plain ssz buffer
 	f.sszBuffer.Grow(decLen)
 	sszBuffer := f.sszBuffer.Bytes()
 	sszBuffer, err = snappy.Decode(sszBuffer, sszSnappyBuffer[:n])
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode snappy buffer: %w, root: %x, len: %d, decLen: %d", err, blockRoot, n, decLen)
+		return
 	}
 	bs = state.New(f.beaconCfg)
 	err = bs.DecodeSSZ(sszBuffer, int(v[0]))

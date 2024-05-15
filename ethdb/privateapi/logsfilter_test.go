@@ -6,8 +6,8 @@ import (
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
-	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/typesproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
+	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/types"
 	"google.golang.org/grpc"
 
 	"github.com/ledgerwatch/erigon/turbo/shards"

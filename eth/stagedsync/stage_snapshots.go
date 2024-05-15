@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
-	"github.com/ledgerwatch/erigon-lib/kv/temporal"
 	"github.com/ledgerwatch/log/v3"
 	"golang.org/x/sync/errgroup"
 
@@ -33,18 +32,16 @@ import (
 	"github.com/ledgerwatch/erigon-lib/downloader"
 	"github.com/ledgerwatch/erigon-lib/downloader/snaptype"
 	"github.com/ledgerwatch/erigon-lib/etl"
-	protodownloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloaderproto"
+	protodownloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloader"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
 	"github.com/ledgerwatch/erigon-lib/state"
 	"github.com/ledgerwatch/erigon/core/rawdb"
-	coresnaptype "github.com/ledgerwatch/erigon/core/snaptype"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
 	"github.com/ledgerwatch/erigon/eth/ethconfig/estimate"
 	"github.com/ledgerwatch/erigon/eth/stagedsync/stages"
-	borsnaptype "github.com/ledgerwatch/erigon/polygon/bor/snaptype"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/services"
 	"github.com/ledgerwatch/erigon/turbo/shards"
@@ -65,8 +62,7 @@ type SnapshotsCfg struct {
 
 	historyV3        bool
 	caplin           bool
-	blobs            bool
-	agg              *state.Aggregator
+	agg              *state.AggregatorV3
 	silkworm         *silkworm.Silkworm
 	snapshotUploader *snapshotUploader
 	syncConfig       ethconfig.Sync
@@ -81,9 +77,8 @@ func StageSnapshotsCfg(db kv.RwDB,
 	blockReader services.FullBlockReader,
 	notifier *shards.Notifications,
 	historyV3 bool,
-	agg *state.Aggregator,
+	agg *state.AggregatorV3,
 	caplin bool,
-	blobs bool,
 	silkworm *silkworm.Silkworm,
 ) SnapshotsCfg {
 	cfg := SnapshotsCfg{
@@ -99,7 +94,6 @@ func StageSnapshotsCfg(db kv.RwDB,
 		agg:                agg,
 		silkworm:           silkworm,
 		syncConfig:         syncConfig,
-		blobs:              blobs,
 	}
 
 	if uploadFs := cfg.syncConfig.UploadLocation; len(uploadFs) > 0 {
@@ -107,7 +101,7 @@ func StageSnapshotsCfg(db kv.RwDB,
 		cfg.snapshotUploader = &snapshotUploader{
 			cfg:          &cfg,
 			uploadFs:     uploadFs,
-			torrentFiles: downloader.NewAtomicTorrentFS(cfg.dirs.Snap),
+			torrentFiles: downloader.NewAtomicTorrentFiles(cfg.dirs.Snap),
 		}
 
 		cfg.blockRetire.SetWorkers(estimate.CompressSnapshot.Workers())
@@ -154,7 +148,6 @@ func SpawnStageSnapshots(
 		}
 		defer tx.Rollback()
 	}
-
 	if err := DownloadAndIndexSnapshotsIfNeed(s, ctx, tx, cfg, initialCycle, logger); err != nil {
 		return err
 	}
@@ -233,16 +226,24 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 				return err
 			}
 		}
+		if cfg.notifier.Events != nil { // can notify right here, even that write txn is not commit
+			cfg.notifier.Events.OnNewSnapshot()
+		}
 	} else {
-		if err := snapshotsync.WaitForDownloader(ctx, s.LogPrefix(), cfg.historyV3, cfg.blobs, cstate, cfg.agg, tx, cfg.blockReader, &cfg.chainConfig, cfg.snapshotDownloader, s.state.StagesIdsList()); err != nil {
+		if err := snapshotsync.WaitForDownloader(ctx, s.LogPrefix(), cfg.historyV3, cstate, cfg.agg, tx, cfg.blockReader, &cfg.chainConfig, cfg.snapshotDownloader, s.state.StagesIdsList()); err != nil {
 			return err
 		}
 	}
-
 	// It's ok to notify before tx.Commit(), because RPCDaemon does read list of files by gRPC (not by reading from db)
 	if cfg.notifier.Events != nil {
 		cfg.notifier.Events.OnNewSnapshot()
 	}
+
+	cfg.blockReader.Snapshots().LogStat("download")
+	cfg.agg.LogStats(tx, func(endTxNumMinimax uint64) uint64 {
+		_, histBlockNumProgress, _ := rawdbv3.TxNums.FindBlockNum(tx, endTxNumMinimax)
+		return histBlockNumProgress
+	})
 
 	if err := cfg.blockRetire.BuildMissedIndicesIfNeed(ctx, s.LogPrefix(), cfg.notifier.Events, &cfg.chainConfig); err != nil {
 		return err
@@ -255,19 +256,14 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 	}
 
 	if cfg.historyV3 {
+		cfg.agg.CleanDir()
+
 		indexWorkers := estimate.IndexSnapshot.Workers()
-		if err := cfg.agg.BuildOptionalMissedIndices(ctx, indexWorkers); err != nil {
-			return err
-		}
 		if err := cfg.agg.BuildMissedIndices(ctx, indexWorkers); err != nil {
 			return err
 		}
 		if cfg.notifier.Events != nil {
 			cfg.notifier.Events.OnNewSnapshot()
-		}
-
-		if casted, ok := tx.(*temporal.Tx); ok {
-			casted.ForceReopenAggCtx() // otherwise next stages will not see just-indexed-files
 		}
 	}
 
@@ -282,22 +278,11 @@ func DownloadAndIndexSnapshotsIfNeed(s *StageState, ctx context.Context, tx kv.R
 	if err := FillDBFromSnapshots(s.LogPrefix(), ctx, tx, cfg.dirs, cfg.blockReader, cfg.agg, logger); err != nil {
 		return err
 	}
-	if casted, ok := tx.(*temporal.Tx); ok {
-		casted.ForceReopenAggCtx() // otherwise next stages will not see just-indexed-files
-	}
-
-	{
-		cfg.blockReader.Snapshots().LogStat("download")
-		tx.(state.HasAggCtx).AggCtx().(*state.AggregatorRoTx).LogStats(tx, func(endTxNumMinimax uint64) uint64 {
-			_, histBlockNumProgress, _ := rawdbv3.TxNums.FindBlockNum(tx, endTxNumMinimax)
-			return histBlockNumProgress
-		})
-	}
 
 	return nil
 }
 
-func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs datadir.Dirs, blockReader services.FullBlockReader, agg *state.Aggregator, logger log.Logger) error {
+func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs datadir.Dirs, blockReader services.FullBlockReader, agg *state.AggregatorV3, logger log.Logger) error {
 	blocksAvailable := blockReader.FrozenBlocks()
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
@@ -314,7 +299,6 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 		if err = stages.SaveStageProgress(tx, stage, blocksAvailable); err != nil {
 			return fmt.Errorf("advancing %s stage: %w", stage, err)
 		}
-
 		switch stage {
 		case stages.Headers:
 			h2n := etl.NewCollector(logPrefix, dirs.Tmp, etl.NewSortableBuffer(etl.BufferOptimalSize), logger)
@@ -339,6 +323,7 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 				if err := h2n.Collect(blockHash[:], blockNumBytes); err != nil {
 					return err
 				}
+
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
@@ -385,9 +370,6 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 						logger.Info(fmt.Sprintf("[%s] MaxTxNums index: %dk/%dk", logPrefix, blockNum/1000, blockReader.FrozenBlocks()/1000))
 					default:
 					}
-					if baseTxNum+txAmount == 0 {
-						panic(baseTxNum + txAmount) //uint-underflow
-					}
 					maxTxNum := baseTxNum + txAmount - 1
 
 					if err := rawdbv3.TxNums.Append(tx, blockNum, maxTxNum); err != nil {
@@ -407,12 +389,9 @@ func FillDBFromSnapshots(logPrefix string, ctx context.Context, tx kv.RwTx, dirs
 					}
 				}
 			}
-			ac := agg.BeginFilesRo()
-			defer ac.Close()
-			if err := rawdb.WriteSnapshots(tx, blockReader.FrozenFiles(), ac.Files()); err != nil {
+			if err := rawdb.WriteSnapshots(tx, blockReader.FrozenFiles(), agg.Files()); err != nil {
 				return err
 			}
-			ac.Close()
 		}
 	}
 	return nil
@@ -432,16 +411,12 @@ func SnapshotsPrune(s *PruneState, initialCycle bool, cfg SnapshotsCfg, ctx cont
 	}
 
 	freezingCfg := cfg.blockReader.FreezingCfg()
+
 	if freezingCfg.Enabled {
 		if freezingCfg.Produce {
 			//TODO: initialSync maybe save files progress here
 			if cfg.blockRetire.HasNewFrozenFiles() || cfg.agg.HasNewFrozenFiles() {
-				ac := cfg.agg.BeginFilesRo()
-				defer ac.Close()
-				aggFiles := ac.Files()
-				ac.Close()
-
-				if err := rawdb.WriteSnapshots(tx, cfg.blockReader.FrozenFiles(), aggFiles); err != nil {
+				if err := rawdb.WriteSnapshots(tx, cfg.blockReader.FrozenFiles(), cfg.agg.Files()); err != nil {
 					return err
 				}
 			}
@@ -450,12 +425,6 @@ func SnapshotsPrune(s *PruneState, initialCycle bool, cfg SnapshotsCfg, ctx cont
 
 			if cfg.snapshotUploader != nil {
 				minBlockNumber = cfg.snapshotUploader.minBlockNumber()
-			}
-
-			if initialCycle {
-				cfg.blockRetire.SetWorkers(estimate.CompressSnapshot.Workers())
-			} else {
-				cfg.blockRetire.SetWorkers(1)
 			}
 
 			cfg.blockRetire.RetireBlocksInBackground(ctx, minBlockNumber, s.ForwardProgress, log.LvlDebug, func(downloadRequest []services.DownloadRequest) error {
@@ -482,11 +451,7 @@ func SnapshotsPrune(s *PruneState, initialCycle bool, cfg SnapshotsCfg, ctx cont
 			//cfg.agg.BuildFilesInBackground()
 		}
 
-		pruneLimit := 100
-		if initialCycle {
-			pruneLimit = 10_000
-		}
-		if err := cfg.blockRetire.PruneAncientBlocks(tx, pruneLimit); err != nil {
+		if err := cfg.blockRetire.PruneAncientBlocks(tx, cfg.syncConfig.PruneLimit); err != nil {
 			return err
 		}
 	}
@@ -545,7 +510,7 @@ type snapshotUploader struct {
 	uploadScheduled atomic.Bool
 	uploading       atomic.Bool
 	manifestMutex   sync.Mutex
-	torrentFiles    *downloader.AtomicTorrentFS
+	torrentFiles    *downloader.TorrentFiles
 }
 
 func (u *snapshotUploader) init(ctx context.Context, logger log.Logger) {
@@ -566,14 +531,14 @@ func (u *snapshotUploader) maxUploadedHeader() uint64 {
 		for _, state := range u.files {
 			if state.local && state.remote {
 				if state.info != nil {
-					if state.info.Type.Enum() == coresnaptype.Enums.Headers {
+					if state.info.Type.Enum() == snaptype.Enums.Headers {
 						if state.info.To > max {
 							max = state.info.To
 						}
 					}
 				} else {
-					if info, _, ok := snaptype.ParseFileName(u.cfg.dirs.Snap, state.file); ok {
-						if info.Type.Enum() == coresnaptype.Enums.Headers {
+					if info, ok := snaptype.ParseFileName(u.cfg.dirs.Snap, state.file); ok {
+						if info.Type.Enum() == snaptype.Enums.Headers {
 							if info.To > max {
 								max = info.To
 							}
@@ -637,7 +602,7 @@ func (e dirEntry) ModTime() time.Time {
 }
 
 func (e dirEntry) Sys() any {
-	if info, _, ok := snaptype.ParseFileName("", e.name); ok {
+	if info, ok := snaptype.ParseFileName("", e.name); ok {
 		return &snapInfo{info}
 	}
 
@@ -657,7 +622,7 @@ func (u *snapshotUploader) seedable(fi snaptype.FileInfo) bool {
 
 	if checkKnownSizes {
 		for _, it := range snapcfg.KnownCfg(u.cfg.chainConfig.ChainName).Preverified {
-			info, _, _ := snaptype.ParseFileName("", it.Name)
+			info, _ := snaptype.ParseFileName("", it.Name)
 
 			if fi.From == info.From {
 				return fi.To == info.To
@@ -782,12 +747,9 @@ func (u *snapshotUploader) updateRemotes(remoteFiles []fs.DirEntry) {
 			}
 
 		} else {
-			info, isStateFile, ok := snaptype.ParseFileName(u.cfg.dirs.Snap, fi.Name())
+			info, ok := snaptype.ParseFileName(u.cfg.dirs.Snap, fi.Name())
+
 			if !ok {
-				continue
-			}
-			if isStateFile {
-				//TODO
 				continue
 			}
 
@@ -962,7 +924,7 @@ func (u *snapshotUploader) start(ctx context.Context, logger log.Logger) {
 		}
 	}
 
-	u.uploadSession, err = u.rclone.NewSession(ctx, u.cfg.dirs.Snap, uploadFs, nil)
+	u.uploadSession, err = u.rclone.NewSession(ctx, u.cfg.dirs.Snap, uploadFs)
 
 	if err != nil {
 		logger.Warn("[uploader] Uploading disabled: rclone session failed", "err", err)
@@ -1040,13 +1002,12 @@ func (u *snapshotUploader) removeBefore(before uint64) {
 	var toReopen []string
 	var borToReopen []string
 
-	toRemove := make([]string, 0, len(list))
+	var toRemove []string //nolint:prealloc
 
 	for _, f := range list {
 		if f.To > before {
 			switch f.Type.Enum() {
-			case borsnaptype.Enums.BorEvents, borsnaptype.Enums.BorSpans,
-				borsnaptype.Enums.BorCheckpoints, borsnaptype.Enums.BorMilestones:
+			case snaptype.Enums.BorEvents, snaptype.Enums.BorSpans:
 				borToReopen = append(borToReopen, filepath.Base(f.Path))
 			default:
 				toReopen = append(toReopen, filepath.Base(f.Path))
@@ -1100,12 +1061,7 @@ func (u *snapshotUploader) upload(ctx context.Context, logger log.Logger) {
 
 		for _, f := range u.cfg.blockReader.FrozenFiles() {
 			if state, ok := u.files[f]; !ok {
-				if fi, isStateFile, ok := snaptype.ParseFileName(u.cfg.dirs.Snap, f); ok {
-					if isStateFile {
-						//TODO
-						continue
-					}
-
+				if fi, ok := snaptype.ParseFileName(u.cfg.dirs.Snap, f); ok {
 					if u.seedable(fi) {
 						state := &uploadState{
 							file:  f,
@@ -1183,7 +1139,7 @@ func (u *snapshotUploader) upload(ctx context.Context, logger log.Logger) {
 				g.Go(func() error {
 					defer i.Add(1)
 
-					_, err := downloader.BuildTorrentIfNeed(gctx, state.file, u.cfg.dirs.Snap, u.torrentFiles)
+					err := downloader.BuildTorrentIfNeed(gctx, state.file, u.cfg.dirs.Snap, u.torrentFiles)
 
 					state.Lock()
 					state.buildingTorrent = false

@@ -20,10 +20,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"math/big"
 	"sort"
-
-	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"

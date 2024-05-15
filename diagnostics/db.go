@@ -16,10 +16,6 @@ import (
 )
 
 func SetupDbAccess(ctx *cli.Context, metricsMux *http.ServeMux) {
-	if metricsMux == nil {
-		return
-	}
-
 	var dataDir string
 	if ctx.IsSet("datadir") {
 		dataDir = ctx.String("datadir")

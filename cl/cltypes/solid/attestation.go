@@ -1,7 +1,6 @@
 package solid
 
 import (
-	"encoding/binary"
 	"encoding/json"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
@@ -35,14 +34,6 @@ func (*Attestation) Static() bool {
 	return false
 }
 
-func (a *Attestation) Copy() *Attestation {
-	new := &Attestation{}
-	copy(new.staticBuffer[:], a.staticBuffer[:])
-	new.aggregationBitsBuffer = make([]byte, len(a.aggregationBitsBuffer))
-	copy(new.aggregationBitsBuffer, a.aggregationBitsBuffer)
-	return new
-}
-
 // NewAttestionFromParameters creates a new Attestation instance using provided parameters
 func NewAttestionFromParameters(
 	aggregationBits []byte,
@@ -50,7 +41,6 @@ func NewAttestionFromParameters(
 	signature [96]byte,
 ) *Attestation {
 	a := &Attestation{}
-	binary.LittleEndian.PutUint32(a.staticBuffer[:4], aggregationBitsOffset)
 	a.SetAttestationData(attestationData)
 	a.SetSignature(signature)
 	a.SetAggregationBits(aggregationBits)
@@ -79,7 +69,6 @@ func (a *Attestation) UnmarshalJSON(buf []byte) error {
 	if err := json.Unmarshal(buf, &tmp); err != nil {
 		return err
 	}
-	binary.LittleEndian.PutUint32(a.staticBuffer[:4], aggregationBitsOffset)
 	a.SetAggregationBits(tmp.AggregationBits)
 	a.SetSignature(tmp.Signature)
 	a.SetAttestationData(tmp.Data)
@@ -181,19 +170,6 @@ func (a *Attestation) HashSSZ() (o [32]byte, err error) {
 
 // Clone creates a new clone of the Attestation instance.
 // This can be useful for creating copies without changing the original object.
-func (a *Attestation) Clone() clonable.Clonable {
-	if a == nil {
-		return &Attestation{}
-	}
-	var staticBuffer [attestationStaticBufferSize]byte
-	var bitsBuffer []byte
-	copy(staticBuffer[:], a.staticBuffer[:])
-	if a.aggregationBitsBuffer != nil {
-		bitsBuffer = make([]byte, len(a.aggregationBitsBuffer))
-		copy(bitsBuffer, a.aggregationBitsBuffer)
-	}
-	return &Attestation{
-		aggregationBitsBuffer: bitsBuffer,
-		staticBuffer:          staticBuffer,
-	}
+func (*Attestation) Clone() clonable.Clonable {
+	return &Attestation{}
 }

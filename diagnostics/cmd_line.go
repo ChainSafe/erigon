@@ -8,10 +8,6 @@ import (
 )
 
 func SetupCmdLineAccess(metricsMux *http.ServeMux) {
-	if metricsMux == nil {
-		return
-	}
-
 	metricsMux.HandleFunc("/cmdline", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")

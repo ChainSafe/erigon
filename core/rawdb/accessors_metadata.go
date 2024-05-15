@@ -19,7 +19,6 @@ package rawdb
 import (
 	"encoding/json"
 	"fmt"
-
 	"github.com/ledgerwatch/erigon/polygon/bor/borcfg"
 
 	"github.com/ledgerwatch/erigon-lib/chain"

@@ -14,7 +14,6 @@
 package membatchwithdb
 
 import (
-	"context"
 	"testing"
 
 	"github.com/ledgerwatch/erigon-lib/kv/memdb"
@@ -39,17 +38,14 @@ func TestPutAppendHas(t *testing.T) {
 
 	batch := NewMemoryBatch(rwTx, "", log.Root())
 	require.NoError(t, batch.Append(kv.HashedAccounts, []byte("AAAA"), []byte("value1.5")))
-	//MDBX's APPEND checking only keys, not values
-	require.NoError(t, batch.Append(kv.HashedAccounts, []byte("AAAA"), []byte("value1.3")))
-
+	require.Error(t, batch.Append(kv.HashedAccounts, []byte("AAAA"), []byte("value1.3")))
 	require.NoError(t, batch.Put(kv.HashedAccounts, []byte("AAAA"), []byte("value1.3")))
 	require.NoError(t, batch.Append(kv.HashedAccounts, []byte("CBAA"), []byte("value3.5")))
-	//MDBX's APPEND checking only keys, not values
-	require.NoError(t, batch.Append(kv.HashedAccounts, []byte("CBAA"), []byte("value3.1")))
+	require.Error(t, batch.Append(kv.HashedAccounts, []byte("CBAA"), []byte("value3.1")))
 	require.NoError(t, batch.AppendDup(kv.HashedAccounts, []byte("CBAA"), []byte("value3.1")))
 	require.Error(t, batch.Append(kv.HashedAccounts, []byte("AAAA"), []byte("value1.3")))
 
-	require.Nil(t, batch.Flush(context.Background(), rwTx))
+	require.Nil(t, batch.Flush(rwTx))
 
 	exist, err := batch.Has(kv.HashedAccounts, []byte("AAAA"))
 	require.Nil(t, err)
@@ -147,7 +143,7 @@ func TestFlush(t *testing.T) {
 	batch.Put(kv.HashedAccounts, []byte("AAAA"), []byte("value5"))
 	batch.Put(kv.HashedAccounts, []byte("FCAA"), []byte("value5"))
 
-	require.NoError(t, batch.Flush(context.Background(), rwTx))
+	require.NoError(t, batch.Flush(rwTx))
 
 	value, err := rwTx.GetOne(kv.HashedAccounts, []byte("BAAA"))
 	require.NoError(t, err)
@@ -165,7 +161,7 @@ func TestForEach(t *testing.T) {
 
 	batch := NewMemoryBatch(rwTx, "", log.Root())
 	batch.Put(kv.HashedAccounts, []byte("FCAA"), []byte("value5"))
-	require.NoError(t, batch.Flush(context.Background(), rwTx))
+	require.NoError(t, batch.Flush(rwTx))
 
 	var keys []string
 	var values []string
@@ -472,7 +468,7 @@ func TestDeleteCurrentDuplicates(t *testing.T) {
 
 	require.NoError(t, cursor.DeleteCurrentDuplicates())
 
-	require.NoError(t, batch.Flush(context.Background(), rwTx))
+	require.NoError(t, batch.Flush(rwTx))
 
 	var keys []string
 	var values []string

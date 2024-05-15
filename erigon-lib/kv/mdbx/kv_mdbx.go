@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,7 +75,7 @@ type MdbxOpts struct {
 }
 
 const DefaultMapSize = 2 * datasize.TB
-const DefaultGrowthStep = 1 * datasize.GB
+const DefaultGrowthStep = 2 * datasize.GB
 
 func NewMDBX(log log.Logger) MdbxOpts {
 	opts := MdbxOpts{
@@ -192,10 +191,6 @@ func (opts MdbxOpts) WriteMap() MdbxOpts {
 	opts.flags |= mdbx.WriteMap
 	return opts
 }
-func (opts MdbxOpts) LifoReclaim() MdbxOpts {
-	opts.flags |= mdbx.LifoReclaim
-	return opts
-}
 
 func (opts MdbxOpts) WriteMergeThreshold(v uint64) MdbxOpts {
 	opts.mergeThreshold = v
@@ -268,7 +263,7 @@ func (opts MdbxOpts) Open(ctx context.Context) (kv.RwDB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if opts.label == kv.ChainDB && opts.verbosity != -1 {
+	if opts.verbosity != -1 {
 		err = env.SetDebug(mdbx.LogLvl(opts.verbosity), mdbx.DbgDoNotChange, mdbx.LoggerDoNotChange) // temporary disable error, because it works if call it 1 time, but returns error if call it twice in same process (what often happening in tests)
 		if err != nil {
 			return nil, fmt.Errorf("db verbosity set: %w", err)
@@ -278,9 +273,6 @@ func (opts MdbxOpts) Open(ctx context.Context) (kv.RwDB, error) {
 		return nil, err
 	}
 	if err = env.SetOption(mdbx.OptMaxReaders, kv.ReadersLimit); err != nil {
-		return nil, err
-	}
-	if err = env.SetOption(mdbx.OptRpAugmentLimit, 1_000_000_000); err != nil { //default: 262144
 		return nil, err
 	}
 
@@ -327,6 +319,7 @@ func (opts MdbxOpts) Open(ctx context.Context) (kv.RwDB, error) {
 		if pageSize == 0 {
 			pageSize = kv.DefaultPageSize()
 		}
+
 		var dirtySpace uint64
 		if opts.dirtySpace > 0 {
 			dirtySpace = opts.dirtySpace
@@ -368,9 +361,9 @@ func (opts MdbxOpts) Open(ctx context.Context) (kv.RwDB, error) {
 	opts.pageSize = uint64(in.PageSize)
 	opts.mapSize = datasize.ByteSize(in.MapSize)
 	if opts.label == kv.ChainDB {
-		opts.log.Info("[db] open", "label", opts.label, "sizeLimit", opts.mapSize, "pageSize", opts.pageSize)
+		opts.log.Info("[db] open", "lable", opts.label, "sizeLimit", opts.mapSize, "pageSize", opts.pageSize)
 	} else {
-		opts.log.Debug("[db] open", "label", opts.label, "sizeLimit", opts.mapSize, "pageSize", opts.pageSize)
+		opts.log.Debug("[db] open", "lable", opts.label, "sizeLimit", opts.mapSize, "pageSize", opts.pageSize)
 	}
 
 	dirtyPagesLimit, err := env.GetOption(mdbx.OptTxnDpLimit)
@@ -407,9 +400,6 @@ func (opts MdbxOpts) Open(ctx context.Context) (kv.RwDB, error) {
 		txsAllDoneOnCloseCond: sync.NewCond(txsCountMutex),
 
 		leakDetector: dbg.NewLeakDetector("db."+opts.label.String(), dbg.SlowTx()),
-
-		MaxBatchSize:  DefaultMaxBatchSize,
-		MaxBatchDelay: DefaultMaxBatchDelay,
 	}
 
 	customBuckets := opts.bucketsCfg(kv.ChaindataTablesCfg)
@@ -458,12 +448,6 @@ func (opts MdbxOpts) Open(ctx context.Context) (kv.RwDB, error) {
 	}
 	db.path = opts.path
 	addToPathDbMap(opts.path, db)
-	if dbg.MdbxLockInRam() && opts.label == kv.ChainDB {
-		log.Info("[dbg] locking db in mem", "lable", opts.label)
-		if err := db.View(ctx, func(tx kv.Tx) error { return tx.(*MdbxTx).LockDBInRam() }); err != nil {
-			return nil, err
-		}
-	}
 	return db, nil
 }
 
@@ -490,161 +474,8 @@ type MdbxKV struct {
 	txsAllDoneOnCloseCond *sync.Cond
 
 	leakDetector *dbg.LeakDetector
-
-	// MaxBatchSize is the maximum size of a batch. Default value is
-	// copied from DefaultMaxBatchSize in Open.
-	//
-	// If <=0, disables batching.
-	//
-	// Do not change concurrently with calls to Batch.
-	MaxBatchSize int
-
-	// MaxBatchDelay is the maximum delay before a batch starts.
-	// Default value is copied from DefaultMaxBatchDelay in Open.
-	//
-	// If <=0, effectively disables batching.
-	//
-	// Do not change concurrently with calls to Batch.
-	MaxBatchDelay time.Duration
-
-	batchMu sync.Mutex
-	batch   *batch
 }
 
-// Default values if not set in a DB instance.
-const (
-	DefaultMaxBatchSize  int = 1000
-	DefaultMaxBatchDelay     = 10 * time.Millisecond
-)
-
-type batch struct {
-	db    *MdbxKV
-	timer *time.Timer
-	start sync.Once
-	calls []call
-}
-
-type call struct {
-	fn  func(kv.RwTx) error
-	err chan<- error
-}
-
-// trigger runs the batch if it hasn't already been run.
-func (b *batch) trigger() {
-	b.start.Do(b.run)
-}
-
-// run performs the transactions in the batch and communicates results
-// back to DB.Batch.
-func (b *batch) run() {
-	b.db.batchMu.Lock()
-	b.timer.Stop()
-	// Make sure no new work is added to this batch, but don't break
-	// other batches.
-	if b.db.batch == b {
-		b.db.batch = nil
-	}
-	b.db.batchMu.Unlock()
-
-retry:
-	for len(b.calls) > 0 {
-		var failIdx = -1
-		err := b.db.Update(context.Background(), func(tx kv.RwTx) error {
-			for i, c := range b.calls {
-				if err := safelyCall(c.fn, tx); err != nil {
-					failIdx = i
-					return err
-				}
-			}
-			return nil
-		})
-
-		if failIdx >= 0 {
-			// take the failing transaction out of the batch. it's
-			// safe to shorten b.calls here because db.batch no longer
-			// points to us, and we hold the mutex anyway.
-			c := b.calls[failIdx]
-			b.calls[failIdx], b.calls = b.calls[len(b.calls)-1], b.calls[:len(b.calls)-1]
-			// tell the submitter re-run it solo, continue with the rest of the batch
-			c.err <- trySolo
-			continue retry
-		}
-
-		// pass success, or bolt internal errors, to all callers
-		for _, c := range b.calls {
-			c.err <- err
-		}
-		break retry
-	}
-}
-
-// trySolo is a special sentinel error value used for signaling that a
-// transaction function should be re-run. It should never be seen by
-// callers.
-var trySolo = errors.New("batch function returned an error and should be re-run solo")
-
-type panicked struct {
-	reason interface{}
-}
-
-func (p panicked) Error() string {
-	if err, ok := p.reason.(error); ok {
-		return err.Error()
-	}
-	return fmt.Sprintf("panic: %v", p.reason)
-}
-
-func safelyCall(fn func(tx kv.RwTx) error, tx kv.RwTx) (err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = panicked{p}
-		}
-	}()
-	return fn(tx)
-}
-
-// Batch is only useful when there are multiple goroutines calling it.
-// It behaves similar to Update, except:
-//
-// 1. concurrent Batch calls can be combined into a single RwTx.
-//
-// 2. the function passed to Batch may be called multiple times,
-// regardless of whether it returns error or not.
-//
-// This means that Batch function side effects must be idempotent and
-// take permanent effect only after a successful return is seen in
-// caller.
-//
-// Example of bad side-effects: print messages, mutate external counters `i++`
-//
-// The maximum batch size and delay can be adjusted with DB.MaxBatchSize
-// and DB.MaxBatchDelay, respectively.
-func (db *MdbxKV) Batch(fn func(tx kv.RwTx) error) error {
-	errCh := make(chan error, 1)
-
-	db.batchMu.Lock()
-	if (db.batch == nil) || (db.batch != nil && len(db.batch.calls) >= db.MaxBatchSize) {
-		// There is no existing batch, or the existing batch is full; start a new one.
-		db.batch = &batch{
-			db: db,
-		}
-		db.batch.timer = time.AfterFunc(db.MaxBatchDelay, db.batch.trigger)
-	}
-	db.batch.calls = append(db.batch.calls, call{fn: fn, err: errCh})
-	if len(db.batch.calls) >= db.MaxBatchSize {
-		// wake up batch, it's ready to run
-		go db.batch.trigger()
-	}
-	db.batchMu.Unlock()
-
-	err := <-errCh
-	if errors.Is(err, trySolo) {
-		err = db.Update(context.Background(), fn)
-	}
-	return err
-}
-
-func (db *MdbxKV) Path() string     { return db.opts.path }
 func (db *MdbxKV) PageSize() uint64 { return db.opts.pageSize }
 func (db *MdbxKV) ReadOnly() bool   { return db.opts.HasFlag(mdbx.Readonly) }
 func (db *MdbxKV) Accede() bool     { return db.opts.HasFlag(mdbx.Accede) }
@@ -758,7 +589,7 @@ func (db *MdbxKV) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 	// will return nil err if context is cancelled (may appear to acquire the semaphore)
 	if semErr := db.roTxsLimiter.Acquire(ctx, 1); semErr != nil {
 		db.trackTxEnd()
-		return nil, fmt.Errorf("mdbx.MdbxKV.BeginRo: roTxsLimiter error %w", semErr)
+		return nil, semErr
 	}
 
 	defer func() {
@@ -820,17 +651,14 @@ func (db *MdbxKV) beginRw(ctx context.Context, flags uint) (txn kv.RwTx, err err
 
 type MdbxTx struct {
 	tx               *mdbx.Txn
-	id               uint64 // set only if TRACE_TX=true
 	db               *MdbxKV
+	cursors          map[uint64]*mdbx.Cursor
+	streams          []kv.Closer
 	statelessCursors map[string]kv.RwCursor
 	readOnly         bool
+	cursorID         uint64
 	ctx              context.Context
-
-	cursors  map[uint64]*mdbx.Cursor
-	cursorID uint64
-
-	streams  map[int]kv.Closer
-	streamID int
+	id               uint64 // set only if TRACE_TX=true
 }
 
 type MdbxCursor struct {
@@ -909,15 +737,6 @@ func (tx *MdbxTx) CollectMetrics() {
 
 // ListBuckets - all buckets stored as keys of un-named bucket
 func (tx *MdbxTx) ListBuckets() ([]string, error) { return tx.tx.ListDBI() }
-
-func (tx *MdbxTx) WarmupDB(force bool) error {
-	if force {
-		return tx.tx.EnvWarmup(mdbx.WarmupForce|mdbx.WarmupOomSafe, time.Hour)
-	}
-	return tx.tx.EnvWarmup(mdbx.WarmupDefault, time.Hour)
-}
-func (tx *MdbxTx) LockDBInRam() error     { return tx.tx.EnvWarmup(mdbx.WarmupLock, time.Hour) }
-func (tx *MdbxTx) UnlockDBFromRam() error { return tx.tx.EnvWarmup(mdbx.WarmupRelease, time.Hour) }
 
 func (db *MdbxKV) View(ctx context.Context, f func(tx kv.Tx) error) (err error) {
 	// can't use db.env.View method - because it calls commit for read transactions - it conflicts with write transactions.
@@ -1085,7 +904,7 @@ func (tx *MdbxTx) Commit() error {
 
 	latency, err := tx.tx.Commit()
 	if err != nil {
-		return fmt.Errorf("label: %s, %w", tx.db.opts.label, err)
+		return fmt.Errorf("lable: %s, %w", tx.db.opts.label, err)
 	}
 
 	if tx.db.opts.label == kv.ChainDB {
@@ -1172,7 +991,6 @@ func (tx *MdbxTx) closeCursors() {
 			c.Close()
 		}
 	}
-	tx.streams = nil
 	tx.statelessCursors = nil
 }
 
@@ -1525,9 +1343,6 @@ func (c *MdbxCursor) Next() (k, v []byte, err error) {
 	b := c.bucketCfg
 	if b.AutoDupSortKeysConversion && len(k) == b.DupToLen {
 		keyPart := b.DupFromLen - b.DupToLen
-		if len(v) == 0 {
-			return nil, nil, fmt.Errorf("key with empty value: k=%x, len(k)=%d, v=%x", k, len(k), v)
-		}
 		k = append(k, v[:keyPart]...)
 		v = v[keyPart:]
 	}
@@ -1810,7 +1625,7 @@ func (c *MdbxDupSortCursor) FirstDup() ([]byte, error) {
 		if mdbx.IsNotFound(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("in FirstDup: tbl=%s, %w", c.bucketName, err)
+		return nil, fmt.Errorf("in FirstDup: %w", err)
 	}
 	return v, nil
 }
@@ -1980,129 +1795,70 @@ func (tx *MdbxTx) RangeDescend(table string, fromPrefix, toPrefix []byte, limit 
 }
 
 type cursor2iter struct {
-	c  kv.Cursor
-	id int
-	tx *MdbxTx
-
+	c                                  kv.Cursor
 	fromPrefix, toPrefix, nextK, nextV []byte
+	err                                error
 	orderAscend                        order.By
 	limit                              int64
 	ctx                                context.Context
 }
 
 func (tx *MdbxTx) rangeOrderLimit(table string, fromPrefix, toPrefix []byte, orderAscend order.By, limit int) (*cursor2iter, error) {
-	s := &cursor2iter{ctx: tx.ctx, tx: tx, fromPrefix: fromPrefix, toPrefix: toPrefix, orderAscend: orderAscend, limit: int64(limit), id: tx.streamID}
-	tx.streamID++
-	if tx.streams == nil {
-		tx.streams = map[int]kv.Closer{}
-	}
-	tx.streams[s.id] = s
-	if err := s.init(table, tx); err != nil {
-		s.Close()
-		return nil, err
-	}
-	return s, nil
+	s := &cursor2iter{ctx: tx.ctx, fromPrefix: fromPrefix, toPrefix: toPrefix, orderAscend: orderAscend, limit: int64(limit)}
+	tx.streams = append(tx.streams, s)
+	return s.init(table, tx)
 }
-func (s *cursor2iter) init(table string, tx kv.Tx) error {
+func (s *cursor2iter) init(table string, tx kv.Tx) (*cursor2iter, error) {
 	if s.orderAscend && s.fromPrefix != nil && s.toPrefix != nil && bytes.Compare(s.fromPrefix, s.toPrefix) >= 0 {
-		return fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.fromPrefix, s.toPrefix)
+		return s, fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.fromPrefix, s.toPrefix)
 	}
 	if !s.orderAscend && s.fromPrefix != nil && s.toPrefix != nil && bytes.Compare(s.fromPrefix, s.toPrefix) <= 0 {
-		return fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.toPrefix, s.fromPrefix)
+		return s, fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.toPrefix, s.fromPrefix)
 	}
 	c, err := tx.Cursor(table)
 	if err != nil {
-		return err
+		return s, err
 	}
 	s.c = c
 
 	if s.fromPrefix == nil { // no initial position
 		if s.orderAscend {
-			s.nextK, s.nextV, err = s.c.First()
-			if err != nil {
-				return err
-			}
+			s.nextK, s.nextV, s.err = s.c.First()
 		} else {
-			s.nextK, s.nextV, err = s.c.Last()
-			if err != nil {
-				return err
-			}
-
+			s.nextK, s.nextV, s.err = s.c.Last()
 		}
-		return nil
+		return s, s.err
 	}
 
 	if s.orderAscend {
-		s.nextK, s.nextV, err = s.c.Seek(s.fromPrefix)
-		if err != nil {
-			return err
-		}
-		return err
-	}
-
-	// to find LAST key with given prefix:
-	nextSubtree, ok := kv.NextSubtree(s.fromPrefix)
-	if ok {
-		s.nextK, s.nextV, err = s.c.SeekExact(nextSubtree)
-		if err != nil {
-			return err
-		}
-		s.nextK, s.nextV, err = s.c.Prev()
-		if err != nil {
-			return err
+		s.nextK, s.nextV, s.err = s.c.Seek(s.fromPrefix)
+		return s, s.err
+	} else {
+		// seek exactly to given key or previous one
+		s.nextK, s.nextV, s.err = s.c.SeekExact(s.fromPrefix)
+		if s.err != nil {
+			return s, s.err
 		}
 		if s.nextK != nil { // go to last value of this key
 			if casted, ok := s.c.(kv.CursorDupSort); ok {
-				s.nextV, err = casted.LastDup()
-				if err != nil {
-					return err
-				}
+				s.nextV, s.err = casted.LastDup()
 			}
+		} else { // key not found, go to prev one
+			s.nextK, s.nextV, s.err = s.c.Prev()
 		}
-	} else {
-		s.nextK, s.nextV, err = s.c.Last()
-		if err != nil {
-			return err
-		}
-		if s.nextK != nil { // go to last value of this key
-			if casted, ok := s.c.(kv.CursorDupSort); ok {
-				s.nextV, err = casted.LastDup()
-				if err != nil {
-					return err
-				}
-			}
-		}
+		return s, s.err
 	}
-	return nil
-}
-
-func (s *cursor2iter) advance() (err error) {
-	if s.orderAscend {
-		s.nextK, s.nextV, err = s.c.Next()
-		if err != nil {
-			return err
-		}
-	} else {
-		s.nextK, s.nextV, err = s.c.Prev()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *cursor2iter) Close() {
-	if s == nil {
-		return
-	}
 	if s.c != nil {
 		s.c.Close()
-		delete(s.tx.streams, s.id)
-		s.c = nil
 	}
 }
-
 func (s *cursor2iter) HasNext() bool {
+	if s.err != nil { // always true, then .Next() call will return this error
+		return true
+	}
 	if s.limit == 0 { // limit reached
 		return false
 	}
@@ -2113,12 +1869,11 @@ func (s *cursor2iter) HasNext() bool {
 		return true
 	}
 
-	//Asc:  [from, to) AND from < to
-	//Desc: [from, to) AND from > to
+	//Asc:  [from, to) AND from > to
+	//Desc: [from, to) AND from < to
 	cmp := bytes.Compare(s.nextK, s.toPrefix)
 	return (bool(s.orderAscend) && cmp < 0) || (!bool(s.orderAscend) && cmp > 0)
 }
-
 func (s *cursor2iter) Next() (k, v []byte, err error) {
 	select {
 	case <-s.ctx.Done():
@@ -2126,128 +1881,82 @@ func (s *cursor2iter) Next() (k, v []byte, err error) {
 	default:
 	}
 	s.limit--
-	k, v = s.nextK, s.nextV
-	if err = s.advance(); err != nil {
-		return nil, nil, err
+	k, v, err = s.nextK, s.nextV, s.err
+	if s.orderAscend {
+		s.nextK, s.nextV, s.err = s.c.Next()
+	} else {
+		s.nextK, s.nextV, s.err = s.c.Prev()
 	}
-	return k, v, nil
+	return k, v, err
 }
 
 func (tx *MdbxTx) RangeDupSort(table string, key []byte, fromPrefix, toPrefix []byte, asc order.By, limit int) (iter.KV, error) {
-	s := &cursorDup2iter{ctx: tx.ctx, tx: tx, key: key, fromPrefix: fromPrefix, toPrefix: toPrefix, orderAscend: bool(asc), limit: int64(limit), id: tx.streamID}
-	tx.streamID++
-	if tx.streams == nil {
-		tx.streams = map[int]kv.Closer{}
-	}
-	tx.streams[s.id] = s
-	if err := s.init(table, tx); err != nil {
-		s.Close()
-		return nil, err
-	}
-	return s, nil
+	s := &cursorDup2iter{ctx: tx.ctx, key: key, fromPrefix: fromPrefix, toPrefix: toPrefix, orderAscend: bool(asc), limit: int64(limit)}
+	tx.streams = append(tx.streams, s)
+	return s.init(table, tx)
 }
 
 type cursorDup2iter struct {
-	c  kv.CursorDupSort
-	id int
-	tx *MdbxTx
-
+	c                           kv.CursorDupSort
 	key                         []byte
 	fromPrefix, toPrefix, nextV []byte
+	err                         error
 	orderAscend                 bool
 	limit                       int64
 	ctx                         context.Context
 }
 
-func (s *cursorDup2iter) init(table string, tx kv.Tx) error {
+func (s *cursorDup2iter) init(table string, tx kv.Tx) (*cursorDup2iter, error) {
 	if s.orderAscend && s.fromPrefix != nil && s.toPrefix != nil && bytes.Compare(s.fromPrefix, s.toPrefix) >= 0 {
-		return fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.fromPrefix, s.toPrefix)
+		return s, fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.fromPrefix, s.toPrefix)
 	}
 	if !s.orderAscend && s.fromPrefix != nil && s.toPrefix != nil && bytes.Compare(s.fromPrefix, s.toPrefix) <= 0 {
-		return fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.toPrefix, s.fromPrefix)
+		return s, fmt.Errorf("tx.Dual: %x must be lexicographicaly before %x", s.toPrefix, s.fromPrefix)
 	}
 	c, err := tx.CursorDupSort(table)
 	if err != nil {
-		return err
+		return s, err
 	}
 	s.c = c
 	k, _, err := c.SeekExact(s.key)
 	if err != nil {
-		return err
+		return s, err
 	}
 	if k == nil {
-		return nil
+		return s, nil
 	}
 
 	if s.fromPrefix == nil { // no initial position
 		if s.orderAscend {
-			s.nextV, err = s.c.FirstDup()
-			if err != nil {
-				return err
-			}
+			s.nextV, s.err = s.c.FirstDup()
 		} else {
-			s.nextV, err = s.c.LastDup()
-			if err != nil {
-				return err
-			}
+			s.nextV, s.err = s.c.LastDup()
 		}
-		return nil
+		return s, s.err
 	}
 
 	if s.orderAscend {
-		s.nextV, err = s.c.SeekBothRange(s.key, s.fromPrefix)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	// to find LAST key with given prefix:
-	nextSubtree, ok := kv.NextSubtree(s.fromPrefix)
-	if ok {
-		_, s.nextV, err = s.c.SeekBothExact(s.key, nextSubtree)
-		if err != nil {
-			return err
-		}
-		_, s.nextV, err = s.c.PrevDup()
-		if err != nil {
-			return err
-		}
+		s.nextV, s.err = s.c.SeekBothRange(s.key, s.fromPrefix)
+		return s, s.err
 	} else {
-		s.nextV, err = s.c.LastDup()
-		if err != nil {
-			return err
+		// seek exactly to given key or previous one
+		_, s.nextV, s.err = s.c.SeekBothExact(s.key, s.fromPrefix)
+		if s.nextV == nil { // no such key
+			_, s.nextV, s.err = s.c.PrevDup()
 		}
+		return s, s.err
 	}
-	return nil
-}
-
-func (s *cursorDup2iter) advance() (err error) {
-	if s.orderAscend {
-		_, s.nextV, err = s.c.NextDup()
-		if err != nil {
-			return err
-		}
-	} else {
-		_, s.nextV, err = s.c.PrevDup()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *cursorDup2iter) Close() {
-	if s == nil {
-		return
-	}
 	if s.c != nil {
 		s.c.Close()
-		delete(s.tx.streams, s.id)
-		s.c = nil
 	}
 }
 func (s *cursorDup2iter) HasNext() bool {
+	if s.err != nil { // always true, then .Next() call will return this error
+		return true
+	}
 	if s.limit == 0 { // limit reached
 		return false
 	}
@@ -2258,8 +1967,8 @@ func (s *cursorDup2iter) HasNext() bool {
 		return true
 	}
 
-	//Asc:  [from, to) AND from < to
-	//Desc: [from, to) AND from > to
+	//Asc:  [from, to) AND from > to
+	//Desc: [from, to) AND from < to
 	cmp := bytes.Compare(s.nextV, s.toPrefix)
 	return (s.orderAscend && cmp < 0) || (!s.orderAscend && cmp > 0)
 }
@@ -2270,11 +1979,13 @@ func (s *cursorDup2iter) Next() (k, v []byte, err error) {
 	default:
 	}
 	s.limit--
-	v = s.nextV
-	if err = s.advance(); err != nil {
-		return nil, nil, err
+	v, err = s.nextV, s.err
+	if s.orderAscend {
+		_, s.nextV, s.err = s.c.NextDup()
+	} else {
+		_, s.nextV, s.err = s.c.PrevDup()
 	}
-	return s.key, v, nil
+	return s.key, v, err
 }
 
 func (tx *MdbxTx) ForAmount(bucket string, fromPrefix []byte, amount uint32, walker func(k, v []byte) error) error {

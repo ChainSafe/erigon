@@ -12,10 +12,6 @@ import (
 	"time"
 
 	"github.com/c2h5oh/datasize"
-	"github.com/ledgerwatch/log/v3"
-	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/ledgerwatch/erigon-lib/chain"
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/downloader"
@@ -23,12 +19,14 @@ import (
 	"github.com/ledgerwatch/erigon/cmd/snapshots/flags"
 	"github.com/ledgerwatch/erigon/cmd/snapshots/sync"
 	"github.com/ledgerwatch/erigon/cmd/utils"
-	coresnaptype "github.com/ledgerwatch/erigon/core/snaptype"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/turbo/logging"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync/freezeblocks"
+	"github.com/ledgerwatch/log/v3"
+	"github.com/urfave/cli/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 var Command = cli.Command{
@@ -142,8 +140,7 @@ func cmp(cliCtx *cli.Context) error {
 	}
 
 	if loc1.LType == sync.TorrentFs || loc2.LType == sync.TorrentFs {
-		config := sync.NewTorrentClientConfigFromCobra(cliCtx, chain)
-		torrentCli, err = sync.NewTorrentClient(config)
+		torrentCli, err = sync.NewTorrentClient(cliCtx, chain)
 		if err != nil {
 			return fmt.Errorf("can't create torrent: %w", err)
 		}
@@ -177,7 +174,7 @@ func cmp(cliCtx *cli.Context) error {
 
 	if rcCli != nil {
 		if loc1.LType == sync.RemoteFs {
-			session1, err = rcCli.NewSession(cliCtx.Context, filepath.Join(tempDir, "l1"), loc1.Src+":"+loc1.Root, nil)
+			session1, err = rcCli.NewSession(cliCtx.Context, filepath.Join(tempDir, "l1"), loc1.Src+":"+loc1.Root)
 
 			if err != nil {
 				return err
@@ -185,7 +182,7 @@ func cmp(cliCtx *cli.Context) error {
 		}
 
 		if loc2.LType == sync.RemoteFs {
-			session2, err = rcCli.NewSession(cliCtx.Context, filepath.Join(tempDir, "l2"), loc2.Src+":"+loc2.Root, nil)
+			session2, err = rcCli.NewSession(cliCtx.Context, filepath.Join(tempDir, "l2"), loc2.Src+":"+loc2.Root)
 
 			if err != nil {
 				return err
@@ -260,13 +257,13 @@ func cmp(cliCtx *cli.Context) error {
 		})
 	} else {
 		for _, snapType := range snapTypes {
-			if snapType.Enum() == coresnaptype.Enums.Headers {
+			if snapType.Enum() == snaptype.Enums.Headers {
 				funcs = append(funcs, func(ctx context.Context) (time.Duration, time.Duration, time.Duration, error) {
 					return c.compareHeaders(ctx, h1ents, h2ents, headerWorkers, logger)
 				})
 			}
 
-			if snapType.Enum() == coresnaptype.Enums.Bodies {
+			if snapType.Enum() == snaptype.Enums.Bodies {
 				funcs = append(funcs, func(ctx context.Context) (time.Duration, time.Duration, time.Duration, error) {
 					return c.compareBodies(ctx, b1ents, b2ents, bodyWorkers, logger)
 				})
@@ -325,11 +322,11 @@ func splitEntries(files []fs.DirEntry, version snaptype.Version, firstBlock, las
 					(firstBlock == 0 || snapInfo.From() >= firstBlock) &&
 					(lastBlock == 0 || snapInfo.From() < lastBlock) {
 
-					if snapInfo.Type().Enum() == coresnaptype.Enums.Headers {
+					if snapInfo.Type().Enum() == snaptype.Enums.Headers {
 						hents = append(hents, ent)
 					}
 
-					if snapInfo.Type().Enum() == coresnaptype.Enums.Bodies {
+					if snapInfo.Type().Enum() == snaptype.Enums.Bodies {
 						found := false
 
 						for _, bent := range bents {
@@ -345,7 +342,7 @@ func splitEntries(files []fs.DirEntry, version snaptype.Version, firstBlock, las
 						}
 					}
 
-					if snapInfo.Type().Enum() == coresnaptype.Enums.Transactions {
+					if snapInfo.Type().Enum() == snaptype.Enums.Transactions {
 						found := false
 
 						for _, bent := range bents {
@@ -457,7 +454,7 @@ func (c comparitor) compareHeaders(ctx context.Context, f1ents []fs.DirEntry, f2
 					return err
 				}
 
-				info1, _, _ := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Name())
+				info1, _ := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Name())
 
 				f1snaps := freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{
 					Enabled:      true,
@@ -467,7 +464,7 @@ func (c comparitor) compareHeaders(ctx context.Context, f1ents []fs.DirEntry, f2
 
 				f1snaps.ReopenList([]string{ent1.Name()}, false)
 
-				info2, _, _ := snaptype.ParseFileName(c.session2.LocalFsRoot(), ent1.Name())
+				info2, _ := snaptype.ParseFileName(c.session2.LocalFsRoot(), ent1.Name())
 
 				f2snaps := freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{
 					Enabled:      true,
@@ -585,7 +582,7 @@ func (c comparitor) compareBodies(ctx context.Context, f1ents []*BodyEntry, f2en
 
 				g.Go(func() error {
 
-					info, _, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Body.Name())
+					info, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Body.Name())
 
 					err := func() error {
 						startTime := time.Now()
@@ -616,17 +613,19 @@ func (c comparitor) compareBodies(ctx context.Context, f1ents []*BodyEntry, f2en
 
 					logger.Info(fmt.Sprintf("Indexing %s", ent1.Body.Name()))
 
-					return coresnaptype.Bodies.BuildIndexes(ctx, info, c.chainConfig(), c.session1.LocalFsRoot(), nil, log.LvlDebug, logger)
+					return freezeblocks.BodiesIdx(ctx, info, c.session1.LocalFsRoot(), nil, log.LvlDebug, logger)
 				})
 
 				g.Go(func() error {
-					info, _, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Transactions.Name())
-					if !ok {
-						return fmt.Errorf("can't parse file name %s", ent1.Transactions.Name())
-					}
+					info, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Transactions.Name())
 
 					err := func() error {
 						startTime := time.Now()
+
+						if !ok {
+							return fmt.Errorf("can't parse file name %s", ent1.Transactions.Name())
+						}
+
 						defer func() {
 							atomic.AddUint64(&downloadTime, uint64(time.Since(startTime)))
 						}()
@@ -654,13 +653,13 @@ func (c comparitor) compareBodies(ctx context.Context, f1ents []*BodyEntry, f2en
 					}()
 
 					logger.Info(fmt.Sprintf("Indexing %s", ent1.Transactions.Name()))
-					return coresnaptype.Transactions.BuildIndexes(ctx, info, c.chainConfig(), c.session1.LocalFsRoot(), nil, log.LvlDebug, logger)
+					return freezeblocks.TransactionsIdx(ctx, c.chainConfig(), info, c.session1.LocalFsRoot(), nil, log.LvlDebug, logger)
 				})
 
 				b2err := make(chan error, 1)
 
 				g.Go(func() error {
-					info, _, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Body.Name())
+					info, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Body.Name())
 
 					err := func() error {
 						startTime := time.Now()
@@ -690,11 +689,11 @@ func (c comparitor) compareBodies(ctx context.Context, f1ents []*BodyEntry, f2en
 					}()
 
 					logger.Info(fmt.Sprintf("Indexing %s", ent2.Body.Name()))
-					return coresnaptype.Bodies.BuildIndexes(ctx, info, c.chainConfig(), c.session1.LocalFsRoot(), nil, log.LvlDebug, logger)
+					return freezeblocks.BodiesIdx(ctx, info, c.session1.LocalFsRoot(), nil, log.LvlDebug, logger)
 				})
 
 				g.Go(func() error {
-					info, _, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Transactions.Name())
+					info, ok := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Transactions.Name())
 
 					err := func() error {
 						startTime := time.Now()
@@ -731,14 +730,14 @@ func (c comparitor) compareBodies(ctx context.Context, f1ents []*BodyEntry, f2en
 					}()
 
 					logger.Info(fmt.Sprintf("Indexing %s", ent2.Transactions.Name()))
-					return coresnaptype.Transactions.BuildIndexes(ctx, info, c.chainConfig(), c.session2.LocalFsRoot(), nil, log.LvlDebug, logger)
+					return freezeblocks.TransactionsIdx(ctx, c.chainConfig(), info, c.session2.LocalFsRoot(), nil, log.LvlDebug, logger)
 				})
 
 				if err := g.Wait(); err != nil {
 					return err
 				}
 
-				info1, _, _ := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Body.Name())
+				info1, _ := snaptype.ParseFileName(c.session1.LocalFsRoot(), ent1.Body.Name())
 
 				f1snaps := freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{
 					Enabled:      true,
@@ -748,7 +747,7 @@ func (c comparitor) compareBodies(ctx context.Context, f1ents []*BodyEntry, f2en
 
 				f1snaps.ReopenList([]string{ent1.Body.Name(), ent1.Transactions.Name()}, false)
 
-				info2, _, _ := snaptype.ParseFileName(c.session2.LocalFsRoot(), ent2.Body.Name())
+				info2, _ := snaptype.ParseFileName(c.session2.LocalFsRoot(), ent2.Body.Name())
 
 				f2snaps := freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{
 					Enabled:      true,

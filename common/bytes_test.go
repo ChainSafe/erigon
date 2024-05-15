@@ -18,9 +18,8 @@ package common
 
 import (
 	"bytes"
-	"testing"
-
 	"github.com/ledgerwatch/erigon-lib/common"
+	"testing"
 )
 
 func TestCopyBytes(t *testing.T) {

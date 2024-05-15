@@ -15,17 +15,15 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
-	"github.com/ledgerwatch/erigon-lib/diagnostics"
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/erigon-lib/state"
-	"github.com/ledgerwatch/erigon/core/rawdb/blockio"
-	"github.com/ledgerwatch/erigon/eth/ethconfig"
-	"github.com/ledgerwatch/erigon/eth/stagedsync/stages"
-
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/core/rawdb"
+	"github.com/ledgerwatch/erigon/core/rawdb/blockio"
 	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/eth/ethconfig"
+	"github.com/ledgerwatch/erigon/eth/stagedsync/stages"
 	"github.com/ledgerwatch/erigon/rlp"
+	"github.com/ledgerwatch/erigon/turbo/engineapi/engine_helpers"
 	"github.com/ledgerwatch/erigon/turbo/services"
 	"github.com/ledgerwatch/erigon/turbo/shards"
 	"github.com/ledgerwatch/erigon/turbo/stages/bodydownload"
@@ -47,10 +45,10 @@ type HeadersCfg struct {
 	batchSize         datasize.ByteSize
 	noP2PDiscovery    bool
 	tmpdir            string
-	historyV3         bool
 
 	blockReader   services.FullBlockReader
 	blockWriter   *blockio.BlockWriter
+	forkValidator *engine_helpers.ForkValidator
 	notifications *shards.Notifications
 
 	syncConfig     ethconfig.Sync
@@ -71,8 +69,8 @@ func StageHeadersCfg(
 	blockReader services.FullBlockReader,
 	blockWriter *blockio.BlockWriter,
 	tmpdir string,
-	historyV3 bool,
 	notifications *shards.Notifications,
+	forkValidator *engine_helpers.ForkValidator,
 	loopBreakCheck func(int) bool) HeadersCfg {
 	return HeadersCfg{
 		db:                db,
@@ -85,10 +83,10 @@ func StageHeadersCfg(
 		penalize:          penalize,
 		batchSize:         batchSize,
 		tmpdir:            tmpdir,
-		historyV3:         historyV3,
 		noP2PDiscovery:    noP2PDiscovery,
 		blockReader:       blockReader,
 		blockWriter:       blockWriter,
+		forkValidator:     forkValidator,
 		notifications:     notifications,
 		loopBreakCheck:    loopBreakCheck,
 	}
@@ -147,23 +145,25 @@ func HeadersPOW(
 	defer cfg.hd.SetFetchingNew(false)
 	startProgress := cfg.hd.Progress()
 	logPrefix := s.LogPrefix()
-	logEvery := time.NewTicker(logInterval)
-	defer logEvery.Stop()
 
 	// Check if this is called straight after the unwinds, which means we need to create new canonical markings
 	hash, err := cfg.blockReader.CanonicalHash(ctx, tx, startProgress)
 	if err != nil {
 		return err
 	}
-	if hash == (libcommon.Hash{}) { // restore canonical markers after unwind
+	logEvery := time.NewTicker(logInterval)
+	defer logEvery.Stop()
+	if hash == (libcommon.Hash{}) {
 		headHash := rawdb.ReadHeadHeaderHash(tx)
 		if err = fixCanonicalChain(logPrefix, logEvery, startProgress, headHash, tx, cfg.blockReader, logger); err != nil {
 			return err
 		}
-		hash, err = cfg.blockReader.CanonicalHash(ctx, tx, startProgress)
-		if err != nil {
-			return err
+		if !useExternalTx {
+			if err = tx.Commit(); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
 
 	// Allow other stages to run 1 cycle if no network available
@@ -172,8 +172,6 @@ func HeadersPOW(
 	}
 
 	logger.Info(fmt.Sprintf("[%s] Waiting for headers...", logPrefix), "from", startProgress)
-
-	diagnostics.Send(diagnostics.HeadersWaitingUpdate{From: startProgress})
 
 	localTd, err := rawdb.ReadTd(tx, hash, startProgress)
 	if err != nil {
@@ -307,11 +305,9 @@ Loop:
 				noProgressCounter = 0 // Reset, there was progress
 			}
 			if noProgressCounter >= 5 {
-				var m runtime.MemStats
-				dbg.ReadMemStats(&m)
 				logger.Info("Req/resp stats", "req", stats.Requests, "reqMin", stats.ReqMinBlock, "reqMax", stats.ReqMaxBlock,
 					"skel", stats.SkeletonRequests, "skelMin", stats.SkeletonReqMinBlock, "skelMax", stats.SkeletonReqMaxBlock,
-					"resp", stats.Responses, "respMin", stats.RespMinBlock, "respMax", stats.RespMaxBlock, "dups", stats.Duplicates, "alloc", libcommon.ByteCount(m.Alloc), "sys", libcommon.ByteCount(m.Sys))
+					"resp", stats.Responses, "respMin", stats.RespMinBlock, "respMax", stats.RespMaxBlock, "dups", stats.Duplicates)
 				cfg.hd.LogAnchorState()
 				if wasProgress {
 					logger.Warn("Looks like chain is not progressing, moving to the next stage")
@@ -327,29 +323,7 @@ Loop:
 		timer.Stop()
 	}
 	if headerInserter.Unwind() {
-		if cfg.historyV3 {
-			unwindTo := headerInserter.UnwindPoint()
-			doms, err := state.NewSharedDomains(tx, logger) //TODO: if remove this line TestBlockchainHeaderchainReorgConsistency failing
-			if err != nil {
-				return err
-			}
-			defer doms.Close()
-
-			allowedUnwindTo, ok, err := tx.(state.HasAggCtx).AggCtx().(*state.AggregatorRoTx).CanUnwindBeforeBlockNum(unwindTo, tx)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return fmt.Errorf("too far unwind. requested=%d, minAllowed=%d", unwindTo, allowedUnwindTo)
-			}
-			if err := u.UnwindTo(allowedUnwindTo, StagedUnwind, tx); err != nil {
-				return err
-			}
-		} else {
-			if err := u.UnwindTo(headerInserter.UnwindPoint(), StagedUnwind, tx); err != nil {
-				return err
-			}
-		}
+		u.UnwindTo(headerInserter.UnwindPoint(), StagedUnwind)
 	}
 	if headerInserter.GetHighest() != 0 {
 		if !headerInserter.Unwind() {
@@ -379,15 +353,6 @@ Loop:
 	} else {
 		headers := headerInserter.GetHighest() - startProgress
 		secs := time.Since(startTime).Seconds()
-
-		diagnostics.Send(diagnostics.HeadersProcessedUpdate{
-			Highest:   headerInserter.GetHighest(),
-			Age:       time.Unix(int64(headerInserter.GetHighestTimestamp()), 0).Second(),
-			Headers:   headers,
-			In:        secs,
-			BlkPerSec: uint64(float64(headers) / secs),
-		})
-
 		logger.Info(fmt.Sprintf("[%s] Processed", logPrefix),
 			"highest", headerInserter.GetHighest(), "age", common.PrettyAge(time.Unix(int64(headerInserter.GetHighestTimestamp()), 0)),
 			"headers", headers, "in", secs, "blk/sec", uint64(float64(headers)/secs))
@@ -420,7 +385,6 @@ func fixCanonicalChain(logPrefix string, logEvery *time.Ticker, height uint64, h
 
 		select {
 		case <-logEvery.C:
-			diagnostics.Send(diagnostics.HeaderCanonicalMarkerUpdate{AncestorHeight: ancestorHeight, AncestorHash: ancestorHash.String()})
 			logger.Info(fmt.Sprintf("[%s] write canonical markers", logPrefix), "ancestor", ancestorHeight, "hash", ancestorHash)
 		default:
 		}
@@ -571,16 +535,6 @@ func logProgressHeaders(
 		"rejectedBadHeaders", stats.RejectedBadHeaders,
 	)
 
-	diagnostics.Send(diagnostics.BlockHeadersUpdate{
-		CurrentBlockNumber:  now,
-		PreviousBlockNumber: prev,
-		Speed:               speed,
-		Alloc:               m.Alloc,
-		Sys:                 m.Sys,
-		InvalidHeaders:      stats.InvalidHeaders,
-		RejectedBadHeaders:  stats.RejectedBadHeaders,
-	})
-
 	return now
 }
 
@@ -661,12 +615,10 @@ func (cr ChainReaderImpl) FrozenBlocks() uint64 {
 	return cr.blockReader.FrozenBlocks()
 }
 func (cr ChainReaderImpl) GetBlock(hash libcommon.Hash, number uint64) *types.Block {
-	b, _, _ := cr.blockReader.BlockWithSenders(context.Background(), cr.tx, hash, number)
-	return b
+	panic("")
 }
 func (cr ChainReaderImpl) HasBlock(hash libcommon.Hash, number uint64) bool {
-	b, _ := cr.blockReader.BodyRlp(context.Background(), cr.tx, hash, number)
-	return b != nil
+	panic("")
 }
 func (cr ChainReaderImpl) BorEventsByBlock(hash libcommon.Hash, number uint64) []rlp.RawValue {
 	events, err := cr.blockReader.EventsByBlock(context.Background(), cr.tx, hash, number)
@@ -675,14 +627,6 @@ func (cr ChainReaderImpl) BorEventsByBlock(hash libcommon.Hash, number uint64) [
 		return nil
 	}
 	return events
-}
-func (cr ChainReaderImpl) BorStartEventID(hash libcommon.Hash, blockNum uint64) uint64 {
-	id, err := cr.blockReader.BorStartEventID(context.Background(), cr.tx, hash, blockNum)
-	if err != nil {
-		cr.logger.Error("BorEventsByBlock failed", "err", err)
-		return 0
-	}
-	return id
 }
 func (cr ChainReaderImpl) BorSpan(spanId uint64) []byte {
 	span, err := cr.blockReader.Span(context.Background(), cr.tx, spanId)

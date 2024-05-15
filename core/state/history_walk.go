@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-
 	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	"github.com/RoaringBitmap/roaring/roaring64"

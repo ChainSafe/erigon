@@ -20,9 +20,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"sort"
-
 	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
+	"sort"
 
 	"github.com/google/btree"
 	"github.com/holiman/uint256"

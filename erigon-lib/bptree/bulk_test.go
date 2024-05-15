@@ -17,7 +17,6 @@
 package bptree
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -155,15 +154,14 @@ var mergeRight2LeftTestTable = []MergeTest{
 }
 
 func TestMergeLeft2Right(t *testing.T) {
-	for _, data := range slices.Clone(mergeLeft2RightTestTable) {
+	for _, data := range mergeLeft2RightTestTable {
 		_, merged := mergeLeft2Right(data.left, data.right, &Stats{})
 		assertNodeEqual(t, data.final, merged)
 	}
 }
 
 func TestMergeRight2Left(t *testing.T) {
-	t.Skip()
-	for _, data := range slices.Clone(mergeRight2LeftTestTable) {
+	for _, data := range mergeRight2LeftTestTable {
 		merged, _ := mergeRight2Left(data.left, data.right, &Stats{})
 		assertNodeEqual(t, data.final, merged)
 	}

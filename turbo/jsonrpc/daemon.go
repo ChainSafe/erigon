@@ -1,7 +1,7 @@
 package jsonrpc
 
 import (
-	txpool "github.com/ledgerwatch/erigon-lib/gointerfaces/txpoolproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/txpool"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcache"
 	libstate "github.com/ledgerwatch/erigon-lib/state"
@@ -18,11 +18,11 @@ import (
 // APIList describes the list of available RPC apis
 func APIList(db kv.RoDB, eth rpchelper.ApiBackend, txPool txpool.TxpoolClient, mining txpool.MiningClient,
 	filters *rpchelper.Filters, stateCache kvcache.Cache,
-	blockReader services.FullBlockReader, agg *libstate.Aggregator, cfg *httpcfg.HttpCfg, engine consensus.EngineReader,
+	blockReader services.FullBlockReader, agg *libstate.AggregatorV3, cfg *httpcfg.HttpCfg, engine consensus.EngineReader,
 	logger log.Logger,
 ) (list []rpc.API) {
 	base := NewBaseApi(filters, stateCache, blockReader, agg, cfg.WithDatadir, cfg.EvmCallTimeout, engine, cfg.Dirs)
-	ethImpl := NewEthAPI(base, db, eth, txPool, mining, cfg.Gascap, cfg.ReturnDataLimit, cfg.AllowUnprotectedTxs, cfg.MaxGetProofRewindBlockCount, cfg.WebsocketSubscribeLogsChannelSize, logger)
+	ethImpl := NewEthAPI(base, db, eth, txPool, mining, cfg.Gascap, cfg.ReturnDataLimit, cfg.AllowUnprotectedTxs, cfg.MaxGetProofRewindBlockCount, logger)
 	erigonImpl := NewErigonAPI(base, db, eth)
 	txpoolImpl := NewTxPoolAPI(base, db, txPool)
 	netImpl := NewNetAPIImpl(eth)
@@ -51,7 +51,6 @@ func APIList(db kv.RoDB, eth rpchelper.ApiBackend, txPool txpool.TxpoolClient, m
 
 	otsImpl := NewOtterscanAPI(base, db, cfg.OtsMaxPageSize)
 	gqlImpl := NewGraphQLAPI(base, db)
-	overlayImpl := NewOverlayAPI(base, db, cfg.Gascap, cfg.OverlayGetLogsTimeout, cfg.OverlayReplayBlockTimeout, otsImpl)
 
 	if cfg.GraphQLEnabled {
 		list = append(list, rpc.API{
@@ -152,13 +151,6 @@ func APIList(db kv.RoDB, eth rpchelper.ApiBackend, txPool txpool.TxpoolClient, m
 			})
 		case "clique":
 			list = append(list, clique.NewCliqueAPI(db, engine, blockReader))
-		case "overlay":
-			list = append(list, rpc.API{
-				Namespace: "overlay",
-				Public:    true,
-				Service:   OverlayAPI(overlayImpl),
-				Version:   "1.0",
-			})
 		}
 	}
 

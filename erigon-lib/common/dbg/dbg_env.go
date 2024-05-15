@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/c2h5oh/datasize"
 )
@@ -36,6 +35,9 @@ func EnvInt(envVarName string, defaultVal int) int {
 		if err != nil {
 			panic(err)
 		}
+		if i < 0 || i > 4 {
+			panic(i)
+		}
 		fmt.Printf("[dbg] env %s=%d\n", envVarName, i)
 		return i
 	}
@@ -49,20 +51,6 @@ func EnvDataSize(envVarName string, defaultVal datasize.ByteSize) datasize.ByteS
 			panic(err)
 		}
 		fmt.Printf("[dbg] env %s=%s\n", envVarName, val)
-		return val
-	}
-	return defaultVal
-}
-
-func EnvDuration(envVarName string, defaultVal time.Duration) time.Duration {
-	v, _ := os.LookupEnv(envVarName)
-	if v != "" {
-		fmt.Printf("[dbg] env %s=%s\n", envVarName, v)
-
-		val, err := time.ParseDuration(v)
-		if err != nil {
-			panic(err)
-		}
 		return val
 	}
 	return defaultVal

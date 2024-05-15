@@ -48,9 +48,7 @@ func MiningBorHeimdallForward(
 			"err", err,
 		)
 		dataflow.HeaderDownloadStates.AddChange(headerNum, dataflow.HeaderInvalidated)
-		if err := unwinder.UnwindTo(headerNum-1, ForkReset(hash), tx); err != nil {
-			return err
-		}
+		unwinder.UnwindTo(headerNum-1, ForkReset(hash))
 		return fmt.Errorf("mining on a wrong fork %d:%x", headerNum, hash)
 	}
 

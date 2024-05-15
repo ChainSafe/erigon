@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/RoaringBitmap/roaring"
-	bortypes "github.com/ledgerwatch/erigon/polygon/bor/types"
 
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
@@ -30,14 +29,19 @@ func (api *ErigonImpl) GetLogsByHash(ctx context.Context, hash common.Hash) ([][
 	}
 	defer tx.Rollback()
 
-	block, err := api.blockByHashWithSenders(ctx, tx, hash)
+	chainConfig, err := api.chainConfig(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := api.blockByHashWithSenders(tx, hash)
 	if err != nil {
 		return nil, err
 	}
 	if block == nil {
 		return nil, nil
 	}
-	receipts, err := api.getReceipts(ctx, tx, block, block.Body().SendersFromTxs())
+	receipts, err := api.getReceipts(ctx, tx, chainConfig, block, block.Body().SendersFromTxs())
 	if err != nil {
 		return nil, fmt.Errorf("getReceipts error: %w", err)
 	}
@@ -148,7 +152,6 @@ func (api *ErigonImpl) GetLogs(ctx context.Context, crit filters.FilterCriteria)
 			}
 			blockLogs = append(blockLogs, filtered...)
 		}
-		it.Close()
 		if len(blockLogs) == 0 {
 			continue
 		}
@@ -175,7 +178,7 @@ func (api *ErigonImpl) GetLogs(ctx context.Context, crit filters.FilterCriteria)
 			erigonLog.BlockNumber = blockNumber
 			erigonLog.BlockHash = blockHash
 			if log.TxIndex == uint(len(body.Transactions)) {
-				erigonLog.TxHash = bortypes.ComputeBorTxHash(blockNumber, blockHash)
+				erigonLog.TxHash = types.ComputeBorTxHash(blockNumber, blockHash)
 			} else {
 				erigonLog.TxHash = body.Transactions[log.TxIndex].Hash()
 			}
@@ -327,8 +330,8 @@ func (api *ErigonImpl) GetLatestLogs(ctx context.Context, crit filters.FilterCri
 			if logOptions.LogCount != 0 && logOptions.LogCount <= logCount {
 				break
 			}
+
 		}
-		it.Close()
 		blockCount++
 		if len(blockLogs) == 0 {
 			continue
@@ -357,7 +360,7 @@ func (api *ErigonImpl) GetLatestLogs(ctx context.Context, crit filters.FilterCri
 			erigonLog.BlockNumber = blockNumber
 			erigonLog.BlockHash = blockHash
 			if log.TxIndex == uint(len(body.Transactions)) {
-				erigonLog.TxHash = bortypes.ComputeBorTxHash(blockNumber, blockHash)
+				erigonLog.TxHash = types.ComputeBorTxHash(blockNumber, blockHash)
 			} else {
 				erigonLog.TxHash = body.Transactions[log.TxIndex].Hash()
 			}
@@ -406,18 +409,18 @@ func (api *ErigonImpl) GetBlockReceiptsByBlockHash(ctx context.Context, cannonic
 	if err != nil {
 		return nil, err
 	}
-	block, err := api.blockWithSenders(ctx, tx, cannonicalBlockHash, blockNum)
+	block, err := api.blockWithSenders(tx, cannonicalBlockHash, blockNum)
 	if err != nil {
 		return nil, err
 	}
 	if block == nil {
 		return nil, nil
 	}
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
-	receipts, err := api.getReceipts(ctx, tx, block, block.Body().SendersFromTxs())
+	receipts, err := api.getReceipts(ctx, tx, chainConfig, block, block.Body().SendersFromTxs())
 	if err != nil {
 		return nil, fmt.Errorf("getReceipts error: %w", err)
 	}

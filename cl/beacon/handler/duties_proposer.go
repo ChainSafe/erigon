@@ -27,11 +27,7 @@ func (a *ApiHandler) getDutiesProposer(w http.ResponseWriter, r *http.Request) (
 	if err != nil {
 		return nil, beaconhttp.NewEndpointError(http.StatusBadRequest, err)
 	}
-	s := a.syncedData.HeadState()
-	if s == nil {
-		return nil, beaconhttp.NewEndpointError(http.StatusServiceUnavailable, fmt.Errorf("node is syncing"))
-	}
-	dependentRoot := a.getDependentRoot(s, epoch)
+
 	if epoch < a.forkchoiceStore.FinalizedCheckpoint().Epoch() {
 		tx, err := a.indiciesDB.BeginRo(r.Context())
 		if err != nil {
@@ -60,11 +56,12 @@ func (a *ApiHandler) getDutiesProposer(w http.ResponseWriter, r *http.Request) (
 				Slot:           epoch*a.beaconChainCfg.SlotsPerEpoch + i,
 			}
 		}
-		return newBeaconResponse(duties).WithFinalized(true).WithVersion(a.beaconChainCfg.GetCurrentStateVersion(epoch)).With("dependent_root", dependentRoot), nil
+		return newBeaconResponse(duties).WithFinalized(true).WithVersion(a.beaconChainCfg.GetCurrentStateVersion(epoch)), nil
 	}
 
 	// We need to compute our duties
-	state := a.syncedData.HeadState()
+	state, cancel := a.syncedData.HeadState()
+	defer cancel()
 	if state == nil {
 		return nil, beaconhttp.NewEndpointError(http.StatusServiceUnavailable, fmt.Errorf("beacon node is syncing"))
 
@@ -122,5 +119,5 @@ func (a *ApiHandler) getDutiesProposer(w http.ResponseWriter, r *http.Request) (
 	}
 	wg.Wait()
 
-	return newBeaconResponse(duties).WithFinalized(false).WithVersion(a.beaconChainCfg.GetCurrentStateVersion(epoch)).With("dependent_root", dependentRoot), nil
+	return newBeaconResponse(duties).WithFinalized(false).WithVersion(a.beaconChainCfg.GetCurrentStateVersion(epoch)), nil
 }

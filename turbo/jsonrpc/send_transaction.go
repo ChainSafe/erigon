@@ -8,7 +8,7 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
-	txPoolProto "github.com/ledgerwatch/erigon-lib/gointerfaces/txpoolproto"
+	txPoolProto "github.com/ledgerwatch/erigon-lib/gointerfaces/txpool"
 
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
@@ -40,7 +40,7 @@ func (api *APIImpl) SendRawTransaction(ctx context.Context, encodedTx hexutility
 
 	defer tx.Rollback()
 
-	cc, err := api.chainConfig(ctx, tx)
+	cc, err := api.chainConfig(tx)
 	if err != nil {
 		return common.Hash{}, err
 	}

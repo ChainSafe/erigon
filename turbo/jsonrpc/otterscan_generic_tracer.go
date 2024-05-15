@@ -6,7 +6,6 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/erigon/cmd/state/exec3"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 	"github.com/ledgerwatch/log/v3"
@@ -27,7 +26,7 @@ type GenericTracer interface {
 func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, blockNum, txnID uint64, txIndex int, chainConfig *chain.Config, tracer GenericTracer) error {
 	if api.historyV3(dbtx) {
 		ttx := dbtx.(kv.TemporalTx)
-		executor := exec3.NewTraceWorker(ttx, chainConfig, api.engine(), api._blockReader, tracer)
+		executor := txnExecutor(ttx, chainConfig, api.engine(), api._blockReader, tracer)
 
 		// if block number changed, calculate all related field
 		header, err := api._blockReader.HeaderByNumber(ctx, ttx, blockNum)
@@ -38,7 +37,7 @@ func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, bloc
 			log.Warn("[rpc] header is nil", "blockNum", blockNum)
 			return nil
 		}
-		executor.ChangeBlock(header)
+		executor.changeBlock(header)
 
 		txn, err := api._txnReader.TxnByIdxInBlock(ctx, ttx, blockNum, txIndex)
 		if err != nil {
@@ -48,7 +47,7 @@ func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, bloc
 			log.Warn("[rpc genericTracer] tx is nil", "blockNum", blockNum, "txIndex", txIndex)
 			return nil
 		}
-		_, err = executor.ExecTxn(txnID, txIndex, txn)
+		_, _, err = executor.execTx(txnID, txIndex, txn)
 		if err != nil {
 			return err
 		}
@@ -75,7 +74,7 @@ func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, bloc
 		return h
 	}
 	engine := api.engine()
-	block, err := api.blockByNumberWithSenders(ctx, dbtx, blockNum)
+	block, err := api.blockByNumberWithSenders(dbtx, blockNum)
 	if err != nil {
 		return err
 	}

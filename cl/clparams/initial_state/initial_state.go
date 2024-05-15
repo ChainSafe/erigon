@@ -16,7 +16,7 @@ var sepoliaStateSSZ []byte
 
 // Return genesis state
 func GetGenesisState(network clparams.NetworkType) (*state.CachingBeaconState, error) {
-	_, config := clparams.GetConfigsByNetwork(network)
+	_, _, config := clparams.GetConfigsByNetwork(network)
 	returnState := state.New(config)
 
 	switch network {

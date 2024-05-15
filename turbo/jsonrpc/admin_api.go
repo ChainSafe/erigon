@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	"github.com/ledgerwatch/erigon/p2p"
 
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"

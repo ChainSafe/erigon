@@ -8,10 +8,6 @@ import (
 )
 
 func SetupBootnodesAccess(metricsMux *http.ServeMux, node *node.ErigonNode) {
-	if metricsMux == nil {
-		return
-	}
-
 	metricsMux.HandleFunc("/bootnodes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")

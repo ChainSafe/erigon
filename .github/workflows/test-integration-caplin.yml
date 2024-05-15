@@ -2,11 +2,13 @@ name: Consensus specification tests
 on:
   push:
     branches:
-      - main
+      - devel
+      - alpha
       - 'release/**'
   pull_request:
     branches:
-      - main
+      - devel
+      - alpha
       - 'release/**'
     types:
       - opened
@@ -18,7 +20,7 @@ jobs:
   tests:
     strategy:
       matrix:
-        #        disable macos-11 until https://github.com/ledgerwatch/erigon/issues/8789
+#        disable macos-11 until https://github.com/ledgerwatch/erigon/issues/8789
         os: [ ubuntu-22.04 ] # list of os: https://github.com/actions/virtual-environments
     runs-on: ${{ matrix.os }}
 
@@ -26,7 +28,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.20'
       - name: Install dependencies on Linux
         if: runner.os == 'Linux'
         run: sudo apt update && sudo apt install build-essential
@@ -44,7 +46,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.20'
 
       - uses: actions/cache@v3
         with:

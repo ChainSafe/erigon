@@ -5,6 +5,7 @@ import (
 
 	"github.com/ledgerwatch/erigon-lib/kv"
 
+	"github.com/ledgerwatch/erigon/cmd/utils"
 	"github.com/ledgerwatch/erigon/common/paths"
 )
 
@@ -49,6 +50,10 @@ func withCSBucket(cmd *cobra.Command) {
 
 func withIndexBucket(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&indexBucket, "index-bucket", kv.E2AccountsHistory, kv.E2AccountsHistory+" for account and "+kv.E2StorageHistory+" for storage")
+}
+
+func withSnapshotBlocks(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&snapshotsCli, "snapshots", true, utils.SnapshotFlag.Usage)
 }
 
 func withChain(cmd *cobra.Command) {

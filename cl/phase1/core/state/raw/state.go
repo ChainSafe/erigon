@@ -3,7 +3,6 @@ package raw
 import (
 	"encoding/json"
 	"strconv"
-	"sync"
 
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon/cl/clparams"
@@ -63,8 +62,6 @@ type BeaconState struct {
 	version      clparams.StateVersion // State version
 	beaconConfig *clparams.BeaconChainConfig
 	events       Events
-
-	mu sync.Mutex
 }
 
 func New(cfg *clparams.BeaconChainConfig) *BeaconState {

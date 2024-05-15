@@ -19,16 +19,16 @@ package types
 import (
 	"bytes"
 	"fmt"
-	"io"
-
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
+	"io"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/types/clonable"
+
 	"github.com/ledgerwatch/erigon/rlp"
 )
 
-//go:generate gencodec -type Withdrawal -field-override withdrawalMarshaling -out gen_withdrawal_json.go
+//go:generate go run github.com/fjl/gencodec -type Withdrawal -field-override withdrawalMarshaling -out gen_withdrawal_json.go
 
 // Withdrawal represents a validator withdrawal from the consensus layer.
 // See EIP-4895: Beacon chain push withdrawals as operations.

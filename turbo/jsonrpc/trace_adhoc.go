@@ -781,13 +781,13 @@ func (api *TraceAPIImpl) ReplayTransaction(ctx context.Context, txHash libcommon
 		return nil, err
 	}
 	defer tx.Rollback()
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
 
 	var isBorStateSyncTxn bool
-	blockNum, ok, err := api.txnLookup(ctx, tx, txHash)
+	blockNum, ok, err := api.txnLookup(tx, txHash)
 	if err != nil {
 		return nil, err
 	}
@@ -808,7 +808,7 @@ func (api *TraceAPIImpl) ReplayTransaction(ctx context.Context, txHash libcommon
 		isBorStateSyncTxn = true
 	}
 
-	block, err := api.blockByNumberWithSenders(ctx, tx, blockNum)
+	block, err := api.blockByNumberWithSenders(tx, blockNum)
 	if err != nil {
 		return nil, err
 	}
@@ -881,7 +881,7 @@ func (api *TraceAPIImpl) ReplayBlockTransactions(ctx context.Context, blockNrOrH
 		return nil, err
 	}
 	defer tx.Rollback()
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -892,7 +892,7 @@ func (api *TraceAPIImpl) ReplayBlockTransactions(ctx context.Context, blockNrOrH
 	}
 
 	// Extract transactions from block
-	block, bErr := api.blockWithSenders(ctx, tx, blockHash, blockNumber)
+	block, bErr := api.blockWithSenders(tx, blockHash, blockNumber)
 	if bErr != nil {
 		return nil, bErr
 	}
@@ -950,7 +950,7 @@ func (api *TraceAPIImpl) Call(ctx context.Context, args TraceCallParam, traceTyp
 	}
 	defer tx.Rollback()
 
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -973,7 +973,7 @@ func (api *TraceAPIImpl) Call(ctx context.Context, args TraceCallParam, traceTyp
 
 	ibs := state.New(stateReader)
 
-	block, err := api.blockWithSenders(ctx, tx, hash, blockNumber)
+	block, err := api.blockWithSenders(tx, hash, blockNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -1152,7 +1152,7 @@ func (api *TraceAPIImpl) CallMany(ctx context.Context, calls json.RawMessage, pa
 	}
 
 	// TODO: can read here only parent header
-	parentBlock, err := api.blockWithSenders(ctx, dbtx, hash, blockNumber)
+	parentBlock, err := api.blockWithSenders(dbtx, hash, blockNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -1187,7 +1187,7 @@ func (api *TraceAPIImpl) CallMany(ctx context.Context, calls json.RawMessage, pa
 func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, txns []types.Transaction, msgs []types.Message, callParams []TraceCallParam,
 	parentNrOrHash *rpc.BlockNumberOrHash, header *types.Header, gasBailout bool, txIndexNeeded int,
 ) ([]*TraceCallResult, *state.IntraBlockState, error) {
-	chainConfig, err := api.chainConfig(ctx, dbtx)
+	chainConfig, err := api.chainConfig(dbtx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1212,12 +1212,9 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, txns []type
 	ibs := state.New(cachedReader)
 
 	// TODO: can read here only parent header
-	parentBlock, err := api.blockWithSenders(ctx, dbtx, hash, blockNumber)
+	parentBlock, err := api.blockWithSenders(dbtx, hash, blockNumber)
 	if err != nil {
 		return nil, nil, err
-	}
-	if parentBlock == nil {
-		return nil, nil, fmt.Errorf("parent block %d(%x) not found", blockNumber, hash)
 	}
 	parentHeader := parentBlock.Header()
 	if parentHeader == nil {
@@ -1342,19 +1339,19 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, txns []type
 			evm := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
 			gp := new(core.GasPool).AddGas(msg.Gas()).AddBlobGas(msg.BlobGas())
 
-			if tracer != nil && tracer.Hooks.OnTxStart != nil {
-				tracer.Hooks.OnTxStart(evm.GetVMContext(), txns[txIndex], msg.From())
+			if tracer != nil && tracer.OnTxStart != nil {
+				tracer.OnTxStart(evm.GetVMContext(), txns[txIndex], msg.From())
 			}
 			execResult, err = core.ApplyMessage(evm, msg, gp, true /* refunds */, gasBailout /* gasBailout */)
 		}
 		if err != nil {
-			if tracer != nil && tracer.Hooks.OnTxEnd != nil {
-				tracer.Hooks.OnTxEnd(nil, err)
+			if tracer != nil && tracer.OnTxEnd != nil {
+				tracer.OnTxEnd(nil, err)
 			}
 			return nil, nil, fmt.Errorf("first run for txIndex %d error: %w", txIndex, err)
 		}
-		if tracer != nil && tracer.Hooks.OnTxEnd != nil {
-			tracer.Hooks.OnTxEnd(&types.Receipt{GasUsed: execResult.UsedGas}, nil)
+		if tracer != nil && tracer.OnTxEnd != nil {
+			tracer.OnTxEnd(&types.Receipt{GasUsed: execResult.UsedGas}, nil)
 		}
 
 		chainRules := chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Time)

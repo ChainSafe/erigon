@@ -20,9 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
+	"math/big"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/length"

@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"sync"
 	"time"
 
 	"github.com/ledgerwatch/erigon/cl/phase1/core/state/lru"
@@ -13,7 +12,7 @@ var operationsMultiplier = 20 // Cap the amount of cached element to max_operati
 
 type OperationPool[K comparable, T any] struct {
 	pool         *lru.Cache[K, T] // Map the Signature to the underlying object
-	recentlySeen sync.Map         // map from K to time.Time
+	recentlySeen map[K]time.Time
 	lastPruned   time.Time
 }
 
@@ -24,23 +23,26 @@ func NewOperationPool[K comparable, T any](maxOperationsPerBlock int, matricName
 	}
 	return &OperationPool[K, T]{
 		pool:         pool,
-		recentlySeen: sync.Map{},
+		recentlySeen: make(map[K]time.Time),
 	}
 }
 
 func (o *OperationPool[K, T]) Insert(k K, operation T) {
-	if _, ok := o.recentlySeen.Load(k); ok {
+	if _, ok := o.recentlySeen[k]; ok {
 		return
 	}
 	o.pool.Add(k, operation)
-	o.recentlySeen.Store(k, time.Now())
+	o.recentlySeen[k] = time.Now()
 	if time.Since(o.lastPruned) > lifeSpan {
-		o.recentlySeen.Range(func(k, v interface{}) bool {
-			if time.Since(v.(time.Time)) > lifeSpan {
-				o.recentlySeen.Delete(k)
+		deleteList := make([]K, 0, len(o.recentlySeen))
+		for k, t := range o.recentlySeen {
+			if time.Since(t) > lifeSpan {
+				deleteList = append(deleteList, k)
 			}
-			return true
-		})
+		}
+		for _, k := range deleteList {
+			delete(o.recentlySeen, k)
+		}
 		o.lastPruned = time.Now()
 	}
 }
@@ -55,8 +57,4 @@ func (o *OperationPool[K, T]) Has(k K) (hash bool) {
 
 func (o *OperationPool[K, T]) Raw() []T {
 	return o.pool.Values()
-}
-
-func (o *OperationPool[K, T]) Get(k K) (T, bool) {
-	return o.pool.Get(k)
 }

@@ -70,7 +70,8 @@ func (a *ApiHandler) getCommittees(w http.ResponseWriter, r *http.Request) (*bea
 	isFinalized := slot <= a.forkchoiceStore.FinalizedSlot()
 	if a.forkchoiceStore.LowestAvaiableSlot() <= slot {
 		// non-finality case
-		s := a.syncedData.HeadState()
+		s, cn := a.syncedData.HeadState()
+		defer cn()
 		if s == nil {
 			return nil, beaconhttp.NewEndpointError(http.StatusServiceUnavailable, fmt.Errorf("node is syncing"))
 		}

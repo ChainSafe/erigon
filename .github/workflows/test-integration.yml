@@ -2,16 +2,9 @@ name: Integration tests
 on:
   push:
     branches:
-      - main
+      - devel
+      - alpha
       - 'release/**'
-  pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - ready_for_review
   schedule:
     - cron: '20 16 * * *' # daily at 16:20 UTC
   workflow_dispatch:
@@ -31,7 +24,7 @@ jobs:
       - run: git submodule update --init --recursive --force
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.20'
       - name: Install dependencies on Linux
         if: runner.os == 'Linux'
         run: sudo apt update && sudo apt install build-essential
@@ -44,6 +37,9 @@ jobs:
           GIT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: make test-erigon-ext GIT_COMMIT=$GIT_COMMIT
 
+  #        name: history-v3-test-integration
+  #        run: make test3-integration
+
   tests-windows:
     strategy:
       matrix:
@@ -55,7 +51,7 @@ jobs:
       - run: git submodule update --init --recursive --force
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.20'
 
       - uses: actions/cache@v3
         with:

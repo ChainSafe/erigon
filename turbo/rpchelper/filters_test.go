@@ -6,9 +6,9 @@ import (
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 
-	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/typesproto"
+	types2 "github.com/ledgerwatch/erigon-lib/gointerfaces/types"
 
 	"github.com/ledgerwatch/erigon/eth/filters"
 	"github.com/ledgerwatch/log/v3"

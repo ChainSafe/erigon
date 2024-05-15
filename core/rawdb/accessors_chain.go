@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -30,8 +29,6 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	"github.com/gballet/go-verkle"
-	"github.com/ledgerwatch/log/v3"
-
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/cmp"
 	"github.com/ledgerwatch/erigon-lib/common/dbg"
@@ -39,10 +36,10 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/length"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
+	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/ethdb/cbor"
-	"github.com/ledgerwatch/erigon/polygon/heimdall"
 	"github.com/ledgerwatch/erigon/rlp"
 )
 
@@ -149,8 +146,6 @@ func WriteHeaderNumber(db kv.Putter, hash common.Hash, number uint64) error {
 }
 
 // ReadHeadHeaderHash retrieves the hash of the current canonical head header.
-// It is updated in stage_headers, updateForkChoice.
-// See: ReadHeadBlockHash
 func ReadHeadHeaderHash(db kv.Getter) common.Hash {
 	data, err := db.GetOne(kv.HeadHeaderKey, []byte(kv.HeadHeaderKey))
 	if err != nil {
@@ -163,8 +158,6 @@ func ReadHeadHeaderHash(db kv.Getter) common.Hash {
 }
 
 // WriteHeadHeaderHash stores the hash of the current canonical head header.
-// It is updated in stage_headers, updateForkChoice.
-// See: WriteHeadBlockHash
 func WriteHeadHeaderHash(db kv.Putter, hash common.Hash) error {
 	if err := db.Put(kv.HeadHeaderKey, []byte(kv.HeadHeaderKey), hash.Bytes()); err != nil {
 		return fmt.Errorf("failed to store last header's hash: %w", err)
@@ -172,9 +165,7 @@ func WriteHeadHeaderHash(db kv.Putter, hash common.Hash) error {
 	return nil
 }
 
-// ReadHeadBlockHash retrieves the hash of the current canonical head header for which its block body is known.
-// It is updated in stage_finish.
-// See: kv.HeadBlockKey
+// ReadHeadBlockHash retrieves the hash of the current canonical head block.
 func ReadHeadBlockHash(db kv.Getter) common.Hash {
 	data, err := db.GetOne(kv.HeadBlockKey, []byte(kv.HeadBlockKey))
 	if err != nil {
@@ -186,9 +177,7 @@ func ReadHeadBlockHash(db kv.Getter) common.Hash {
 	return common.BytesToHash(data)
 }
 
-// WriteHeadBlockHash stores the hash of the current canonical head header for which its block body is known.
-// It is updated in stage_finish.
-// See: kv.HeadBlockKey
+// WriteHeadBlockHash stores the head block's hash.
 func WriteHeadBlockHash(db kv.Putter, hash common.Hash) {
 	if err := db.Put(kv.HeadBlockKey, []byte(kv.HeadBlockKey), hash.Bytes()); err != nil {
 		log.Crit("Failed to store last block's hash", "err", err)
@@ -286,9 +275,6 @@ func ReadCurrentBlockNumber(db kv.Getter) *uint64 {
 	return ReadHeaderNumber(db, headHash)
 }
 
-// ReadCurrentHeader reads the current canonical head header.
-// It is updated in stage_headers, updateForkChoice.
-// See: ReadHeadHeaderHash, ReadCurrentHeaderHavingBody
 func ReadCurrentHeader(db kv.Getter) *types.Header {
 	headHash := ReadHeadHeaderHash(db)
 	headNumber := ReadHeaderNumber(db, headHash)
@@ -298,29 +284,27 @@ func ReadCurrentHeader(db kv.Getter) *types.Header {
 	return ReadHeader(db, headHash, *headNumber)
 }
 
-// ReadCurrentHeaderHavingBody reads the current canonical head header for which its block body is known.
-// It is updated in stage_finish.
-// See: ReadHeadBlockHash, ReadCurrentHeader
-func ReadCurrentHeaderHavingBody(db kv.Getter) *types.Header {
-	headHash := ReadHeadBlockHash(db)
-	headNumber := ReadHeaderNumber(db, headHash)
-	if headNumber == nil {
-		return nil
+func ReadHeadersByNumber(db kv.Tx, number uint64) ([]*types.Header, error) {
+	var res []*types.Header
+	c, err := db.Cursor(kv.Headers)
+	if err != nil {
+		return nil, err
 	}
-	return ReadHeader(db, headHash, *headNumber)
-}
-
-func ReadHeadersByNumber(db kv.Getter, number uint64) (res []*types.Header, err error) {
+	defer c.Close()
 	prefix := hexutility.EncodeTs(number)
-	if err = db.ForPrefix(kv.Headers, prefix, func(k, v []byte) error {
+	for k, v, err := c.Seek(prefix); k != nil; k, v, err = c.Next() {
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.HasPrefix(k, prefix) {
+			break
+		}
+
 		header := new(types.Header)
 		if err := rlp.Decode(bytes.NewReader(v), header); err != nil {
-			return fmt.Errorf("invalid block header RLP: hash=%x, err=%w", k[8:], err)
+			return nil, fmt.Errorf("invalid block header RLP: hash=%x, err=%w", k[8:], err)
 		}
 		res = append(res, header)
-		return nil
-	}); err != nil {
-		return nil, err
 	}
 	return res, nil
 }
@@ -431,7 +415,7 @@ func CanonicalTransactions(db kv.Getter, baseTxId uint64, amount uint32) ([]type
 	i := uint32(0)
 	if err := db.ForAmount(kv.EthTx, hexutility.EncodeTs(baseTxId), amount, func(k, v []byte) error {
 		var decodeErr error
-		if txs[i], decodeErr = types.UnmarshalTransactionFromBinary(v, false /* blobTxnsAreWrappedWithBlobs */); decodeErr != nil {
+		if txs[i], decodeErr = types.UnmarshalTransactionFromBinary(v); decodeErr != nil {
 			return decodeErr
 		}
 		i++
@@ -706,7 +690,7 @@ func DeleteBody(db kv.Deleter, hash common.Hash, number uint64) {
 }
 
 func AppendCanonicalTxNums(tx kv.RwTx, from uint64) (err error) {
-	nextBaseTxNum := 0
+	nextBaseTxNum := -1
 	if from > 0 {
 		nextBaseTxNumFromDb, err := rawdbv3.TxNums.Max(tx, from-1)
 		if err != nil {
@@ -814,7 +798,6 @@ func ReadRawReceipts(db kv.Tx, blockNum uint64) types.Receipts {
 		log.Error("logs fetching failed", "err", err)
 		return nil
 	}
-	defer it.Close()
 	for it.HasNext() {
 		k, v, err := it.Next()
 		if err != nil {
@@ -930,7 +913,7 @@ func AppendReceipts(tx kv.StatelessWriteTx, blockNumber uint64, receipts types.R
 	return nil
 }
 
-// TruncateReceipts removes all receipt for given block number or newer - used for Unwind
+// TruncateReceipts removes all receipt for given block number or newer
 func TruncateReceipts(db kv.RwTx, number uint64) error {
 	if err := db.ForEach(kv.Receipts, hexutility.EncodeTs(number), func(k, _ []byte) error {
 		return db.Delete(kv.Receipts, k)
@@ -1138,57 +1121,6 @@ func PruneBorBlocks(tx kv.RwTx, blockTo uint64, blocksDeleteLimit int, SpanIdAt 
 		}
 		counter--
 	}
-
-	checkpointCursor, err := tx.RwCursor(kv.BorCheckpoints)
-	if err != nil {
-		return err
-	}
-
-	defer checkpointCursor.Close()
-	lastCheckpointToRemove, err := heimdall.CheckpointIdAt(tx, blockTo)
-
-	if err != nil {
-		return err
-	}
-
-	var checkpointIdBytes [8]byte
-	binary.BigEndian.PutUint64(checkpointIdBytes[:], uint64(lastCheckpointToRemove))
-	for k, _, err := checkpointCursor.Seek(checkpointIdBytes[:]); err == nil && k != nil; k, _, err = checkpointCursor.Prev() {
-		if err = checkpointCursor.DeleteCurrent(); err != nil {
-			return err
-		}
-	}
-
-	milestoneCursor, err := tx.RwCursor(kv.BorMilestones)
-
-	if err != nil {
-		return err
-	}
-
-	defer milestoneCursor.Close()
-
-	var lastMilestoneToRemove heimdall.MilestoneId
-
-	for blockCount := 1; err != nil && blockCount < blocksDeleteLimit; blockCount++ {
-		lastMilestoneToRemove, err = heimdall.MilestoneIdAt(tx, blockTo-uint64(blockCount))
-
-		if !errors.Is(err, heimdall.ErrMilestoneNotFound) {
-			return err
-		} else {
-			if blockCount == blocksDeleteLimit-1 {
-				return nil
-			}
-		}
-	}
-
-	var milestoneIdBytes [8]byte
-	binary.BigEndian.PutUint64(milestoneIdBytes[:], uint64(lastMilestoneToRemove))
-	for k, _, err := milestoneCursor.Seek(milestoneIdBytes[:]); err == nil && k != nil; k, _, err = milestoneCursor.Prev() {
-		if err = milestoneCursor.DeleteCurrent(); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -1281,17 +1213,6 @@ func ReadHeaderByNumber(db kv.Getter, number uint64) *types.Header {
 	}
 
 	return ReadHeader(db, hash, number)
-}
-
-func ReadFirstNonGenesisHeaderNumber(tx kv.Tx) (uint64, bool, error) {
-	v, err := rawdbv3.SecondKey(tx, kv.Headers)
-	if err != nil {
-		return 0, false, err
-	}
-	if len(v) == 0 {
-		return 0, false, nil
-	}
-	return binary.BigEndian.Uint64(v), true, nil
 }
 
 func ReadHeaderByHash(db kv.Getter, hash common.Hash) (*types.Header, error) {

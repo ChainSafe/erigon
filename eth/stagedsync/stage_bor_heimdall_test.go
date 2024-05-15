@@ -235,7 +235,6 @@ func TestBorHeimdallForwardErrHeaderValidatorsBytesMismatch(t *testing.T) {
 
 func TestBorHeimdallForwardDetectsUnauthorizedSignerError(t *testing.T) {
 	t.Parallel()
-	t.Skip("fixme(?) in ci plz")
 
 	ctx := context.Background()
 	numBlocks := 312

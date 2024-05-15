@@ -1,12 +1,9 @@
 package engine_block_downloader
 
 import (
-	"context"
 	"fmt"
 	"runtime"
 	"time"
-
-	"github.com/ledgerwatch/log/v3"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/dbg"
@@ -15,10 +12,11 @@ import (
 	"github.com/ledgerwatch/erigon/dataflow"
 	"github.com/ledgerwatch/erigon/eth/stagedsync/stages"
 	"github.com/ledgerwatch/erigon/turbo/stages/bodydownload"
+	"github.com/ledgerwatch/log/v3"
 )
 
 // downloadBodies executes bodies download.
-func (e *EngineBlockDownloader) downloadAndLoadBodiesSyncronously(ctx context.Context, tx kv.RwTx, fromBlock, toBlock uint64) (err error) {
+func (e *EngineBlockDownloader) downloadAndLoadBodiesSyncronously(tx kv.RwTx, fromBlock, toBlock uint64) (err error) {
 	headerProgress := toBlock
 	bodyProgress := fromBlock - 1
 
@@ -82,7 +80,7 @@ func (e *EngineBlockDownloader) downloadAndLoadBodiesSyncronously(ctx context.Co
 			sentToPeer = false
 			if req != nil {
 				start = time.Now()
-				peer, sentToPeer = e.bodyReqSend(ctx, req)
+				peer, sentToPeer = e.bodyReqSend(e.ctx, req)
 				d2 += time.Since(start)
 			}
 			if req != nil && sentToPeer {
@@ -154,7 +152,7 @@ func (e *EngineBlockDownloader) downloadAndLoadBodiesSyncronously(ctx context.Co
 		timer.Stop()
 		timer = time.NewTimer(1 * time.Second)
 		select {
-		case <-ctx.Done():
+		case <-e.ctx.Done():
 			stopped = true
 		case <-logEvery.C:
 			deliveredCount, wastedCount := e.bd.DeliveryCounts()

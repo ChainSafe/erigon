@@ -44,6 +44,7 @@ func (arr *hashList) UnmarshalJSON(buf []byte) error {
 		return err
 	}
 	arr.Clear()
+	arr.l = len(list)
 	for _, elem := range list {
 		arr.Append(elem)
 	}

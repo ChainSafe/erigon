@@ -11,10 +11,12 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
+	"github.com/ledgerwatch/erigon/cl/persistence"
 	"github.com/ledgerwatch/erigon/cl/persistence/beacon_indicies"
 	state_accessors "github.com/ledgerwatch/erigon/cl/persistence/state"
 	"github.com/ledgerwatch/erigon/cl/phase1/core/state"
 	"github.com/ledgerwatch/erigon/cl/utils"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,27 +50,20 @@ var phase0_post_state_ssz_snappy []byte
 var bellatrixFS embed.FS
 
 type MockBlockReader struct {
-	U map[uint64]*cltypes.SignedBeaconBlock
+	u map[uint64]*cltypes.SignedBeaconBlock
 }
 
 func NewMockBlockReader() *MockBlockReader {
-	return &MockBlockReader{U: make(map[uint64]*cltypes.SignedBeaconBlock)}
+	return &MockBlockReader{u: make(map[uint64]*cltypes.SignedBeaconBlock)}
 }
 
 func (m *MockBlockReader) ReadBlockBySlot(ctx context.Context, tx kv.Tx, slot uint64) (*cltypes.SignedBeaconBlock, error) {
-	return m.U[slot], nil
-}
-
-func (m *MockBlockReader) ReadBlindedBlockBySlot(ctx context.Context, tx kv.Tx, slot uint64) (*cltypes.SignedBlindedBeaconBlock, error) {
-	if m.U[slot] == nil {
-		return nil, nil
-	}
-	return m.U[slot].Blinded()
+	return m.u[slot], nil
 }
 
 func (m *MockBlockReader) ReadBlockByRoot(ctx context.Context, tx kv.Tx, blockRoot libcommon.Hash) (*cltypes.SignedBeaconBlock, error) {
 	// do a linear search
-	for _, v := range m.U {
+	for _, v := range m.u {
 		r, err := v.Block.HashSSZ()
 		if err != nil {
 			return nil, err
@@ -95,21 +90,25 @@ func (m *MockBlockReader) FrozenSlots() uint64 {
 	panic("implement me")
 }
 
-func LoadChain(blocks []*cltypes.SignedBeaconBlock, s *state.CachingBeaconState, db kv.RwDB, t *testing.T) *MockBlockReader {
+func LoadChain(blocks []*cltypes.SignedBeaconBlock, s *state.CachingBeaconState, db kv.RwDB, t *testing.T) (*MockBlockReader, afero.Fs) {
 	tx, err := db.BeginRw(context.Background())
 	require.NoError(t, err)
 	defer tx.Rollback()
+	fs := afero.NewMemMapFs()
+	bs := persistence.NewAferoRawBlockSaver(fs, &clparams.MainnetBeaconConfig)
+	source := persistence.NewBeaconChainDatabaseFilesystem(bs, nil, &clparams.MainnetBeaconConfig)
 
 	m := NewMockBlockReader()
 	for _, block := range blocks {
-		m.U[block.Block.Slot] = block
-		require.NoError(t, beacon_indicies.WriteBeaconBlockAndIndicies(context.Background(), tx, block, true))
+		m.u[block.Block.Slot] = block
+
+		require.NoError(t, source.WriteBlock(context.Background(), tx, block, true))
 		require.NoError(t, beacon_indicies.WriteHighestFinalized(tx, block.Block.Slot+64))
 	}
 	require.NoError(t, state_accessors.InitializeStaticTables(tx, s))
 
 	require.NoError(t, tx.Commit())
-	return m
+	return m, fs
 }
 
 func GetCapellaRandom() ([]*cltypes.SignedBeaconBlock, *state.CachingBeaconState, *state.CachingBeaconState) {

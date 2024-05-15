@@ -8,7 +8,7 @@ import (
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	proto_txpool "github.com/ledgerwatch/erigon-lib/gointerfaces/txpoolproto"
+	proto_txpool "github.com/ledgerwatch/erigon-lib/gointerfaces/txpool"
 	"github.com/ledgerwatch/erigon-lib/kv"
 
 	"github.com/ledgerwatch/erigon/core/rawdb"
@@ -82,7 +82,7 @@ func (api *TxPoolAPIImpl) Content(ctx context.Context) (map[string]map[string]ma
 		return nil, err
 	}
 	defer tx.Rollback()
-	cc, err := api.chainConfig(ctx, tx)
+	cc, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func (api *TxPoolAPIImpl) ContentFrom(ctx context.Context, addr libcommon.Addres
 		return nil, err
 	}
 	defer tx.Rollback()
-	cc, err := api.chainConfig(ctx, tx)
+	cc, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}

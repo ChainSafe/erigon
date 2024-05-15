@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/pprof"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -24,17 +23,18 @@ import (
 	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/log/v3"
+	"golang.org/x/exp/slices"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon-lib/common/length"
+	"github.com/ledgerwatch/erigon-lib/compress"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon-lib/kv/temporal/historyv2"
 	"github.com/ledgerwatch/erigon-lib/recsplit"
 	"github.com/ledgerwatch/erigon-lib/recsplit/eliasfano32"
-	"github.com/ledgerwatch/erigon-lib/seg"
 
 	hackdb "github.com/ledgerwatch/erigon/cmd/hack/db"
 	"github.com/ledgerwatch/erigon/cmd/hack/flow"
@@ -1271,7 +1271,7 @@ func iterate(filename string, prefix string) error {
 	efFilename := filename + ".ef"
 	viFilename := filename + ".vi"
 	vFilename := filename + ".v"
-	efDecomp, err := seg.NewDecompressor(efFilename)
+	efDecomp, err := compress.NewDecompressor(efFilename)
 	if err != nil {
 		return err
 	}
@@ -1282,7 +1282,7 @@ func iterate(filename string, prefix string) error {
 	}
 	defer viIndex.Close()
 	r := recsplit.NewIndexReader(viIndex)
-	vDecomp, err := seg.NewDecompressor(vFilename)
+	vDecomp, err := compress.NewDecompressor(vFilename)
 	if err != nil {
 		return err
 	}
@@ -1298,16 +1298,10 @@ func iterate(filename string, prefix string) error {
 			fmt.Printf("[%x] =>", key)
 			cnt := 0
 			for efIt.HasNext() {
-				txNum, err := efIt.Next()
-				if err != nil {
-					return err
-				}
+				txNum, _ := efIt.Next()
 				var txKey [8]byte
 				binary.BigEndian.PutUint64(txKey[:], txNum)
-				offset, ok := r.Lookup2(txKey[:], key)
-				if !ok {
-					continue
-				}
+				offset := r.Lookup2(txKey[:], key)
 				gv.Reset(offset)
 				v, _ := gv.Next(nil)
 				fmt.Printf(" %d", txNum)
@@ -1329,7 +1323,7 @@ func iterate(filename string, prefix string) error {
 }
 
 func readSeg(chaindata string) error {
-	vDecomp, err := seg.NewDecompressor(chaindata)
+	vDecomp, err := compress.NewDecompressor(chaindata)
 	if err != nil {
 		return err
 	}

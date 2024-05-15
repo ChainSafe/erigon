@@ -21,7 +21,7 @@ func TestUpgradeAndExpectedWithdrawals(t *testing.T) {
 	require.NoError(t, s.UpgradeToCapella())
 	require.NoError(t, s.UpgradeToDeneb())
 	// now WITHDRAWAAALLLLSSSS
-	w := ExpectedWithdrawals(s, Epoch(s))
+	w := ExpectedWithdrawals(s)
 	assert.Empty(t, w)
 
 }

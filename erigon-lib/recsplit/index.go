@@ -19,14 +19,12 @@ package recsplit
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"math/bits"
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -38,36 +36,6 @@ import (
 	"github.com/ledgerwatch/erigon-lib/recsplit/eliasfano16"
 	"github.com/ledgerwatch/erigon-lib/recsplit/eliasfano32"
 )
-
-type Features byte
-
-const (
-	No Features = 0b0
-
-	// Enums - To build 2-lvl index with perfect hash table pointing to enumeration and enumeration pointing to offsets
-	Enums Features = 0b1
-	// LessFalsePositives - Reduce false-positives to 1/256=0.4% in cost of 1byte per key
-	// Implementation:
-	//   PerfectHashMap - does false-positives if unknown key is requested. But "false-positives itself" is not a problem.
-	//   Problem is "nature of false-positives" - they are randomly/smashed across .seg files.
-	//   It makes .seg files "warm" - which is bad because they are big and
-	//      data-locality of touches is bad (and maybe need visit a lot of shards to find key).
-	//   Can add build-in "existence filter" (like bloom/cucko/ribbon/xor-filter/fuse-filter) it will improve
-	//      data-locality - filters are small-enough and existance-chekcs will be co-located on disk.
-	//   But there are 2 additional properties we have in our data:
-	//      "keys are known", "keys are hashed" (.idx works on murmur3), ".idx can calc key-number by key".
-	//   It means: if we rely on this properties then we can do better than general-purpose-existance-filter.
-	//   Seems just an "array of 1-st bytes of key-hashes" is great alternative:
-	//      general-purpose-filter: 9bits/key, 0.3% false-positives, 3 mem access
-	//      first-bytes-array: 8bits/key, 1/256=0.4% false-positives, 1 mem access
-	//
-	// See also: https://github.com/ledgerwatch/erigon/issues/9486
-	LessFalsePositives Features = 0b10 //
-)
-
-// SupportedFeaturs - if see feature not from this list (likely after downgrade) - return IncompatibleErr and recommend for user manually delete file
-var SupportedFeatures = []Features{Enums, LessFalsePositives}
-var IncompatibleErr = errors.New("incompatible. can re-build such files by command 'erigon snapshots index'")
 
 // Index implements index lookup from the file created by the RecSplit
 type Index struct {
@@ -96,11 +64,7 @@ type Index struct {
 	primaryAggrBound   uint16 // The lower bound for primary key aggregation (computed from leafSize)
 	enums              bool
 
-	lessFalsePositives bool
-	existence          []byte
-
-	readers         *sync.Pool
-	readAheadRefcnt atomic.Int32 // ref-counter: allow enable/disable read-ahead from goroutines. only when refcnt=0 - disable read-ahead once
+	readers *sync.Pool
 }
 
 func MustOpen(indexFile string) *Index {
@@ -142,7 +106,7 @@ func OpenIndex(indexFilePath string) (*Index, error) {
 	offset := 16 + 1 + int(idx.keyCount)*idx.bytesPerRec
 
 	if offset < 0 {
-		return nil, fmt.Errorf("file %s %w. offset is: %d which is below zero", fName, IncompatibleErr, offset)
+		return nil, fmt.Errorf("offset is: %d which is below zero, the file: %s is broken", offset, indexFilePath)
 	}
 
 	// Bucket count, bucketSize, leafSize
@@ -169,28 +133,12 @@ func OpenIndex(indexFilePath string) (*Index, error) {
 		idx.startSeed[i] = binary.BigEndian.Uint64(idx.data[offset:])
 		offset += 8
 	}
-	features := Features(idx.data[offset])
-	if err := onlyKnownFeatures(features); err != nil {
-		return nil, fmt.Errorf("file %s %w", fName, err)
-	}
-
-	idx.enums = features&Enums != No
-	idx.lessFalsePositives = features&LessFalsePositives != No
+	idx.enums = idx.data[offset] != 0
 	offset++
-	if idx.enums && idx.keyCount > 0 {
+	if idx.enums {
 		var size int
 		idx.offsetEf, size = eliasfano32.ReadEliasFano(idx.data[offset:])
 		offset += size
-
-		if idx.lessFalsePositives {
-			arrSz := binary.BigEndian.Uint64(idx.data[offset:])
-			offset += 8
-			if arrSz != idx.keyCount {
-				return nil, fmt.Errorf("%w. size of existence filter %d != keys count %d", IncompatibleErr, arrSz, idx.keyCount)
-			}
-			idx.existence = idx.data[offset : offset+int(arrSz)]
-			offset += int(arrSz)
-		}
 	}
 	// Size of golomb rice params
 	golombParamSize := binary.BigEndian.Uint16(idx.data[offset:])
@@ -219,16 +167,6 @@ func OpenIndex(indexFilePath string) (*Index, error) {
 		},
 	}
 	return idx, nil
-}
-
-func onlyKnownFeatures(features Features) error {
-	for _, f := range SupportedFeatures {
-		features = features &^ f
-	}
-	if features != No {
-		return fmt.Errorf("%w. unknown features bitmap: %b", IncompatibleErr, features)
-	}
-	return nil
 }
 
 func (idx *Index) DataHandle() unsafe.Pointer {
@@ -281,13 +219,13 @@ func (idx *Index) KeyCount() uint64 {
 }
 
 // Lookup is not thread-safe because it used id.hasher
-func (idx *Index) Lookup(bucketHash, fingerprint uint64) (uint64, bool) {
+func (idx *Index) Lookup(bucketHash, fingerprint uint64) uint64 {
 	if idx.keyCount == 0 {
 		_, fName := filepath.Split(idx.filePath)
 		panic("no Lookup should be done when keyCount==0, please use Empty function to guard " + fName)
 	}
 	if idx.keyCount == 1 {
-		return 0, true
+		return 0
 	}
 	var gr GolombRiceReader
 	gr.data = idx.grData
@@ -344,11 +282,7 @@ func (idx *Index) Lookup(bucketHash, fingerprint uint64) (uint64, bool) {
 	rec := int(cumKeys) + int(remap16(remix(fingerprint+idx.startSeed[level]+b), m))
 	pos := 1 + 8 + idx.bytesPerRec*(rec+1)
 
-	found := binary.BigEndian.Uint64(idx.data[pos:]) & idx.recMask
-	if idx.lessFalsePositives {
-		return found, idx.existence[found] == byte(bucketHash)
-	}
-	return found, true
+	return binary.BigEndian.Uint64(idx.data[pos:]) & idx.recMask
 }
 
 // OrdinalLookup returns the offset of i-th element in the index
@@ -356,13 +290,6 @@ func (idx *Index) Lookup(bucketHash, fingerprint uint64) (uint64, bool) {
 // Elias-Fano structure containing all offsets.
 func (idx *Index) OrdinalLookup(i uint64) uint64 {
 	return idx.offsetEf.Get(i)
-}
-
-func (idx *Index) Has(bucketHash, i uint64) bool {
-	if idx.lessFalsePositives {
-		return idx.existence[i] == byte(bucketHash)
-	}
-	return true
 }
 
 func (idx *Index) ExtractOffsets() map[uint64]uint64 {
@@ -422,20 +349,17 @@ func (idx *Index) DisableReadAhead() {
 	if idx == nil || idx.mmapHandle1 == nil {
 		return
 	}
-	leftReaders := idx.readAheadRefcnt.Add(-1)
-	if leftReaders == 0 {
-		_ = mmap.MadviseNormal(idx.mmapHandle1)
-	} else if leftReaders < 0 {
-		log.Warn("read-ahead negative counter", "file", idx.FileName())
-	}
+	_ = mmap.MadviseRandom(idx.mmapHandle1)
 }
 func (idx *Index) EnableReadAhead() *Index {
-	idx.readAheadRefcnt.Add(1)
 	_ = mmap.MadviseSequential(idx.mmapHandle1)
 	return idx
 }
+func (idx *Index) EnableMadvNormal() *Index {
+	_ = mmap.MadviseNormal(idx.mmapHandle1)
+	return idx
+}
 func (idx *Index) EnableWillNeed() *Index {
-	idx.readAheadRefcnt.Add(1)
 	_ = mmap.MadviseWillNeed(idx.mmapHandle1)
 	return idx
 }

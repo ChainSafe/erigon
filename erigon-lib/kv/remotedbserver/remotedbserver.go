@@ -34,8 +34,8 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
-	types "github.com/ledgerwatch/erigon-lib/gointerfaces/typesproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/types"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/iter"
 	"github.com/ledgerwatch/erigon-lib/kv/order"
@@ -91,7 +91,7 @@ type threadSafeTx struct {
 	sync.Mutex
 }
 
-//go:generate mockgen -typed=true -destination=./snapshots_mock.go -package=remotedbserver . Snapshots
+//go:generate mockgen -destination=./mock/snapshots_mock.go -package=mock . Snapshots
 type Snapshots interface {
 	Files() []string
 }
@@ -136,7 +136,7 @@ func (s *KvServer) begin(ctx context.Context) (id uint64, err error) {
 	}
 	s.txsMapLock.Lock()
 	defer s.txsMapLock.Unlock()
-	tx, errBegin := s.kv.BeginRo(ctx) //nolint:gocritic
+	tx, errBegin := s.kv.BeginRo(ctx)
 	if errBegin != nil {
 		return 0, errBegin
 	}
@@ -158,7 +158,7 @@ func (s *KvServer) renew(ctx context.Context, id uint64) (err error) {
 		defer tx.Unlock()
 		tx.Rollback()
 	}
-	newTx, errBegin := s.kv.BeginRo(ctx) //nolint:gocritic
+	newTx, errBegin := s.kv.BeginRo(ctx)
 	if errBegin != nil {
 		return fmt.Errorf("kvserver: %w", err)
 	}
@@ -534,10 +534,6 @@ func (s *StateChangePubSub) remove(id uint) {
 //
 
 func (s *KvServer) DomainGet(_ context.Context, req *remote.DomainGetReq) (reply *remote.DomainGetReply, err error) {
-	domainName, err := kv.String2Domain(req.Table)
-	if err != nil {
-		return nil, err
-	}
 	reply = &remote.DomainGetReply{}
 	if err := s.with(req.TxId, func(tx kv.Tx) error {
 		ttx, ok := tx.(kv.TemporalTx)
@@ -545,12 +541,12 @@ func (s *KvServer) DomainGet(_ context.Context, req *remote.DomainGetReq) (reply
 			return fmt.Errorf("server DB doesn't implement kv.Temporal interface")
 		}
 		if req.Latest {
-			reply.V, _, err = ttx.DomainGet(domainName, req.K, req.K2)
+			reply.V, reply.Ok, err = ttx.DomainGet(kv.Domain(req.Table), req.K, req.K2)
 			if err != nil {
 				return err
 			}
 		} else {
-			reply.V, reply.Ok, err = ttx.DomainGetAsOf(domainName, req.K, req.K2, req.Ts)
+			reply.V, reply.Ok, err = ttx.DomainGetAsOf(kv.Domain(req.Table), req.K, req.K2, req.Ts)
 			if err != nil {
 				return err
 			}
@@ -604,7 +600,6 @@ func (s *KvServer) IndexRange(_ context.Context, req *remote.IndexRangeReq) (*re
 		if err != nil {
 			return err
 		}
-		defer it.Close()
 		for it.HasNext() {
 			v, err := it.Next()
 			if err != nil {

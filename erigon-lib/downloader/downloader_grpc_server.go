@@ -28,8 +28,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	proto_downloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloaderproto"
-	prototypes "github.com/ledgerwatch/erigon-lib/gointerfaces/typesproto"
+	proto_downloader "github.com/ledgerwatch/erigon-lib/gointerfaces/downloader"
+	prototypes "github.com/ledgerwatch/erigon-lib/gointerfaces/types"
 )
 
 var (
@@ -45,8 +45,11 @@ type GrpcServer struct {
 	d *Downloader
 }
 
-func (s *GrpcServer) ProhibitNewDownloads(ctx context.Context, req *proto_downloader.ProhibitNewDownloadsRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, s.d.torrentFS.ProhibitNewDownloads(req.Type)
+func (s *GrpcServer) ProhibitNewDownloads(context.Context, *proto_downloader.ProhibitNewDownloadsRequest) (*emptypb.Empty, error) {
+	if err := s.d.torrentFiles.prohibitNewDownloads(); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // Erigon "download once" - means restart/upgrade/downgrade will not download files (and will be fast)
@@ -107,7 +110,7 @@ func (s *GrpcServer) Delete(ctx context.Context, request *proto_downloader.Delet
 
 		fPath := filepath.Join(s.d.SnapDir(), name)
 		_ = os.Remove(fPath)
-		s.d.torrentFS.Delete(name)
+		s.d.torrentFiles.Delete(name)
 	}
 	return &emptypb.Empty{}, nil
 }

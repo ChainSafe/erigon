@@ -3,9 +3,8 @@ package jsonrpc
 import (
 	"context"
 	"fmt"
-	"math/big"
-
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
+	"math/big"
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
@@ -14,7 +13,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 
-	txpool_proto "github.com/ledgerwatch/erigon-lib/gointerfaces/txpoolproto"
+	txpool_proto "github.com/ledgerwatch/erigon-lib/gointerfaces/txpool"
 
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/rpc"
@@ -82,7 +81,7 @@ func (api *APIImpl) GetCode(ctx context.Context, address libcommon.Address, bloc
 		return nil, fmt.Errorf("getCode cannot open tx: %w", err1)
 	}
 	defer tx.Rollback()
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, fmt.Errorf("read chain config: %v", err)
 	}

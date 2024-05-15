@@ -61,7 +61,6 @@ import (
 	"github.com/ledgerwatch/erigon/p2p/netutil"
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/rpc/rpccfg"
-	"github.com/ledgerwatch/erigon/turbo/logging"
 )
 
 // These are all the command line flags we support.
@@ -109,9 +108,9 @@ var (
 		Name:  "whitelist",
 		Usage: "Comma separated block number-to-hash mappings to enforce (<number>=<hash>)",
 	}
-	OverridePragueFlag = flags.BigFlag{
-		Name:  "override.prague",
-		Usage: "Manually specify the Prague fork time, overriding the bundled setting",
+	OverrideCancunFlag = flags.BigFlag{
+		Name:  "override.cancun",
+		Usage: "Manually specify the Cancun fork time, overriding the bundled setting",
 	}
 	TrustedSetupFile = cli.StringFlag{
 		Name:  "trusted-setup-file",
@@ -136,9 +135,14 @@ var (
 		Name:  "ethash.dagslockmmap",
 		Usage: "Lock memory maps for recent ethash mining DAGs",
 	}
-	ExternalConsensusFlag = cli.BoolFlag{
-		Name:  "exeternal",
-		Usage: "Enables the external consensus layer",
+	SnapshotFlag = cli.BoolFlag{
+		Name:  "snapshots",
+		Usage: `Default: use snapshots "true" for Mainnet, Goerli, Gnosis Chain and Chiado. use snapshots "false" in all other cases`,
+		Value: true,
+	}
+	InternalConsensusFlag = cli.BoolFlag{
+		Name:  "internalcl",
+		Usage: "Enables internal consensus",
 	}
 	// Transaction pool settings
 	TxPoolDisableFlag = cli.BoolFlag{
@@ -398,11 +402,7 @@ var (
 	}
 	HTTPTraceFlag = cli.BoolFlag{
 		Name:  "http.trace",
-		Usage: "Print all HTTP requests to logs with INFO level",
-	}
-	HTTPDebugSingleFlag = cli.BoolFlag{
-		Name:  "http.dbg.single",
-		Usage: "Allow pass HTTP header 'dbg: true' to printt more detailed logs - how this request was executed",
+		Usage: "Trace HTTP requests with INFO level",
 	}
 	DBReadConcurrencyFlag = cli.IntFlag{
 		Name:  "db.read.concurrency",
@@ -437,7 +437,7 @@ var (
 
 	HTTPPathPrefixFlag = cli.StringFlag{
 		Name:  "http.rpcprefix",
-		Usage: "HTTP path prefix on which JSON-RPC is served. Use '/' to serve on all paths.",
+		Usage: "HTTP path path prefix on which JSON-RPC is served. Use '/' to serve on all paths.",
 		Value: "",
 	}
 	TLSFlag = cli.BoolFlag{
@@ -487,11 +487,6 @@ var (
 		Name:  "ws.rpcprefix",
 		Usage: "HTTP path prefix on which JSON-RPC is served. Use '/' to serve on all paths.",
 		Value: "",
-	}
-	WSSubscribeLogsChannelSize = cli.IntFlag{
-		Name:  "ws.api.subscribelogs.channelsize",
-		Usage: "Size of the channel used for websocket logs subscriptions",
-		Value: 8192,
 	}
 	ExecFlag = cli.StringFlag{
 		Name:  "exec",
@@ -656,6 +651,10 @@ var (
 		Usage: "Metrics HTTP server listening port",
 		Value: metrics.DefaultConfig.Port,
 	}
+	HistoryV3Flag = cli.BoolFlag{
+		Name:  "experimental.history.v3",
+		Usage: "(Also known as Erigon3) Not recommended yet: Can't change this flag after node creation. New DB and Snapshots format of history allows: parallel blocks execution, get state as of given transaction without executing whole block.",
+	}
 
 	CliqueSnapshotCheckpointIntervalFlag = cli.UintFlag{
 		Name:  "clique.checkpoint",
@@ -703,7 +702,7 @@ var (
 	}
 	TorrentDownloadSlotsFlag = cli.IntFlag{
 		Name:  "torrent.download.slots",
-		Value: 6,
+		Value: 3,
 		Usage: "Amount of files to download in parallel. If network has enough seeders 1-3 slot enough, if network has lack of seeders increase to 5-7 (too big value will slow down everything).",
 	}
 	TorrentStaticPeersFlag = cli.StringFlag{
@@ -755,6 +754,11 @@ var (
 		Usage: "Runtime limit of chaindata db size. You can change value of this flag at any time.",
 		Value: (12 * datasize.TB).String(),
 	}
+	ForcePartialCommitFlag = cli.BoolFlag{
+		Name:  "force.partial.commit",
+		Usage: "Force data commit after each stage (or even do multiple commits per 1 stage - to save it's progress). Don't use this flag if node is synced. Meaning: readers (users of RPC) would like to see 'fully consistent' data (block is executed and all indices are updated). Erigon guarantee this level of data-consistency. But 1 downside: after restore node from backup - it can't save partial progress (non-committed progress will be lost at restart). This flag will be removed in future if we can find automatic way to detect corner-cases.",
+		Value: false,
+	}
 
 	HealthCheckFlag = cli.BoolFlag{
 		Name:  "healthcheck",
@@ -795,41 +799,25 @@ var (
 		Value: true,
 	}
 
-	WithHeimdallWaypoints = cli.BoolFlag{
-		Name:  "bor.waypoints",
-		Usage: "Enabling bor waypont recording",
-		Value: false,
-	}
-
-	PolygonSyncFlag = cli.BoolFlag{
-		Name:  "polygon.sync",
-		Usage: "Enabling syncing using the new polygon sync component",
-	}
-
-	PolygonSyncStageFlag = cli.BoolFlag{
-		Name:  "polygon.sync.stage",
-		Usage: "Enabling syncing with a stage that uses the polygon sync component",
-	}
-
 	ConfigFlag = cli.StringFlag{
 		Name:  "config",
 		Usage: "Sets erigon flags from YAML/TOML file",
 		Value: "",
 	}
 
-	CaplinDiscoveryAddrFlag = cli.StringFlag{
-		Name:  "caplin.discovery.addr",
-		Usage: "Address for Caplin DISCV5 protocol",
+	LightClientDiscoveryAddrFlag = cli.StringFlag{
+		Name:  "lightclient.discovery.addr",
+		Usage: "Address for lightclient DISCV5 protocol",
 		Value: "127.0.0.1",
 	}
-	CaplinDiscoveryPortFlag = cli.Uint64Flag{
-		Name:  "caplin.discovery.port",
-		Usage: "Port for Caplin DISCV5 protocol",
+	LightClientDiscoveryPortFlag = cli.Uint64Flag{
+		Name:  "lightclient.discovery.port",
+		Usage: "Port for lightclient DISCV5 protocol",
 		Value: 4000,
 	}
-	CaplinDiscoveryTCPPortFlag = cli.Uint64Flag{
-		Name:  "caplin.discovery.tcpport",
-		Usage: "TCP Port for Caplin DISCV5 protocol",
+	LightClientDiscoveryTCPPortFlag = cli.Uint64Flag{
+		Name:  "lightclient.discovery.tcpport",
+		Usage: "TCP Port for lightclient DISCV5 protocol",
 		Value: 4001,
 	}
 
@@ -870,57 +858,18 @@ var (
 		Usage: "Enable Silkworm block execution",
 	}
 	SilkwormRpcDaemonFlag = cli.BoolFlag{
-		Name:  "silkworm.rpc",
-		Usage: "Enable embedded Silkworm RPC service",
+		Name:  "silkworm.rpcd",
+		Usage: "Enable embedded Silkworm RPC daemon",
 	}
 	SilkwormSentryFlag = cli.BoolFlag{
 		Name:  "silkworm.sentry",
 		Usage: "Enable embedded Silkworm Sentry service",
 	}
-	SilkwormVerbosityFlag = cli.StringFlag{
-		Name:  "silkworm.verbosity",
-		Usage: "Set the log level for Silkworm console logs",
-		Value: log.LvlInfo.String(),
-	}
-	SilkwormNumContextsFlag = cli.UintFlag{
-		Name:  "silkworm.contexts",
-		Usage: "Number of I/O contexts used in embedded Silkworm RPC and Sentry services (zero means use default in Silkworm)",
-		Value: 0,
-	}
-	SilkwormRpcLogEnabledFlag = cli.BoolFlag{
-		Name:  "silkworm.rpc.log",
-		Usage: "Enable interface log for embedded Silkworm RPC service",
-		Value: false,
-	}
-	SilkwormRpcLogMaxFileSizeFlag = cli.UintFlag{
-		Name:  "silkworm.rpc.log.maxsize",
-		Usage: "Max interface log file size in MB for embedded Silkworm RPC service",
-		Value: 1,
-	}
-	SilkwormRpcLogMaxFilesFlag = cli.UintFlag{
-		Name:  "silkworm.rpc.log.maxfiles",
-		Usage: "Max interface log files for embedded Silkworm RPC service",
-		Value: 100,
-	}
-	SilkwormRpcLogDumpResponseFlag = cli.BoolFlag{
-		Name:  "silkworm.rpc.log.response",
-		Usage: "Dump responses in interface logs for embedded Silkworm RPC service",
-		Value: false,
-	}
-	SilkwormRpcNumWorkersFlag = cli.UintFlag{
-		Name:  "silkworm.rpc.workers",
-		Usage: "Number of worker threads used in embedded Silkworm RPC service (zero means use default in Silkworm)",
-		Value: 0,
-	}
-	SilkwormRpcJsonCompatibilityFlag = cli.BoolFlag{
-		Name:  "silkworm.rpc.compatibility",
-		Usage: "Preserve JSON-RPC compatibility using embedded Silkworm RPC service",
-		Value: true,
-	}
 
-	BeaconAPIFlag = cli.StringSliceFlag{
+	BeaconAPIFlag = cli.BoolFlag{
 		Name:  "beacon.api",
-		Usage: "Enable beacon API (avaiable endpoints: beacon, builder, config, debug, events, node, validator, rewards, lighthouse)",
+		Usage: "Enable beacon API",
+		Value: false,
 	}
 	BeaconApiProtocolFlag = cli.StringFlag{
 		Name:  "beacon.api.protocol",
@@ -962,19 +911,9 @@ var (
 		Usage: "sets whether backfilling is enabled for caplin",
 		Value: false,
 	}
-	CaplinBlobBackfillingFlag = cli.BoolFlag{
-		Name:  "caplin.backfilling.blob",
-		Usage: "sets whether backfilling is enabled for caplin",
-		Value: false,
-	}
-	CaplinDisableBlobPruningFlag = cli.BoolFlag{
-		Name:  "caplin.backfilling.blob.no-pruning",
-		Usage: "disable blob pruning in caplin",
-		Value: false,
-	}
 	CaplinArchiveFlag = cli.BoolFlag{
 		Name:  "caplin.archive",
-		Usage: "enables archival node in caplin",
+		Usage: "enables archival node in caplin (Experimental, does not work)",
 		Value: false,
 	}
 	BeaconApiAllowCredentialsFlag = cli.BoolFlag{
@@ -992,24 +931,9 @@ var (
 		Usage: "set the cors' allow origins",
 		Value: cli.NewStringSlice(),
 	}
-	DiagDisabledFlag = cli.BoolFlag{
-		Name:  "diagnostics.disabled",
-		Usage: "Disable diagnostics",
-		Value: false,
-	}
-	DiagEndpointAddrFlag = cli.StringFlag{
-		Name:  "diagnostics.endpoint.addr",
-		Usage: "Diagnostics HTTP server listening interface",
-		Value: "0.0.0.0",
-	}
-	DiagEndpointPortFlag = cli.UintFlag{
-		Name:  "diagnostics.endpoint.port",
-		Usage: "Diagnostics HTTP server listening port",
-		Value: 6060,
-	}
 )
 
-var MetricFlags = []cli.Flag{&MetricsEnabledFlag, &MetricsHTTPFlag, &MetricsPortFlag, &DiagDisabledFlag, &DiagEndpointAddrFlag, &DiagEndpointPortFlag}
+var MetricFlags = []cli.Flag{&MetricsEnabledFlag, &MetricsHTTPFlag, &MetricsPortFlag}
 
 var DiagnosticsFlags = []cli.Flag{&DiagnosticsURLFlag, &DiagnosticsURLFlag, &DiagnosticsSessionsFlag}
 
@@ -1577,9 +1501,6 @@ func setBorConfig(ctx *cli.Context, cfg *ethconfig.Config) {
 	cfg.HeimdallURL = ctx.String(HeimdallURLFlag.Name)
 	cfg.WithoutHeimdall = ctx.Bool(WithoutHeimdallFlag.Name)
 	cfg.WithHeimdallMilestones = ctx.Bool(WithHeimdallMilestones.Name)
-	cfg.WithHeimdallWaypointRecording = ctx.Bool(WithHeimdallWaypoints.Name)
-	cfg.PolygonSync = ctx.Bool(PolygonSyncFlag.Name)
-	cfg.PolygonSyncStage = ctx.Bool(PolygonSyncStageFlag.Name)
 }
 
 func setMiner(ctx *cli.Context, cfg *params.MiningConfig) {
@@ -1632,12 +1553,8 @@ func setWhitelist(ctx *cli.Context, cfg *ethconfig.Config) {
 	}
 }
 
-func setBeaconAPI(ctx *cli.Context, cfg *ethconfig.Config) error {
-	allowed := ctx.StringSlice(BeaconAPIFlag.Name)
-	if err := cfg.BeaconRouter.UnwrapEndpointsList(allowed); err != nil {
-		return err
-	}
-
+func setBeaconAPI(ctx *cli.Context, cfg *ethconfig.Config) {
+	cfg.BeaconRouter.Active = ctx.Bool(BeaconAPIFlag.Name)
 	cfg.BeaconRouter.Protocol = ctx.String(BeaconApiProtocolFlag.Name)
 	cfg.BeaconRouter.Address = fmt.Sprintf("%s:%d", ctx.String(BeaconApiAddrFlag.Name), ctx.Int(BeaconApiPortFlag.Name))
 	cfg.BeaconRouter.ReadTimeTimeout = time.Duration(ctx.Uint64(BeaconApiReadTimeoutFlag.Name)) * time.Second
@@ -1646,15 +1563,10 @@ func setBeaconAPI(ctx *cli.Context, cfg *ethconfig.Config) error {
 	cfg.BeaconRouter.AllowedMethods = ctx.StringSlice(BeaconApiAllowMethodsFlag.Name)
 	cfg.BeaconRouter.AllowedOrigins = ctx.StringSlice(BeaconApiAllowOriginsFlag.Name)
 	cfg.BeaconRouter.AllowCredentials = ctx.Bool(BeaconApiAllowCredentialsFlag.Name)
-	return nil
 }
 
 func setCaplin(ctx *cli.Context, cfg *ethconfig.Config) {
-	// Caplin's block's backfilling is enabled if any of the following flags are set
-	cfg.CaplinConfig.Backfilling = ctx.Bool(CaplinBackfillingFlag.Name) || ctx.Bool(CaplinArchiveFlag.Name) || ctx.Bool(CaplinBlobBackfillingFlag.Name)
-	// More granularity here.
-	cfg.CaplinConfig.BlobBackfilling = ctx.Bool(CaplinBlobBackfillingFlag.Name)
-	cfg.CaplinConfig.BlobPruningDisabled = ctx.Bool(CaplinDisableBlobPruningFlag.Name)
+	cfg.CaplinConfig.Backfilling = ctx.Bool(CaplinBackfillingFlag.Name) || ctx.Bool(CaplinArchiveFlag.Name)
 	cfg.CaplinConfig.Archive = ctx.Bool(CaplinArchiveFlag.Name)
 }
 
@@ -1662,15 +1574,6 @@ func setSilkworm(ctx *cli.Context, cfg *ethconfig.Config) {
 	cfg.SilkwormExecution = ctx.Bool(SilkwormExecutionFlag.Name)
 	cfg.SilkwormRpcDaemon = ctx.Bool(SilkwormRpcDaemonFlag.Name)
 	cfg.SilkwormSentry = ctx.Bool(SilkwormSentryFlag.Name)
-	cfg.SilkwormVerbosity = ctx.String(SilkwormVerbosityFlag.Name)
-	cfg.SilkwormNumContexts = uint32(ctx.Uint64(SilkwormNumContextsFlag.Name))
-	cfg.SilkwormRpcLogEnabled = ctx.Bool(SilkwormRpcLogEnabledFlag.Name)
-	cfg.SilkwormRpcLogDirPath = logging.LogDirPath(ctx)
-	cfg.SilkwormRpcLogMaxFileSize = uint16(ctx.Uint64(SilkwormRpcLogMaxFileSizeFlag.Name))
-	cfg.SilkwormRpcLogMaxFiles = uint16(ctx.Uint(SilkwormRpcLogMaxFilesFlag.Name))
-	cfg.SilkwormRpcLogDumpResponse = ctx.Bool(SilkwormRpcLogDumpResponseFlag.Name)
-	cfg.SilkwormRpcNumWorkers = uint32(ctx.Uint64(SilkwormRpcNumWorkersFlag.Name))
-	cfg.SilkwormRpcJsonCompatibility = ctx.Bool(SilkwormRpcJsonCompatibilityFlag.Name)
 }
 
 // CheckExclusive verifies that only a single instance of the provided flags was
@@ -1716,11 +1619,12 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, nodeConfig *nodecfg.Config, cfg *ethconfig.Config, logger log.Logger) {
-	cfg.CaplinDiscoveryAddr = ctx.String(CaplinDiscoveryAddrFlag.Name)
-	cfg.CaplinDiscoveryPort = ctx.Uint64(CaplinDiscoveryPortFlag.Name)
-	cfg.CaplinDiscoveryTCPPort = ctx.Uint64(CaplinDiscoveryTCPPortFlag.Name)
+	cfg.LightClientDiscoveryAddr = ctx.String(LightClientDiscoveryAddrFlag.Name)
+	cfg.LightClientDiscoveryPort = ctx.Uint64(LightClientDiscoveryPortFlag.Name)
+	cfg.LightClientDiscoveryTCPPort = ctx.Uint64(LightClientDiscoveryTCPPortFlag.Name)
 	cfg.SentinelAddr = ctx.String(SentinelAddrFlag.Name)
 	cfg.SentinelPort = ctx.Uint64(SentinelPortFlag.Name)
+	cfg.ForcePartialCommit = ctx.Bool(ForcePartialCommitFlag.Name)
 
 	chain := ctx.String(ChainFlag.Name) // mainnet by default
 	if ctx.IsSet(NetworkIdFlag.Name) {
@@ -1730,6 +1634,11 @@ func SetEthConfig(ctx *cli.Context, nodeConfig *nodecfg.Config, cfg *ethconfig.C
 		}
 	} else {
 		cfg.NetworkID = params.NetworkIDByChainName(chain)
+	}
+
+	cfg.Sync.UseSnapshots = ethconfig.UseSnapshotsByChainName(chain)
+	if ctx.IsSet(SnapshotFlag.Name) { //force override default by cli
+		cfg.Sync.UseSnapshots = ctx.Bool(SnapshotFlag.Name)
 	}
 
 	cfg.Dirs = nodeConfig.Dirs
@@ -1784,12 +1693,11 @@ func SetEthConfig(ctx *cli.Context, nodeConfig *nodecfg.Config, cfg *ethconfig.C
 	setWhitelist(ctx, cfg)
 	setBorConfig(ctx, cfg)
 	setSilkworm(ctx, cfg)
-	if err := setBeaconAPI(ctx, cfg); err != nil {
-		log.Error("Failed to set beacon API", "err", err)
-	}
+	setBeaconAPI(ctx, cfg)
 	setCaplin(ctx, cfg)
 
 	cfg.Ethstats = ctx.String(EthStatsURLFlag.Name)
+	cfg.HistoryV3 = ctx.Bool(HistoryV3Flag.Name)
 
 	if ctx.IsSet(RPCGlobalGasCapFlag.Name) {
 		cfg.RPCGasCap = ctx.Uint64(RPCGlobalGasCapFlag.Name)
@@ -1844,12 +1752,13 @@ func SetEthConfig(ctx *cli.Context, nodeConfig *nodecfg.Config, cfg *ethconfig.C
 		}
 	}
 
-	if ctx.IsSet(OverridePragueFlag.Name) {
-		cfg.OverridePragueTime = flags.GlobalBig(ctx, OverridePragueFlag.Name)
+	if ctx.IsSet(OverrideCancunFlag.Name) {
+		cfg.OverrideCancunTime = flags.GlobalBig(ctx, OverrideCancunFlag.Name)
+		cfg.TxPool.OverrideCancunTime = cfg.OverrideCancunTime
 	}
 
-	if clparams.EmbeddedSupported(cfg.NetworkID) {
-		cfg.InternalCL = !ctx.Bool(ExternalConsensusFlag.Name)
+	if ctx.IsSet(InternalConsensusFlag.Name) && clparams.EmbeddedSupported(cfg.NetworkID) {
+		cfg.InternalCL = ctx.Bool(InternalConsensusFlag.Name)
 	}
 
 	if ctx.IsSet(TrustedSetupFile.Name) {
@@ -1897,8 +1806,6 @@ func CobraFlags(cmd *cobra.Command, urfaveCliFlagsLists ...[]cli.Flag) {
 			switch f := flag.(type) {
 			case *cli.IntFlag:
 				flags.Int(f.Name, f.Value, f.Usage)
-			case *cli.UintFlag:
-				flags.Uint(f.Name, f.Value, f.Usage)
 			case *cli.StringFlag:
 				flags.String(f.Name, f.Value, f.Usage)
 			case *cli.BoolFlag:

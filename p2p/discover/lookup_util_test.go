@@ -1,5 +1,3 @@
-//go:build integration_skip
-
 package discover
 
 import (

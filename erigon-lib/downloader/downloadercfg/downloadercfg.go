@@ -43,7 +43,7 @@ const DefaultPieceSize = 2 * 1024 * 1024
 
 // DefaultNetworkChunkSize - how much data request per 1 network call to peer.
 // default: 16Kb
-const DefaultNetworkChunkSize = 8 * 1024 * 1024
+const DefaultNetworkChunkSize = 256 * 1024
 
 type Cfg struct {
 	ClientConfig  *torrent.ClientConfig
@@ -70,10 +70,6 @@ func Default() *torrent.ClientConfig {
 	torrentConfig.MinDialTimeout = 6 * time.Second    //default: 3s
 	torrentConfig.HandshakesTimeout = 8 * time.Second //default: 4s
 
-	// default limit is 1MB, but we have 2MB pieces which brings us to:
-	//   *torrent.PeerConn: waiting for alloc limit reservation: reservation for 1802972 exceeds limiter max 1048576
-	torrentConfig.MaxAllocPeerRequestDataPerConn = int64(DefaultPieceSize)
-
 	// enable dht
 	torrentConfig.NoDHT = true
 	//torrentConfig.DisableTrackers = true
@@ -98,7 +94,6 @@ func Default() *torrent.ClientConfig {
 
 func New(dirs datadir.Dirs, version string, verbosity lg.Level, downloadRate, uploadRate datasize.ByteSize, port, connsPerFile, downloadSlots int, staticPeers, webseeds []string, chainName string, lockSnapshots bool) (*Cfg, error) {
 	torrentConfig := Default()
-	//torrentConfig.PieceHashersPerTorrent = runtime.NumCPU()
 	torrentConfig.DataDir = dirs.Snap // `DataDir` of torrent-client-lib is different from Erigon's `DataDir`. Just same naming.
 
 	torrentConfig.ExtendedHandshakeClientVersion = version
@@ -110,15 +105,8 @@ func New(dirs datadir.Dirs, version string, verbosity lg.Level, downloadRate, up
 	// check if ipv6 is enabled
 	torrentConfig.DisableIPv6 = !getIpv6Enabled()
 
-	if uploadRate > 512*datasize.MB {
-		torrentConfig.UploadRateLimiter = rate.NewLimiter(rate.Inf, DefaultNetworkChunkSize) // default: unlimited
-	} else {
-		torrentConfig.UploadRateLimiter = rate.NewLimiter(rate.Limit(uploadRate.Bytes()), DefaultNetworkChunkSize) // default: unlimited
-	}
-
-	if downloadRate > 512*datasize.MB {
-		torrentConfig.DownloadRateLimiter = rate.NewLimiter(rate.Inf, DefaultNetworkChunkSize) // default: unlimited
-	} else {
+	torrentConfig.UploadRateLimiter = rate.NewLimiter(rate.Limit(uploadRate.Bytes()), DefaultNetworkChunkSize) // default: unlimited
+	if downloadRate.Bytes() < 500_000_000 {
 		torrentConfig.DownloadRateLimiter = rate.NewLimiter(rate.Limit(downloadRate.Bytes()), DefaultNetworkChunkSize) // default: unlimited
 	}
 

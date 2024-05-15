@@ -32,8 +32,8 @@ import (
 // that any network, identified by its genesis block, can have its own
 // set of configuration options.
 type Config struct {
-	ChainName string   `json:"chainName"` // chain name, eg: mainnet, sepolia, bor-mainnet
-	ChainID   *big.Int `json:"chainId"`   // chainId identifies the current chain and is used for replay protection
+	ChainName string
+	ChainID   *big.Int `json:"chainId"` // chainId identifies the current chain and is used for replay protection
 
 	Consensus ConsensusName `json:"consensus,omitempty"` // aura, ethash or clique
 
@@ -67,7 +67,6 @@ type Config struct {
 	ShanghaiTime *big.Int `json:"shanghaiTime,omitempty"`
 	CancunTime   *big.Int `json:"cancunTime,omitempty"`
 	PragueTime   *big.Int `json:"pragueTime,omitempty"`
-	OsakaTime    *big.Int `json:"osakaTime,omitempty"`
 
 	// Optional EIP-4844 parameters
 	MinBlobGasPrice            *uint64 `json:"minBlobGasPrice,omitempty"`
@@ -77,10 +76,6 @@ type Config struct {
 
 	// (Optional) governance contract where EIP-1559 fees will be sent to that otherwise would be burnt since the London fork
 	BurntContract map[string]common.Address `json:"burntContract,omitempty"`
-
-	// (Optional) deposit contract of PoS chains
-	// See also EIP-6110: Supply validator deposits on chain
-	DepositContract *common.Address `json:"depositContract,omitempty"`
 
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
@@ -102,7 +97,7 @@ type BorConfig interface {
 func (c *Config) String() string {
 	engine := c.getEngine()
 
-	return fmt.Sprintf("{ChainID: %v, Homestead: %v, DAO: %v, Tangerine Whistle: %v, Spurious Dragon: %v, Byzantium: %v, Constantinople: %v, Petersburg: %v, Istanbul: %v, Muir Glacier: %v, Berlin: %v, London: %v, Arrow Glacier: %v, Gray Glacier: %v, Terminal Total Difficulty: %v, Merge Netsplit: %v, Shanghai: %v, Cancun: %v, Prague: %v, Osaka: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v, Homestead: %v, DAO: %v, Tangerine Whistle: %v, Spurious Dragon: %v, Byzantium: %v, Constantinople: %v, Petersburg: %v, Istanbul: %v, Muir Glacier: %v, Berlin: %v, London: %v, Arrow Glacier: %v, Gray Glacier: %v, Terminal Total Difficulty: %v, Merge Netsplit: %v, Shanghai: %v, Cancun: %v, Prague: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -122,7 +117,6 @@ func (c *Config) String() string {
 		c.ShanghaiTime,
 		c.CancunTime,
 		c.PragueTime,
-		c.OsakaTime,
 		engine,
 	)
 }
@@ -235,11 +229,6 @@ func (c *Config) IsCancun(time uint64) bool {
 // IsPrague returns whether time is either equal to the Prague fork time or greater.
 func (c *Config) IsPrague(time uint64) bool {
 	return isForked(c.PragueTime, time)
-}
-
-// IsOsaka returns whether time is either equal to the Osaka fork time or greater.
-func (c *Config) IsOsaka(time uint64) bool {
-	return isForked(c.OsakaTime, time)
 }
 
 func (c *Config) GetBurntContract(num uint64) *common.Address {
@@ -507,7 +496,7 @@ type Rules struct {
 	IsByzantium, IsConstantinople, IsPetersburg       bool
 	IsIstanbul, IsBerlin, IsLondon, IsShanghai        bool
 	IsCancun, IsNapoli                                bool
-	IsPrague, IsOsaka                                 bool
+	IsPrague                                          bool
 	IsAura                                            bool
 }
 
@@ -533,7 +522,6 @@ func (c *Config) Rules(num uint64, time uint64) *Rules {
 		IsCancun:           c.IsCancun(time),
 		IsNapoli:           c.IsNapoli(num),
 		IsPrague:           c.IsPrague(time),
-		IsOsaka:            c.IsOsaka(time),
 		IsAura:             c.Aura != nil,
 	}
 }

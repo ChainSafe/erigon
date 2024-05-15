@@ -22,7 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	txpool "github.com/ledgerwatch/erigon-lib/gointerfaces/txpoolproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/txpool"
 	"math/big"
 	"net/http"
 	"regexp"

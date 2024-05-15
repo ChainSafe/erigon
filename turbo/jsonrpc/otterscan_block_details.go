@@ -3,7 +3,6 @@ package jsonrpc
 import (
 	"context"
 	"fmt"
-
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 
 	"github.com/ledgerwatch/erigon-lib/common"
@@ -44,7 +43,7 @@ func (api *OtterscanAPIImpl) GetBlockDetailsByHash(ctx context.Context, hash com
 	if blockNumber == nil {
 		return nil, fmt.Errorf("couldn't find block number for hash %v", hash.Bytes())
 	}
-	b, err := api.blockWithSenders(ctx, tx, hash, *blockNumber)
+	b, senders, err := api._blockReader.BlockWithSenders(ctx, tx, hash, *blockNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +52,11 @@ func (api *OtterscanAPIImpl) GetBlockDetailsByHash(ctx context.Context, hash com
 	}
 	number := rpc.BlockNumber(b.Number().Int64())
 
-	return api.getBlockDetailsImpl(ctx, tx, b, number, b.Body().SendersFromTxs())
+	return api.getBlockDetailsImpl(ctx, tx, b, number, senders)
 }
 
 func (api *OtterscanAPIImpl) getBlockDetailsImpl(ctx context.Context, tx kv.Tx, b *types.Block, number rpc.BlockNumber, senders []common.Address) (map[string]interface{}, error) {
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -66,11 +65,11 @@ func (api *OtterscanAPIImpl) getBlockDetailsImpl(ctx context.Context, tx kv.Tx, 
 	if err != nil {
 		return nil, err
 	}
-	getIssuanceRes, err := delegateIssuance(tx, b, chainConfig, api.engine())
+	getIssuanceRes, err := delegateIssuance(tx, b, chainConfig)
 	if err != nil {
 		return nil, err
 	}
-	receipts, err := api.getReceipts(ctx, tx, b, senders)
+	receipts, err := api.getReceipts(ctx, tx, chainConfig, b, senders)
 	if err != nil {
 		return nil, fmt.Errorf("getReceipts error: %v", err)
 	}
@@ -82,6 +81,6 @@ func (api *OtterscanAPIImpl) getBlockDetailsImpl(ctx context.Context, tx kv.Tx, 
 	response := map[string]interface{}{}
 	response["block"] = getBlockRes
 	response["issuance"] = getIssuanceRes
-	response["totalFees"] = (*hexutil.Big)(feesRes)
+	response["totalFees"] = hexutil.Uint64(feesRes)
 	return response, nil
 }

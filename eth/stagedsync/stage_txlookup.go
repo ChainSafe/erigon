@@ -14,11 +14,12 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon-lib/etl"
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/erigon/core/rawdb"
-	"github.com/ledgerwatch/erigon/ethdb/prune"
 	"github.com/ledgerwatch/erigon/polygon/bor/borcfg"
-	bortypes "github.com/ledgerwatch/erigon/polygon/bor/types"
 	"github.com/ledgerwatch/erigon/turbo/services"
+
+	"github.com/ledgerwatch/erigon/core/rawdb"
+	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/ethdb/prune"
 )
 
 type TxLookupCfg struct {
@@ -159,7 +160,7 @@ func borTxnLookupTransform(logPrefix string, tx kv.RwTx, blockFrom, blockTo uint
 
 		// we add state sync transactions every bor Sprint amount of blocks
 		if blocknum%cfg.borConfig.CalculateSprintLength(blocknum) == 0 && rawdb.HasBorReceipts(tx, blocknum) {
-			txnHash := bortypes.ComputeBorTxHash(blocknum, blockHash)
+			txnHash := types.ComputeBorTxHash(blocknum, blockHash)
 			if err := next(k, txnHash.Bytes(), blockNumBytes); err != nil {
 				return err
 			}
@@ -299,7 +300,7 @@ func deleteBorTxLookupRange(tx kv.RwTx, logPrefix string, blockFrom, blockTo uin
 	return etl.Transform(logPrefix, tx, kv.HeaderCanonical, kv.BorTxLookup, cfg.tmpdir, func(k, v []byte, next etl.ExtractNextFunc) error {
 		blocknum, blockHash := binary.BigEndian.Uint64(k), libcommon.CastToHash(v)
 
-		borTxHash := bortypes.ComputeBorTxHash(blocknum, blockHash)
+		borTxHash := types.ComputeBorTxHash(blocknum, blockHash)
 		if err := next(k, borTxHash.Bytes(), nil); err != nil {
 			return err
 		}

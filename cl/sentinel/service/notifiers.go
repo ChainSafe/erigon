@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"sync"
+
+	"github.com/ledgerwatch/erigon/cl/gossip"
 )
 
 const (
@@ -10,10 +12,9 @@ const (
 )
 
 type gossipObject struct {
-	data     []byte // gossip data
-	t        string // determine which gossip message we are notifying of
-	pid      string // pid is the peer id of the sender
-	subnetId *uint64
+	data []byte // gossip data
+	t    string // determine which gossip message we are notifying of
+	pid  string // pid is the peer id of the sender
 }
 
 type gossipNotifier struct {
@@ -28,12 +29,29 @@ func newGossipNotifier() *gossipNotifier {
 	}
 }
 
-func (g *gossipNotifier) notify(obj *gossipObject) {
+func (g *gossipNotifier) notify(t string, data []byte, pid string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	for _, ch := range g.notifiers {
-		ch <- *obj
+		ch <- gossipObject{
+			data: data,
+			t:    t,
+			pid:  pid,
+		}
+	}
+}
+
+func (g *gossipNotifier) notifyBlob(data []byte, pid string, blobIndex int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	for _, ch := range g.notifiers {
+		ch <- gossipObject{
+			data: data,
+			t:    gossip.TopicNameBlobSidecar(blobIndex),
+			pid:  pid,
+		}
 	}
 }
 
@@ -44,7 +62,7 @@ func (g *gossipNotifier) addSubscriber() (chan gossipObject, int, error) {
 	if len(g.notifiers) >= maxSubscribers {
 		return nil, -1, fmt.Errorf("too many subsribers, try again later")
 	}
-	ch := make(chan gossipObject, 1<<16)
+	ch := make(chan gossipObject)
 	g.notifiers = append(g.notifiers, ch)
 	return ch, len(g.notifiers) - 1, nil
 }

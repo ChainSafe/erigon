@@ -8,11 +8,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/ledgerwatch/log/v3"
-	"github.com/urfave/cli/v2"
-
-	"github.com/ledgerwatch/erigon-lib/common/disk"
-	"github.com/ledgerwatch/erigon-lib/common/mem"
 	"github.com/ledgerwatch/erigon/cmd/snapshots/cmp"
 	"github.com/ledgerwatch/erigon/cmd/snapshots/copy"
 	"github.com/ledgerwatch/erigon/cmd/snapshots/manifest"
@@ -23,6 +18,8 @@ import (
 	"github.com/ledgerwatch/erigon/params"
 	"github.com/ledgerwatch/erigon/turbo/debug"
 	"github.com/ledgerwatch/erigon/turbo/logging"
+	"github.com/ledgerwatch/log/v3"
+	"github.com/urfave/cli/v2"
 )
 
 func main() {
@@ -71,10 +68,6 @@ func main() {
 			var cancel context.CancelFunc
 
 			ctx.Context, cancel = context.WithCancel(sync.WithLogger(ctx.Context, logger))
-
-			// setup periodic logging and prometheus updates
-			go mem.LogMemStats(ctx.Context, logger)
-			go disk.UpdateDiskStats(ctx.Context, logger)
 
 			go handleTerminationSignals(cancel, logger)
 

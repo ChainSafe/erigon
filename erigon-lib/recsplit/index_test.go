@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/ledgerwatch/log/v3"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,11 +32,10 @@ func TestReWriteIndex(t *testing.T) {
 	logger := log.New()
 	tmpDir := t.TempDir()
 	indexFile := filepath.Join(tmpDir, "index")
-	salt := uint32(1)
 	rs, err := NewRecSplit(RecSplitArgs{
 		KeyCount:   100,
 		BucketSize: 10,
-		Salt:       &salt,
+		Salt:       0,
 		TmpDir:     tmpDir,
 		IndexFile:  indexFile,
 		LeafSize:   8,
@@ -74,28 +72,9 @@ func TestReWriteIndex(t *testing.T) {
 	defer reidx.Close()
 	for i := 0; i < 100; i++ {
 		reader := NewIndexReader(reidx)
-		offset, _ := reader.Lookup([]byte(fmt.Sprintf("key %d", i)))
+		offset := reader.Lookup([]byte(fmt.Sprintf("key %d", i)))
 		if offset != uint64(i*3965) {
 			t.Errorf("expected offset: %d, looked up: %d", i*3965, offset)
 		}
 	}
-}
-
-func TestForwardCompatibility(t *testing.T) {
-	t.Run("features_are_optional", func(t *testing.T) {
-		var features Features
-		err := onlyKnownFeatures(features)
-		assert.NoError(t, err)
-	})
-	t.Run("allow_known", func(t *testing.T) {
-		features := No | Enums
-		err := onlyKnownFeatures(features)
-		assert.NoError(t, err)
-		assert.Equal(t, No|Enums, features) //no side-effects
-	})
-	t.Run("disallow_unknown", func(t *testing.T) {
-		features := Features(0xff)
-		err := onlyKnownFeatures(features)
-		assert.ErrorIs(t, err, IncompatibleErr)
-	})
 }

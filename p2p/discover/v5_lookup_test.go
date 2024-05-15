@@ -1,4 +1,4 @@
-//go:build integration_skip
+//go:build integration
 
 package discover
 

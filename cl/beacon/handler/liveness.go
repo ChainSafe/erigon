@@ -12,6 +12,7 @@ import (
 	"github.com/ledgerwatch/erigon/cl/beacon/beaconhttp"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
 	"github.com/ledgerwatch/erigon/cl/cltypes/solid"
+	"github.com/ledgerwatch/erigon/cl/utils"
 )
 
 type live struct {
@@ -24,7 +25,7 @@ func (a *ApiHandler) liveness(w http.ResponseWriter, r *http.Request) (*beaconht
 	if err != nil {
 		return nil, err
 	}
-	maxEpoch := a.ethClock.GetCurrentEpoch()
+	maxEpoch := utils.GetCurrentEpoch(a.genesisCfg.GenesisTime, a.beaconChainCfg.SecondsPerSlot, a.beaconChainCfg.SlotsPerEpoch)
 	if epoch > maxEpoch {
 		return nil, beaconhttp.NewEndpointError(http.StatusBadRequest, fmt.Errorf("epoch %d is in the future, max epoch is %d", epoch, maxEpoch))
 	}

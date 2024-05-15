@@ -19,6 +19,8 @@ package txpool
 import (
 	"bytes"
 	"context"
+
+	// "crypto/rand"
 	"fmt"
 	"math"
 	"math/big"
@@ -26,8 +28,6 @@ import (
 
 	gokzg4844 "github.com/crate-crypto/go-kzg-4844"
 	"github.com/holiman/uint256"
-	"github.com/ledgerwatch/erigon-lib/common/datadir"
-	"github.com/ledgerwatch/erigon-lib/kv/temporal/temporaltest"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/common/u256"
 	"github.com/ledgerwatch/erigon-lib/crypto/kzg"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/kvcache"
 	"github.com/ledgerwatch/erigon-lib/kv/memdb"
@@ -47,12 +47,9 @@ import (
 )
 
 func TestNonceFromAddress(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 100)
-
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 
 	cfg := txpoolcfg.DefaultConfig
 	sendersCache := kvcache.New(kvcache.DefaultCoherentConfig)
@@ -170,11 +167,9 @@ func TestNonceFromAddress(t *testing.T) {
 }
 
 func TestReplaceWithHigherFee(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 100)
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 
 	cfg := txpoolcfg.DefaultConfig
 	sendersCache := kvcache.New(kvcache.DefaultCoherentConfig)
@@ -289,11 +284,9 @@ func TestReplaceWithHigherFee(t *testing.T) {
 }
 
 func TestReverseNonces(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 100)
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 
 	cfg := txpoolcfg.DefaultConfig
 	sendersCache := kvcache.New(kvcache.DefaultCoherentConfig)
@@ -418,11 +411,9 @@ func TestReverseNonces(t *testing.T) {
 // this is a workaround for cases when transactions are getting stuck for strange reasons
 // even though logs show they are broadcast
 func TestTxPoke(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 100)
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 
 	cfg := txpoolcfg.DefaultConfig
 	sendersCache := kvcache.New(kvcache.DefaultCoherentConfig)
@@ -682,8 +673,7 @@ func TestShanghaiValidateTx(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			ch := make(chan types.Announcements, 100)
-			_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-
+			_, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 			cfg := txpoolcfg.DefaultConfig
 
 			var shanghaiTime *big.Int
@@ -733,12 +723,9 @@ func TestShanghaiValidateTx(t *testing.T) {
 
 // Blob gas price bump + other requirements to replace existing txns in the pool
 func TestBlobTxReplacement(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 5)
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
-
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 	cfg := txpoolcfg.DefaultConfig
 	sendersCache := kvcache.New(kvcache.DefaultCoherentConfig)
 	pool, err := New(ch, coreDB, cfg, sendersCache, *u256.N1, common.Big0, nil, common.Big0, fixedgas.DefaultMaxBlobsPerBlock, nil, log.New())
@@ -889,15 +876,23 @@ func TestBlobTxReplacement(t *testing.T) {
 
 // Todo, make the tx more realistic with good values
 func makeBlobTx() types.TxSlot {
-
-	bodyRlp := hexutility.MustDecodeHex(BodyRlpHex)
+	// Some arbitrary hardcoded example
+	bodyRlpHex := "f9012705078502540be4008506fc23ac008357b58494811a752c8cd697e3cb27" +
+		"279c330ed1ada745a8d7808204f7f872f85994de0b295669a9fd93d5f28d9ec85e40f4cb697b" +
+		"aef842a00000000000000000000000000000000000000000000000000000000000000003a000" +
+		"00000000000000000000000000000000000000000000000000000000000007d694bb9bc244d7" +
+		"98123fde783fcc1c72d3bb8c189413c07bf842a0c6bdd1de713471bd6cfa62dd8b5a5b42969e" +
+		"d09e26212d3377f3f8426d8ec210a08aaeccaf3873d07cef005aca28c39f8a9f8bdb1ec8d79f" +
+		"fc25afc0a4fa2ab73601a036b241b061a36a32ab7fe86c7aa9eb592dd59018cd0443adc09035" +
+		"90c16b02b0a05edcc541b4741c5cc6dd347c5ed9577ef293a62787b4510465fadbfe39ee4094"
+	bodyRlp := hexutility.MustDecodeHex(bodyRlpHex)
 
 	blobsRlpPrefix := hexutility.MustDecodeHex("fa040008")
 	blobRlpPrefix := hexutility.MustDecodeHex("ba020000")
 
 	var blob0, blob1 = gokzg4844.Blob{}, gokzg4844.Blob{}
-	copy(blob0[:], hexutility.MustDecodeHex(ValidBlob1Hex))
-	copy(blob1[:], hexutility.MustDecodeHex(ValidBlob2Hex))
+	copy(blob0[:], hexutility.MustDecodeHex(validBlob1))
+	copy(blob1[:], hexutility.MustDecodeHex(validBlob2))
 
 	var err error
 	proofsRlpPrefix := hexutility.MustDecodeHex("f862")
@@ -948,11 +943,9 @@ func makeBlobTx() types.TxSlot {
 }
 
 func TestDropRemoteAtNoGossip(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 100)
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 
 	cfg := txpoolcfg.DefaultConfig
 	cfg.NoGossip = true
@@ -1057,11 +1050,9 @@ func TestDropRemoteAtNoGossip(t *testing.T) {
 }
 
 func TestBlobSlots(t *testing.T) {
-	t.Skip("TODO")
 	assert, require := assert.New(t), require.New(t)
 	ch := make(chan types.Announcements, 5)
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
+	db, coreDB := memdb.NewTestPoolDB(t), memdb.NewTestDB(t)
 	cfg := txpoolcfg.DefaultConfig
 
 	//Setting limits for blobs in the pool
@@ -1133,79 +1124,4 @@ func TestBlobSlots(t *testing.T) {
 	for _, reason := range reasons {
 		assert.Equal(txpoolcfg.BlobPoolOverflow, reason, reason.String())
 	}
-}
-
-func TestGasLimitChanged(t *testing.T) {
-	t.Skip("TODO")
-	assert, require := assert.New(t), require.New(t)
-	ch := make(chan types.Announcements, 100)
-
-	_, coreDB, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
-	db := memdb.NewTestPoolDB(t)
-	cfg := txpoolcfg.DefaultConfig
-	sendersCache := kvcache.New(kvcache.DefaultCoherentConfig)
-	pool, err := New(ch, coreDB, cfg, sendersCache, *u256.N1, nil, nil, nil, fixedgas.DefaultMaxBlobsPerBlock, nil, log.New())
-	assert.NoError(err)
-	require.True(pool != nil)
-	ctx := context.Background()
-	var stateVersionID uint64 = 0
-	pendingBaseFee := uint64(200000)
-	// start blocks from 0, set empty hash - then kvcache will also work on this
-	h1 := gointerfaces.ConvertHashToH256([32]byte{})
-	var addr [20]byte
-	addr[0] = 1
-	v := make([]byte, types.EncodeSenderLengthForStorage(2, *uint256.NewInt(1 * common.Ether)))
-	types.EncodeSender(2, *uint256.NewInt(1 * common.Ether), v)
-	tx, err := db.BeginRw(ctx)
-	require.NoError(err)
-	defer tx.Rollback()
-
-	change := &remote.StateChangeBatch{
-		StateVersionId:      stateVersionID,
-		PendingBlockBaseFee: pendingBaseFee,
-		BlockGasLimit:       50_000,
-		ChangeBatch: []*remote.StateChange{
-			{BlockHeight: 0, BlockHash: h1},
-		},
-	}
-	change.ChangeBatch[0].Changes = append(change.ChangeBatch[0].Changes, &remote.AccountChange{
-		Action:  remote.Action_UPSERT,
-		Address: gointerfaces.ConvertAddressToH160(addr),
-		Data:    v,
-	})
-	err = pool.OnNewBlock(ctx, change, types.TxSlots{}, types.TxSlots{}, types.TxSlots{}, tx)
-	assert.NoError(err)
-
-	var txSlots types.TxSlots
-	txSlot1 := &types.TxSlot{
-		Tip:    *uint256.NewInt(300000),
-		FeeCap: *uint256.NewInt(300000),
-		Gas:    100_000,
-		Nonce:  3,
-	}
-	txSlot1.IDHash[0] = 1
-	txSlots.Append(txSlot1, addr[:], true)
-
-	reasons, err := pool.AddLocalTxs(ctx, txSlots, tx)
-	assert.NoError(err)
-	for _, reason := range reasons {
-		assert.Equal(txpoolcfg.Success, reason, reason.String())
-	}
-
-	mtx, ok := pool.byHash[string(txSlot1.IDHash[:])]
-	assert.True(ok)
-	assert.Zero(mtx.subPool&NotTooMuchGas, "Should be insufficient block space for the tx")
-
-	change.ChangeBatch[0].Changes = nil
-	change.BlockGasLimit = 150_000
-	err = pool.OnNewBlock(ctx, change, types.TxSlots{}, types.TxSlots{}, types.TxSlots{}, tx)
-	assert.NoError(err)
-
-	assert.NotZero(mtx.subPool&NotTooMuchGas, "Should now have block space for the tx")
-
-	change.BlockGasLimit = 50_000
-	err = pool.OnNewBlock(ctx, change, types.TxSlots{}, types.TxSlots{}, types.TxSlots{}, tx)
-	assert.NoError(err)
-
-	assert.Zero(mtx.subPool&NotTooMuchGas, "Should now have block space (again) for the tx")
 }

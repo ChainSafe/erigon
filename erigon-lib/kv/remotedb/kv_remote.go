@@ -24,17 +24,16 @@ import (
 	"runtime"
 	"unsafe"
 
+	"github.com/ledgerwatch/erigon-lib/kv/iter"
+	"github.com/ledgerwatch/erigon-lib/kv/order"
 	"github.com/ledgerwatch/log/v3"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/ledgerwatch/erigon-lib/kv/iter"
-	"github.com/ledgerwatch/erigon-lib/kv/order"
-
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces/grpcutil"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	"github.com/ledgerwatch/erigon-lib/kv"
 )
 
@@ -161,7 +160,7 @@ func (db *DB) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 	}
 
 	if semErr := db.roTxsLimiter.Acquire(ctx, 1); semErr != nil {
-		return nil, fmt.Errorf("remotedb.DB.BeginRo: roTxsLimiter error %w", semErr)
+		return nil, semErr
 	}
 
 	defer func() {
@@ -185,7 +184,7 @@ func (db *DB) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 	return &tx{ctx: ctx, db: db, stream: stream, streamCancelFn: streamCancelFn, viewID: msg.ViewId, id: msg.TxId}, nil
 }
 func (db *DB) BeginTemporalRo(ctx context.Context) (kv.TemporalTx, error) {
-	t, err := db.BeginRo(ctx) //nolint:gocritic
+	t, err := db.BeginRo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -650,24 +649,24 @@ func (c *remoteCursorDupSort) LastDup() ([]byte, error)           { return c.las
 
 // Temporal Methods
 func (tx *tx) DomainGetAsOf(name kv.Domain, k, k2 []byte, ts uint64) (v []byte, ok bool, err error) {
-	reply, err := tx.db.remoteKV.DomainGet(tx.ctx, &remote.DomainGetReq{TxId: tx.id, Table: name.String(), K: k, K2: k2, Ts: ts})
+	reply, err := tx.db.remoteKV.DomainGet(tx.ctx, &remote.DomainGetReq{TxId: tx.id, Table: string(name), K: k, K2: k2, Ts: ts})
 	if err != nil {
 		return nil, false, err
 	}
 	return reply.V, reply.Ok, nil
 }
 
-func (tx *tx) DomainGet(name kv.Domain, k, k2 []byte) (v []byte, step uint64, err error) {
-	reply, err := tx.db.remoteKV.DomainGet(tx.ctx, &remote.DomainGetReq{TxId: tx.id, Table: name.String(), K: k, K2: k2, Latest: true})
+func (tx *tx) DomainGet(name kv.Domain, k, k2 []byte) (v []byte, ok bool, err error) {
+	reply, err := tx.db.remoteKV.DomainGet(tx.ctx, &remote.DomainGetReq{TxId: tx.id, Table: string(name), K: k, K2: k2, Latest: true})
 	if err != nil {
-		return nil, 0, err
+		return nil, false, err
 	}
-	return reply.V, 0, nil
+	return reply.V, reply.Ok, nil
 }
 
 func (tx *tx) DomainRange(name kv.Domain, fromKey, toKey []byte, ts uint64, asc order.By, limit int) (it iter.KV, err error) {
 	return iter.PaginateKV(func(pageToken string) (keys, vals [][]byte, nextPageToken string, err error) {
-		reply, err := tx.db.remoteKV.DomainRange(tx.ctx, &remote.DomainRangeReq{TxId: tx.id, Table: name.String(), FromKey: fromKey, ToKey: toKey, Ts: ts, OrderAscend: bool(asc), Limit: int64(limit)})
+		reply, err := tx.db.remoteKV.DomainRange(tx.ctx, &remote.DomainRangeReq{TxId: tx.id, Table: string(name), FromKey: fromKey, ToKey: toKey, Ts: ts, OrderAscend: bool(asc), Limit: int64(limit)})
 		if err != nil {
 			return nil, nil, "", err
 		}

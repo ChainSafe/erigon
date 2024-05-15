@@ -164,7 +164,7 @@ var (
 	SyncLoopBlockLimitFlag = cli.UintFlag{
 		Name:  "sync.loop.block.limit",
 		Usage: "Sets the maximum number of blocks to process per loop iteration",
-		Value: 2_000, // unlimited
+		Value: 0, // unlimited
 	}
 
 	UploadLocationFlag = cli.StringFlag{
@@ -232,18 +232,6 @@ var (
 		Name:  "rpc.evmtimeout",
 		Usage: "Maximum amount of time to wait for the answer from EVM call.",
 		Value: rpccfg.DefaultEvmCallTimeout,
-	}
-
-	OverlayGetLogsFlag = cli.DurationFlag{
-		Name:  "rpc.overlay.getlogstimeout",
-		Usage: "Maximum amount of time to wait for the answer from the overlay_getLogs call.",
-		Value: rpccfg.DefaultOverlayGetLogsTimeout,
-	}
-
-	OverlayReplayBlockFlag = cli.DurationFlag{
-		Name:  "rpc.overlay.replayblocktimeout",
-		Usage: "Maximum amount of time to wait for the answer to replay a single block when called from an overlay_getLogs call.",
-		Value: rpccfg.DefaultOverlayReplayBlockTimeout,
 	}
 
 	TxPoolCommitEvery = cli.DurationFlag{
@@ -462,7 +450,6 @@ func setEmbeddedRpcDaemon(ctx *cli.Context, cfg *nodecfg.Config, logger log.Logg
 		AuthRpcPort:              ctx.Int(utils.AuthRpcPort.Name),
 		JWTSecretPath:            jwtSecretPath,
 		TraceRequests:            ctx.Bool(utils.HTTPTraceFlag.Name),
-		DebugSingleRequest:       ctx.Bool(utils.HTTPDebugSingleFlag.Name),
 		HttpCORSDomain:           libcommon.CliString2Array(ctx.String(utils.HTTPCORSDomainFlag.Name)),
 		HttpVirtualHost:          libcommon.CliString2Array(ctx.String(utils.HTTPVirtualHostsFlag.Name)),
 		AuthRpcVirtualHost:       libcommon.CliString2Array(ctx.String(utils.AuthRpcVirtualHostsFlag.Name)),
@@ -477,23 +464,20 @@ func setEmbeddedRpcDaemon(ctx *cli.Context, cfg *nodecfg.Config, logger log.Logg
 			WriteTimeout: ctx.Duration(AuthRpcWriteTimeoutFlag.Name),
 			IdleTimeout:  ctx.Duration(HTTPIdleTimeoutFlag.Name),
 		},
-		EvmCallTimeout:                    ctx.Duration(EvmCallTimeoutFlag.Name),
-		OverlayGetLogsTimeout:             ctx.Duration(OverlayGetLogsFlag.Name),
-		OverlayReplayBlockTimeout:         ctx.Duration(OverlayReplayBlockFlag.Name),
-		WebsocketPort:                     ctx.Int(utils.WSPortFlag.Name),
-		WebsocketEnabled:                  ctx.IsSet(utils.WSEnabledFlag.Name),
-		WebsocketSubscribeLogsChannelSize: ctx.Int(utils.WSSubscribeLogsChannelSize.Name),
-		RpcBatchConcurrency:               ctx.Uint(utils.RpcBatchConcurrencyFlag.Name),
-		RpcStreamingDisable:               ctx.Bool(utils.RpcStreamingDisableFlag.Name),
-		DBReadConcurrency:                 ctx.Int(utils.DBReadConcurrencyFlag.Name),
-		RpcAllowListFilePath:              ctx.String(utils.RpcAccessListFlag.Name),
-		Gascap:                            ctx.Uint64(utils.RpcGasCapFlag.Name),
-		MaxTraces:                         ctx.Uint64(utils.TraceMaxtracesFlag.Name),
-		TraceCompatibility:                ctx.Bool(utils.RpcTraceCompatFlag.Name),
-		BatchLimit:                        ctx.Int(utils.RpcBatchLimit.Name),
-		ReturnDataLimit:                   ctx.Int(utils.RpcReturnDataLimit.Name),
-		AllowUnprotectedTxs:               ctx.Bool(utils.AllowUnprotectedTxs.Name),
-		MaxGetProofRewindBlockCount:       ctx.Int(utils.RpcMaxGetProofRewindBlockCount.Name),
+		EvmCallTimeout:              ctx.Duration(EvmCallTimeoutFlag.Name),
+		WebsocketPort:               ctx.Int(utils.WSPortFlag.Name),
+		WebsocketEnabled:            ctx.IsSet(utils.WSEnabledFlag.Name),
+		RpcBatchConcurrency:         ctx.Uint(utils.RpcBatchConcurrencyFlag.Name),
+		RpcStreamingDisable:         ctx.Bool(utils.RpcStreamingDisableFlag.Name),
+		DBReadConcurrency:           ctx.Int(utils.DBReadConcurrencyFlag.Name),
+		RpcAllowListFilePath:        ctx.String(utils.RpcAccessListFlag.Name),
+		Gascap:                      ctx.Uint64(utils.RpcGasCapFlag.Name),
+		MaxTraces:                   ctx.Uint64(utils.TraceMaxtracesFlag.Name),
+		TraceCompatibility:          ctx.Bool(utils.RpcTraceCompatFlag.Name),
+		BatchLimit:                  ctx.Int(utils.RpcBatchLimit.Name),
+		ReturnDataLimit:             ctx.Int(utils.RpcReturnDataLimit.Name),
+		AllowUnprotectedTxs:         ctx.Bool(utils.AllowUnprotectedTxs.Name),
+		MaxGetProofRewindBlockCount: ctx.Int(utils.RpcMaxGetProofRewindBlockCount.Name),
 
 		OtsMaxPageSize: ctx.Uint64(utils.OtsSearchMaxCapFlag.Name),
 

@@ -28,7 +28,7 @@ import (
 	"testing"
 
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
-	"github.com/ledgerwatch/erigon-lib/kv/temporal/temporaltest"
+	"github.com/ledgerwatch/erigon/core/state/temporal"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/core/vm"
@@ -49,16 +49,7 @@ func TestState(t *testing.T) {
 	st.skipLoad(`^stTimeConsuming/`)
 	st.skipLoad(`.*vmPerformance/loop.*`)
 
-	//st.slow(`^/modexp`)
-	//st.slow(`^stQuadraticComplexityTest/`)
-
-	// Very time consuming
-	st.skipLoad(`^stTimeConsuming/`)
-	st.skipLoad(`.*vmPerformance/loop.*`)
-	//if ethconfig.EnableHistoryV3InTest {
-	//}
-
-	_, db, _ := temporaltest.NewTestDB(t, datadir.New(t.TempDir()))
+	_, db, _ := temporal.NewTestDB(t, datadir.New(t.TempDir()), nil)
 	st.walk(t, stateTestDir, func(t *testing.T, name string, test *StateTest) {
 		for _, subtest := range test.Subtests() {
 			subtest := subtest
@@ -104,9 +95,8 @@ func withTrace(t *testing.T, test func(vm.Config) error) {
 	w.Flush()
 	if buf.Len() == 0 {
 		t.Log("no EVM operation logs generated")
-		//} else {
-		//enable it if need extensive logging
-		//t.Log("EVM operation log:\n" + buf.String())
+	} else {
+		t.Log("EVM operation log:\n" + buf.String())
 	}
 	//t.Logf("EVM output: 0x%x", tracer.Output())
 	//t.Logf("EVM error: %v", tracer.Error())

@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/ledgerwatch/erigon-lib/common"
-	remote "github.com/ledgerwatch/erigon-lib/gointerfaces/remoteproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/remote"
 	"github.com/ledgerwatch/erigon/core/types"
 )
 

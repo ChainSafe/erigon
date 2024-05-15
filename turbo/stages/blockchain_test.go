@@ -26,10 +26,9 @@ import (
 	"testing"
 
 	"github.com/ledgerwatch/erigon-lib/common/hexutil"
-	"github.com/ledgerwatch/erigon-lib/config3"
-	"github.com/ledgerwatch/log/v3"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/log/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -316,10 +315,6 @@ func testReorgShort(t *testing.T) {
 }
 
 func testReorg(t *testing.T, first, second []int64, td int64) {
-	if config3.EnableHistoryV4InTest {
-		t.Skip("TODO: [e4] implement me")
-	}
-
 	require := require.New(t)
 	// Create a pristine chain and database
 	m := newCanonical(t, 0)
@@ -1016,27 +1011,31 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	if err = m.InsertChain(chain.Slice(1, 2)); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.DB.View(m.Ctx, func(tx kv.Tx) error {
-		if st := state.New(m.NewStateReader(tx)); st.Exist(theAddr) {
-			t.Error("account should not exist")
-		}
-		return nil
-	}); err != nil {
-		panic(err)
+	tx, err = m.DB.BeginRw(m.Ctx)
+	if err != nil {
+		fmt.Printf("beginro error: %v\n", err)
+		return
 	}
+	defer tx.Rollback()
+	if st := state.New(m.NewStateReader(tx)); st.Exist(theAddr) {
+		t.Error("account should not exist")
+	}
+	tx.Rollback()
 
 	// account mustn't be created post eip 161
 	if err = m.InsertChain(chain.Slice(2, 3)); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.DB.View(m.Ctx, func(tx kv.Tx) error {
-		if st := state.New(m.NewStateReader(tx)); st.Exist(theAddr) {
-			t.Error("account should not exist")
-		}
-		return nil
-	}); err != nil {
-		panic(err)
+	tx, err = m.DB.BeginRw(m.Ctx)
+	if err != nil {
+		fmt.Printf("beginro error: %v\n", err)
+		return
 	}
+	defer tx.Rollback()
+	if st := state.New(m.NewStateReader(tx)); st.Exist(theAddr) {
+		t.Error("account should not exist")
+	}
+	require.NoError(t, err)
 }
 
 func TestDoubleAccountRemoval(t *testing.T) {
@@ -2094,7 +2093,7 @@ func TestEIP2718Transition(t *testing.T) {
 
 // TestEIP1559Transition tests the following:
 //
-//  1. A transaction whose feeCap is greater than the baseFee is valid.
+//  1. A tranaction whose feeCap is greater than the baseFee is valid.
 //  2. Gas accounting for access lists on EIP-1559 transactions is correct.
 //  3. Only the transaction's tip will be received by the coinbase.
 //  4. The transaction sender pays for both the tip and baseFee.

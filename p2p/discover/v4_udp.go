@@ -97,8 +97,6 @@ type UDPv4 struct {
 	errors              map[string]uint
 	unsolicitedNodes    *lru.Cache[enode.ID, *enode.Node]
 	privateKeyGenerator func() (*ecdsa.PrivateKey, error)
-
-	trace bool
 }
 
 // replyMatcher represents a pending reply.
@@ -679,9 +677,7 @@ func (t *UDPv4) send(toaddr *net.UDPAddr, toid enode.ID, req v4wire.Packet) ([]b
 
 func (t *UDPv4) write(toaddr *net.UDPAddr, toid enode.ID, what string, packet []byte) error {
 	_, err := t.conn.WriteToUDP(packet, toaddr)
-	if t.trace {
-		t.log.Trace(">> "+what, "id", toid, "addr", toaddr, "err", err)
-	}
+	t.log.Trace(">> "+what, "id", toid, "addr", toaddr, "err", err)
 	return err
 }
 
@@ -755,9 +751,7 @@ func (t *UDPv4) handlePacket(from *net.UDPAddr, buf []byte) error {
 	if packet.preverify != nil {
 		err = packet.preverify(packet, from, fromID, fromKey)
 	}
-	if t.trace {
-		t.log.Trace("<< "+packet.Name(), "id", fromID, "addr", from, "err", err)
-	}
+	t.log.Trace("<< "+packet.Name(), "id", fromID, "addr", from, "err", err)
 	if err == nil && packet.handle != nil {
 		packet.handle(packet, from, fromID, hash)
 	}

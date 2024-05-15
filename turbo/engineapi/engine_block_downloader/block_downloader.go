@@ -10,14 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ledgerwatch/erigon/eth/ethconfig"
-
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/etl"
-	execution "github.com/ledgerwatch/erigon-lib/gointerfaces/executionproto"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/execution"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
@@ -32,17 +30,15 @@ import (
 )
 
 const (
-	logInterval                 = 30 * time.Second
-	requestLoopCutOff       int = 1
-	forkchoiceTimeoutMillis     = 5000
+	logInterval           = 30 * time.Second
+	requestLoopCutOff int = 1
 )
 
 type RequestBodyFunction func(context.Context, *bodydownload.BodyRequest) ([64]byte, bool)
 
 // EngineBlockDownloader is responsible to download blocks in reverse, and then insert them in the database.
 type EngineBlockDownloader struct {
-	bacgroundCtx context.Context
-
+	ctx context.Context
 	// downloaders
 	hd          *headerdownload.HeaderDownload
 	bd          *bodydownload.BodyDownload
@@ -63,7 +59,6 @@ type EngineBlockDownloader struct {
 	tmpdir  string
 	timeout int
 	config  *chain.Config
-	syncCfg ethconfig.Sync
 
 	// lock
 	lock sync.Mutex
@@ -75,25 +70,23 @@ type EngineBlockDownloader struct {
 func NewEngineBlockDownloader(ctx context.Context, logger log.Logger, hd *headerdownload.HeaderDownload, executionClient execution.ExecutionClient,
 	bd *bodydownload.BodyDownload, blockPropagator adapter.BlockPropagator,
 	bodyReqSend RequestBodyFunction, blockReader services.FullBlockReader, db kv.RoDB, config *chain.Config,
-	tmpdir string, syncCfg ethconfig.Sync) *EngineBlockDownloader {
-	timeout := syncCfg.BodyDownloadTimeoutSeconds
+	tmpdir string, timeout int) *EngineBlockDownloader {
 	var s atomic.Value
 	s.Store(headerdownload.Idle)
 	return &EngineBlockDownloader{
-		bacgroundCtx:    ctx,
+		ctx:             ctx,
 		hd:              hd,
 		bd:              bd,
 		db:              db,
 		status:          s,
 		config:          config,
-		syncCfg:         syncCfg,
 		tmpdir:          tmpdir,
 		logger:          logger,
 		blockReader:     blockReader,
 		blockPropagator: blockPropagator,
 		timeout:         timeout,
 		bodyReqSend:     bodyReqSend,
-		chainRW:         eth1_chain_reader.NewChainReaderEth1(config, executionClient, forkchoiceTimeoutMillis),
+		chainRW:         eth1_chain_reader.NewChainReaderEth1(ctx, config, executionClient, 1000),
 	}
 }
 
@@ -118,7 +111,7 @@ func (e *EngineBlockDownloader) scheduleHeadersDownload(
 	e.hd.SetPOSSync(true) // This needs to be called after SetHeaderToDownloadPOS because SetHeaderToDownloadPOS sets `posAnchor` member field which is used by ProcessHeadersPOS
 
 	//nolint
-	e.hd.SetHeadersCollector(etl.NewCollector("EngineBlockDownloader", e.tmpdir, etl.NewSortableBuffer(etl.BufferOptimalSize/2), e.logger))
+	e.hd.SetHeadersCollector(etl.NewCollector("EngineBlockDownloader", e.tmpdir, etl.NewSortableBuffer(etl.BufferOptimalSize), e.logger))
 
 	e.hd.SetPosStatus(headerdownload.Syncing)
 
@@ -210,7 +203,7 @@ func saveHeader(db kv.RwTx, header *types.Header, hash libcommon.Hash) error {
 	return nil
 }
 
-func (e *EngineBlockDownloader) insertHeadersAndBodies(ctx context.Context, tx kv.Tx, fromBlock uint64, fromHash libcommon.Hash, toBlock uint64) error {
+func (e *EngineBlockDownloader) insertHeadersAndBodies(tx kv.Tx, fromBlock uint64, fromHash libcommon.Hash, toBlock uint64) error {
 	blockBatchSize := 500
 	blockWrittenLogSize := 20_000
 	// We divide them in batches
@@ -228,7 +221,7 @@ func (e *EngineBlockDownloader) insertHeadersAndBodies(ctx context.Context, tx k
 			return err
 		}
 		if len(blocksBatch) == blockBatchSize {
-			if err := e.chainRW.InsertBlocksAndWait(ctx, blocksBatch); err != nil {
+			if err := e.chainRW.InsertBlocksAndWait(blocksBatch); err != nil {
 				return err
 			}
 			blocksBatch = blocksBatch[:0]
@@ -240,7 +233,7 @@ func (e *EngineBlockDownloader) insertHeadersAndBodies(ctx context.Context, tx k
 		}
 		number := header.Number.Uint64()
 		if number > toBlock {
-			return e.chainRW.InsertBlocksAndWait(ctx, blocksBatch)
+			return e.chainRW.InsertBlocksAndWait(blocksBatch)
 		}
 		hash := header.Hash()
 		body, err := rawdb.ReadBodyWithTransactions(tx, hash, number)
@@ -250,11 +243,11 @@ func (e *EngineBlockDownloader) insertHeadersAndBodies(ctx context.Context, tx k
 		if body == nil {
 			return fmt.Errorf("missing body at block=%d", number)
 		}
-		blocksBatch = append(blocksBatch, types.NewBlockFromStorage(hash, header, body.Transactions, body.Uncles, body.Withdrawals))
+		blocksBatch = append(blocksBatch, types.NewBlockFromStorage(hash, header, body.Transactions, nil, body.Withdrawals))
 		if number%uint64(blockWrittenLogSize) == 0 {
 			e.logger.Info("[insertHeadersAndBodies] Written blocks", "progress", number, "to", toBlock)
 		}
 	}
-	return e.chainRW.InsertBlocksAndWait(ctx, blocksBatch)
+	return e.chainRW.InsertBlocksAndWait(blocksBatch)
 
 }

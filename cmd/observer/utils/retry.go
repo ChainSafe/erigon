@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/ledgerwatch/log/v3"
-
-	libcommon "github.com/ledgerwatch/erigon-lib/common"
 )
 
 func Retry(
@@ -24,7 +22,7 @@ func Retry(
 	for i := 0; i <= retryCount; i++ {
 		if i > 0 {
 			logger.Trace("retrying", "op", opName, "attempt", i, "err", err)
-			libcommon.Sleep(ctx, delayForAttempt(i))
+			Sleep(ctx, delayForAttempt(i))
 		}
 		result, err = op(ctx)
 		if (err == nil) || !isRecoverableError(err) {

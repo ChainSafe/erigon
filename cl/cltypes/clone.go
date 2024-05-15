@@ -5,9 +5,7 @@ import (
 )
 
 func (s *SignedBeaconBlock) Clone() clonable.Clonable {
-	other := NewSignedBeaconBlock(s.Block.Body.beaconCfg)
-	other.Block.Body.Version = s.Block.Body.Version
-	return other
+	return NewSignedBeaconBlock(s.Block.Body.beaconCfg)
 }
 
 func (*IndexedAttestation) Clone() clonable.Clonable {
@@ -15,9 +13,7 @@ func (*IndexedAttestation) Clone() clonable.Clonable {
 }
 
 func (b *BeaconBody) Clone() clonable.Clonable {
-	other := NewBeaconBody(b.beaconCfg)
-	other.Version = b.Version
-	return other
+	return NewBeaconBody(b.beaconCfg)
 }
 
 func (e *Eth1Block) Clone() clonable.Clonable {
@@ -77,9 +73,7 @@ func (*Deposit) Clone() clonable.Clonable {
 }
 
 func (b *BeaconBlock) Clone() clonable.Clonable {
-	other := NewBeaconBlock(b.Body.beaconCfg)
-	other.Body.Version = b.Body.Version
-	return other
+	return NewBeaconBlock(b.Body.beaconCfg)
 }
 
 func (*AggregateAndProof) Clone() clonable.Clonable {
@@ -116,14 +110,6 @@ func (*Withdrawal) Clone() clonable.Clonable {
 
 func (s *SignedContributionAndProof) Clone() clonable.Clonable {
 	return &SignedContributionAndProof{}
-}
-
-func (s *ContributionAndProof) Clone() clonable.Clonable {
-	return &ContributionAndProof{}
-}
-
-func (s *Contribution) Clone() clonable.Clonable {
-	return &Contribution{}
 }
 
 func (*Root) Clone() clonable.Clonable {

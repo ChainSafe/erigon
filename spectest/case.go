@@ -1,12 +1,11 @@
 package spectest
 
 import (
+	"github.com/ledgerwatch/erigon/cl/clparams"
+	"github.com/ledgerwatch/erigon/cl/transition/machine"
 	"io/fs"
 	"os"
 	"strings"
-
-	"github.com/ledgerwatch/erigon/cl/clparams"
-	"github.com/ledgerwatch/erigon/cl/transition/machine"
 
 	"gfx.cafe/util/go/generic"
 )
@@ -23,8 +22,7 @@ type TestCase struct {
 }
 
 func (t *TestCase) Version() clparams.StateVersion {
-	v, _ := clparams.StringToClVersion(t.ForkPhaseName)
-	return v
+	return clparams.StringToClVersion(t.ForkPhaseName)
 }
 
 type TestCases struct {

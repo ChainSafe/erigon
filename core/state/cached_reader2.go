@@ -3,7 +3,6 @@ package state
 import (
 	"bytes"
 	"encoding/binary"
-
 	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	"github.com/ledgerwatch/erigon-lib/common"

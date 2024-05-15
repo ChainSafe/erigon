@@ -23,7 +23,7 @@ import (
 
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/direct"
-	proto_sentry "github.com/ledgerwatch/erigon-lib/gointerfaces/sentryproto"
+	proto_sentry "github.com/ledgerwatch/erigon-lib/gointerfaces/sentry"
 	rlp2 "github.com/ledgerwatch/erigon-lib/rlp"
 
 	"github.com/ledgerwatch/erigon/core/forkid"

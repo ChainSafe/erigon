@@ -294,7 +294,7 @@ func (a *ApiHandler) getSyncCommittees(w http.ResponseWriter, r *http.Request) (
 	}
 
 	// Code here
-	currentSyncCommittee, nextSyncCommittee, ok := a.forkchoiceStore.GetSyncCommittees(a.beaconChainCfg.SyncCommitteePeriod(*slot))
+	currentSyncCommittee, nextSyncCommittee, ok := a.forkchoiceStore.GetSyncCommittees(blockRoot)
 	if !ok {
 		syncCommitteeSlot := a.beaconChainCfg.RoundSlotToSyncCommitteePeriod(*slot)
 		// Check the main database if it cannot be found in the forkchoice store

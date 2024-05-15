@@ -2,13 +2,12 @@ package state
 
 import (
 	"encoding/binary"
-	"fmt"
-
-	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	"github.com/holiman/uint256"
+
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	"github.com/ledgerwatch/erigon/turbo/shards"
@@ -25,15 +24,12 @@ type PlainStateWriter struct {
 	db          putDel
 	csw         *ChangeSetWriter
 	accumulator *shards.Accumulator
-
-	trace bool
 }
 
 func NewPlainStateWriter(db putDel, changeSetsDB kv.RwTx, blockNumber uint64) *PlainStateWriter {
 	return &PlainStateWriter{
 		db:  db,
 		csw: NewChangeSetWriterPlain(changeSetsDB, blockNumber),
-		//trace: true,
 	}
 }
 
@@ -49,9 +45,7 @@ func (w *PlainStateWriter) SetAccumulator(accumulator *shards.Accumulator) *Plai
 }
 
 func (w *PlainStateWriter) UpdateAccountData(address libcommon.Address, original, account *accounts.Account) error {
-	if w.trace {
-		fmt.Printf("acc %x: {Balance: %d, Nonce: %d, Inc: %d, CodeHash: %x}\n", address, &account.Balance, account.Nonce, account.Incarnation, account.CodeHash)
-	}
+	//fmt.Printf("balance,%x,%d\n", address, &account.Balance)
 	if w.csw != nil {
 		if err := w.csw.UpdateAccountData(address, original, account); err != nil {
 			return err
@@ -75,9 +69,7 @@ func (w *PlainStateWriter) UpdateAccountData(address libcommon.Address, original
 }
 
 func (w *PlainStateWriter) UpdateAccountCode(address libcommon.Address, incarnation uint64, codeHash libcommon.Hash, code []byte) error {
-	if w.trace {
-		fmt.Printf("code: %x, %x, valLen: %d\n", address.Bytes(), codeHash, len(code))
-	}
+	//fmt.Printf("code,%x,%x\n", address, code)
 	if w.csw != nil {
 		if err := w.csw.UpdateAccountCode(address, incarnation, codeHash, code); err != nil {
 			return err
@@ -93,10 +85,7 @@ func (w *PlainStateWriter) UpdateAccountCode(address libcommon.Address, incarnat
 }
 
 func (w *PlainStateWriter) DeleteAccount(address libcommon.Address, original *accounts.Account) error {
-	if w.trace {
-		fmt.Printf("del acc: %x\n", address)
-	}
-
+	//fmt.Printf("delete,%x\n", address)
 	if w.csw != nil {
 		if err := w.csw.DeleteAccount(address, original); err != nil {
 			return err
@@ -119,6 +108,7 @@ func (w *PlainStateWriter) DeleteAccount(address libcommon.Address, original *ac
 }
 
 func (w *PlainStateWriter) WriteAccountStorage(address libcommon.Address, incarnation uint64, key *libcommon.Hash, original, value *uint256.Int) error {
+	//fmt.Printf("storage,%x,%x,%x\n", address, *key, value.Bytes())
 	if w.csw != nil {
 		if err := w.csw.WriteAccountStorage(address, incarnation, key, original, value); err != nil {
 			return err
@@ -126,9 +116,6 @@ func (w *PlainStateWriter) WriteAccountStorage(address libcommon.Address, incarn
 	}
 	if *original == *value {
 		return nil
-	}
-	if w.trace {
-		fmt.Printf("storage: %x,%x,%x\n", address, *key, value.Bytes())
 	}
 	compositeKey := dbutils.PlainGenerateCompositeStorageKey(address.Bytes(), incarnation, key.Bytes())
 
@@ -143,10 +130,6 @@ func (w *PlainStateWriter) WriteAccountStorage(address libcommon.Address, incarn
 }
 
 func (w *PlainStateWriter) CreateContract(address libcommon.Address) error {
-	if w.trace {
-		fmt.Printf("create contract: %x\n", address)
-	}
-
 	if w.csw != nil {
 		if err := w.csw.CreateContract(address); err != nil {
 			return err

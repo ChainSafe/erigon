@@ -4,20 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
-
-	"github.com/ledgerwatch/log/v3"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ledgerwatch/erigon-lib/chain/snapcfg"
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/downloader/snaptype"
 	"github.com/ledgerwatch/erigon-lib/gointerfaces"
-	isentry "github.com/ledgerwatch/erigon-lib/gointerfaces/sentryproto"
-	types "github.com/ledgerwatch/erigon-lib/gointerfaces/typesproto"
-	"github.com/ledgerwatch/erigon/cmd/snapshots/sync"
-	coresnaptype "github.com/ledgerwatch/erigon/core/snaptype"
-	coretypes "github.com/ledgerwatch/erigon/core/types"
+	sentry_if "github.com/ledgerwatch/erigon-lib/gointerfaces/sentry"
+	"github.com/ledgerwatch/erigon-lib/gointerfaces/types"
+	core_types "github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
 	"github.com/ledgerwatch/erigon/eth/protocols/eth"
@@ -27,19 +21,20 @@ import (
 	"github.com/ledgerwatch/erigon/p2p/sentry"
 	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync/freezeblocks"
+	"github.com/ledgerwatch/log/v3"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type server struct {
-	isentry.UnimplementedSentryServer
+	sentry_if.UnimplementedSentryServer
 	ctx              context.Context
 	peers            map[[64]byte]*p2p.Peer
-	messageReceivers map[isentry.MessageId][]isentry.Sentry_MessagesServer
+	messageReceivers map[sentry_if.MessageId][]sentry_if.Sentry_MessagesServer
 	logger           log.Logger
 	knownSnapshots   *freezeblocks.RoSnapshots
 	activeSnapshots  *freezeblocks.RoSnapshots
 	blockReader      *freezeblocks.BlockReader
-	downloader       *sync.TorrentClient
-	chain            string
+	downloader       *TorrentClient
 }
 
 func newPeer(name string, caps []p2p.Cap) (*p2p.Peer, error) {
@@ -52,7 +47,7 @@ func newPeer(name string, caps []p2p.Cap) (*p2p.Peer, error) {
 	return p2p.NewPeer(enode.PubkeyToIDV4(&key.PublicKey), v4wire.EncodePubkey(&key.PublicKey), name, caps, true), nil
 }
 
-func NewSentry(ctx context.Context, chain string, snapshotLocation string, peerCount int, logger log.Logger) (isentry.SentryServer, error) {
+func NewSentry(ctx context.Context, chain string, snapshotLocation string, peerCount int, logger log.Logger) (sentry_if.SentryServer, error) {
 	peers := map[[64]byte]*p2p.Peer{}
 
 	for i := 0; i < peerCount; i++ {
@@ -65,7 +60,6 @@ func NewSentry(ctx context.Context, chain string, snapshotLocation string, peerC
 	}
 
 	cfg := snapcfg.KnownCfg(chain)
-	torrentDir := filepath.Join(snapshotLocation, "torrents", chain)
 
 	knownSnapshots := freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{
 		Enabled:      true,
@@ -86,14 +80,13 @@ func NewSentry(ctx context.Context, chain string, snapshotLocation string, peerC
 		Enabled:      true,
 		Produce:      false,
 		NoDownloader: true,
-	}, torrentDir, 0, logger)
+	}, snapshotLocation, 0, logger)
 
 	if err := activeSnapshots.ReopenFolder(); err != nil {
 		return nil, err
 	}
 
-	config := sync.NewDefaultTorrentClientConfig(chain, snapshotLocation, logger)
-	downloader, err := sync.NewTorrentClient(config)
+	downloader, err := NewTorrentClient(ctx, chain, snapshotLocation, logger)
 
 	if err != nil {
 		return nil, err
@@ -102,13 +95,12 @@ func NewSentry(ctx context.Context, chain string, snapshotLocation string, peerC
 	s := &server{
 		ctx:              ctx,
 		peers:            peers,
-		messageReceivers: map[isentry.MessageId][]isentry.Sentry_MessagesServer{},
+		messageReceivers: map[sentry_if.MessageId][]sentry_if.Sentry_MessagesServer{},
 		knownSnapshots:   knownSnapshots,
 		activeSnapshots:  activeSnapshots,
 		blockReader:      freezeblocks.NewBlockReader(activeSnapshots, nil),
 		logger:           logger,
 		downloader:       downloader,
-		chain:            chain,
 	}
 
 	go func() {
@@ -120,7 +112,10 @@ func NewSentry(ctx context.Context, chain string, snapshotLocation string, peerC
 }
 
 func (s *server) Close() {
-	_ = s.downloader.Close()
+	s.downloader.Close()
+	if closer, ok := s.downloader.cfg.DefaultStorage.(interface{ Close() error }); ok {
+		closer.Close()
+	}
 	s.activeSnapshots.Close()
 }
 
@@ -128,7 +123,7 @@ func (s *server) NodeInfo(context.Context, *emptypb.Empty) (*types.NodeInfoReply
 	return nil, fmt.Errorf("TODO")
 }
 
-func (s *server) PeerById(ctx context.Context, in *isentry.PeerByIdRequest) (*isentry.PeerByIdReply, error) {
+func (s *server) PeerById(ctx context.Context, in *sentry_if.PeerByIdRequest) (*sentry_if.PeerByIdReply, error) {
 	peerId := sentry.ConvertH512ToPeerID(in.PeerId)
 
 	peer, ok := s.peers[peerId]
@@ -139,7 +134,7 @@ func (s *server) PeerById(ctx context.Context, in *isentry.PeerByIdRequest) (*is
 
 	info := peer.Info()
 
-	return &isentry.PeerByIdReply{
+	return &sentry_if.PeerByIdReply{
 		Peer: &types.PeerInfo{
 			Id:             info.ID,
 			Name:           info.Name,
@@ -155,20 +150,20 @@ func (s *server) PeerById(ctx context.Context, in *isentry.PeerByIdRequest) (*is
 	}, nil
 }
 
-func (s *server) PeerCount(context.Context, *isentry.PeerCountRequest) (*isentry.PeerCountReply, error) {
-	return &isentry.PeerCountReply{Count: uint64(len(s.peers))}, nil
+func (s *server) PeerCount(context.Context, *sentry_if.PeerCountRequest) (*sentry_if.PeerCountReply, error) {
+	return &sentry_if.PeerCountReply{Count: uint64(len(s.peers))}, nil
 }
 
-func (s *server) PeerEvents(*isentry.PeerEventsRequest, isentry.Sentry_PeerEventsServer) error {
+func (s *server) PeerEvents(*sentry_if.PeerEventsRequest, sentry_if.Sentry_PeerEventsServer) error {
 	return fmt.Errorf("TODO")
 }
 
-func (s *server) PeerMinBlock(context.Context, *isentry.PeerMinBlockRequest) (*emptypb.Empty, error) {
+func (s *server) PeerMinBlock(context.Context, *sentry_if.PeerMinBlockRequest) (*emptypb.Empty, error) {
 	return nil, fmt.Errorf("TODO")
 }
 
-func (s *server) Peers(context.Context, *emptypb.Empty) (*isentry.PeersReply, error) {
-	reply := &isentry.PeersReply{}
+func (s *server) Peers(context.Context, *emptypb.Empty) (*sentry_if.PeersReply, error) {
+	reply := &sentry_if.PeersReply{}
 
 	for _, peer := range s.peers {
 		info := peer.Info()
@@ -191,19 +186,19 @@ func (s *server) Peers(context.Context, *emptypb.Empty) (*isentry.PeersReply, er
 	return reply, nil
 }
 
-func (s *server) SendMessageById(ctx context.Context, in *isentry.SendMessageByIdRequest) (*isentry.SentPeers, error) {
+func (s *server) SendMessageById(ctx context.Context, in *sentry_if.SendMessageByIdRequest) (*sentry_if.SentPeers, error) {
 	peerId := sentry.ConvertH512ToPeerID(in.PeerId)
 
 	if err := s.sendMessageById(ctx, peerId, in.Data); err != nil {
 		return nil, err
 	}
 
-	return &isentry.SentPeers{
+	return &sentry_if.SentPeers{
 		Peers: []*types.H512{in.PeerId},
 	}, nil
 }
 
-func (s *server) sendMessageById(ctx context.Context, peerId [64]byte, messageData *isentry.OutboundMessageData) error {
+func (s *server) sendMessageById(ctx context.Context, peerId [64]byte, messageData *sentry_if.OutboundMessageData) error {
 	peer, ok := s.peers[peerId]
 
 	if !ok {
@@ -211,7 +206,7 @@ func (s *server) sendMessageById(ctx context.Context, peerId [64]byte, messageDa
 	}
 
 	switch messageData.Id {
-	case isentry.MessageId_GET_BLOCK_HEADERS_65:
+	case sentry_if.MessageId_GET_BLOCK_HEADERS_65:
 		packet := &eth.GetBlockHeadersPacket{}
 		if err := rlp.DecodeBytes(messageData.Data, packet); err != nil {
 			return fmt.Errorf("failed to decode packet: %w", err)
@@ -219,7 +214,7 @@ func (s *server) sendMessageById(ctx context.Context, peerId [64]byte, messageDa
 
 		go s.processGetBlockHeaders(ctx, peer, 0, packet)
 
-	case isentry.MessageId_GET_BLOCK_HEADERS_66:
+	case sentry_if.MessageId_GET_BLOCK_HEADERS_66:
 		packet := &eth.GetBlockHeadersPacket66{}
 		if err := rlp.DecodeBytes(messageData.Data, packet); err != nil {
 			return fmt.Errorf("failed to decode packet: %w", err)
@@ -234,12 +229,12 @@ func (s *server) sendMessageById(ctx context.Context, peerId [64]byte, messageDa
 	return nil
 }
 
-func (s *server) SendMessageByMinBlock(ctx context.Context, request *isentry.SendMessageByMinBlockRequest) (*isentry.SentPeers, error) {
+func (s *server) SendMessageByMinBlock(ctx context.Context, request *sentry_if.SendMessageByMinBlockRequest) (*sentry_if.SentPeers, error) {
 	return s.UnimplementedSentryServer.SendMessageByMinBlock(ctx, request)
 }
 
-func (s *server) SendMessageToAll(ctx context.Context, data *isentry.OutboundMessageData) (*isentry.SentPeers, error) {
-	sentPeers := &isentry.SentPeers{}
+func (s *server) SendMessageToAll(ctx context.Context, data *sentry_if.OutboundMessageData) (*sentry_if.SentPeers, error) {
+	sentPeers := &sentry_if.SentPeers{}
 
 	for _, peer := range s.peers {
 		peerKey := peer.Pubkey()
@@ -254,8 +249,8 @@ func (s *server) SendMessageToAll(ctx context.Context, data *isentry.OutboundMes
 	return sentPeers, nil
 }
 
-func (s *server) SendMessageToRandomPeers(ctx context.Context, request *isentry.SendMessageToRandomPeersRequest) (*isentry.SentPeers, error) {
-	sentPeers := &isentry.SentPeers{}
+func (s *server) SendMessageToRandomPeers(ctx context.Context, request *sentry_if.SendMessageToRandomPeersRequest) (*sentry_if.SentPeers, error) {
+	sentPeers := &sentry_if.SentPeers{}
 
 	var i uint64
 
@@ -279,7 +274,7 @@ func (s *server) SendMessageToRandomPeers(ctx context.Context, request *isentry.
 
 }
 
-func (s *server) Messages(request *isentry.MessagesRequest, receiver isentry.Sentry_MessagesServer) error {
+func (s *server) Messages(request *sentry_if.MessagesRequest, receiver sentry_if.Sentry_MessagesServer) error {
 	for _, messageId := range request.Ids {
 		receivers := s.messageReceivers[messageId]
 		s.messageReceivers[messageId] = append(receivers, receiver)
@@ -291,8 +286,8 @@ func (s *server) Messages(request *isentry.MessagesRequest, receiver isentry.Sen
 }
 
 func (s *server) processGetBlockHeaders(ctx context.Context, peer *p2p.Peer, requestId uint64, request *eth.GetBlockHeadersPacket) {
-	r65 := s.messageReceivers[isentry.MessageId_BLOCK_HEADERS_65]
-	r66 := s.messageReceivers[isentry.MessageId_BLOCK_HEADERS_66]
+	r65 := s.messageReceivers[sentry_if.MessageId_BLOCK_HEADERS_65]
+	r66 := s.messageReceivers[sentry_if.MessageId_BLOCK_HEADERS_66]
 
 	if len(r65)+len(r66) > 0 {
 
@@ -317,8 +312,8 @@ func (s *server) processGetBlockHeaders(ctx context.Context, peer *p2p.Peer, req
 			}
 
 			for _, receiver := range r65 {
-				receiver.Send(&isentry.InboundMessage{
-					Id:     isentry.MessageId_BLOCK_HEADERS_65,
+				receiver.Send(&sentry_if.InboundMessage{
+					Id:     sentry_if.MessageId_BLOCK_HEADERS_65,
 					Data:   data.Bytes(),
 					PeerId: peerId,
 				})
@@ -339,8 +334,8 @@ func (s *server) processGetBlockHeaders(ctx context.Context, peer *p2p.Peer, req
 			}
 
 			for _, receiver := range r66 {
-				receiver.Send(&isentry.InboundMessage{
-					Id:     isentry.MessageId_BLOCK_HEADERS_66,
+				receiver.Send(&sentry_if.InboundMessage{
+					Id:     sentry_if.MessageId_BLOCK_HEADERS_66,
 					Data:   data.Bytes(),
 					PeerId: peerId,
 				})
@@ -406,7 +401,7 @@ func (s *server) getHeaders(ctx context.Context, origin eth.HashOrNumber, amount
 	return headers, nil
 }
 
-func (s *server) getHeader(ctx context.Context, blockNum uint64) (*coretypes.Header, error) {
+func (s *server) getHeader(ctx context.Context, blockNum uint64) (*core_types.Header, error) {
 	header, err := s.blockReader.Header(ctx, nil, common.Hash{}, blockNum)
 
 	if err != nil {
@@ -423,7 +418,7 @@ func (s *server) getHeader(ctx context.Context, blockNum uint64) (*coretypes.Hea
 			}
 		}
 
-		s.activeSnapshots.ReopenSegments([]snaptype.Type{coresnaptype.Headers}, true)
+		s.activeSnapshots.ReopenSegments([]snaptype.Type{snaptype.Headers})
 
 		header, err = s.blockReader.Header(ctx, nil, common.Hash{}, blockNum)
 
@@ -435,25 +430,24 @@ func (s *server) getHeader(ctx context.Context, blockNum uint64) (*coretypes.Hea
 	return header, nil
 }
 
-func (s *server) getHeaderByHash(ctx context.Context, hash common.Hash) (*coretypes.Header, error) {
+func (s *server) getHeaderByHash(ctx context.Context, hash common.Hash) (*core_types.Header, error) {
 	return s.blockReader.HeaderByHash(ctx, nil, hash)
 }
 
 func (s *server) downloadHeaders(ctx context.Context, header *freezeblocks.Segment) error {
-	fileName := snaptype.SegmentFileName(0, header.From(), header.To(), coresnaptype.Enums.Headers)
-	session := sync.NewTorrentSession(s.downloader, s.chain)
+	fileName := snaptype.SegmentFileName(0, header.From(), header.To(), snaptype.Enums.Headers)
 
-	s.logger.Info("Downloading", "file", fileName)
+	s.logger.Info(fmt.Sprintf("Downloading %s", fileName))
 
-	err := session.Download(ctx, fileName)
+	err := s.downloader.Download(ctx, fileName)
 
 	if err != nil {
 		return fmt.Errorf("can't download %s: %w", fileName, err)
 	}
 
-	s.logger.Info("Indexing", "file", fileName)
+	s.logger.Info(fmt.Sprintf("Indexing %s", fileName))
 
-	info, _, _ := snaptype.ParseFileName(session.LocalFsRoot(), fileName)
+	info, _ := snaptype.ParseFileName(s.downloader.LocalFsRoot(), fileName)
 
-	return coresnaptype.Headers.BuildIndexes(ctx, info, nil, session.LocalFsRoot(), nil, log.LvlDebug, s.logger)
+	return freezeblocks.HeadersIdx(ctx, info, s.downloader.LocalFsRoot(), nil, log.LvlDebug, s.logger)
 }

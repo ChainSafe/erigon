@@ -8,6 +8,7 @@ import (
 	"github.com/ledgerwatch/erigon/cl/beacon/beaconhttp"
 	"github.com/ledgerwatch/erigon/cl/clparams"
 	"github.com/ledgerwatch/erigon/cl/cltypes"
+	"github.com/ledgerwatch/erigon/cl/utils"
 )
 
 func (a *ApiHandler) GetEthV1BeaconLightClientBootstrap(w http.ResponseWriter, r *http.Request) (*beaconhttp.BeaconResponse, error) {
@@ -85,7 +86,7 @@ func (a *ApiHandler) GetEthV1BeaconLightClientUpdates(w http.ResponseWriter, r *
 
 	resp := []interface{}{}
 	endPeriod := *startPeriod + *count
-	currentSlot := a.ethClock.GetCurrentSlot()
+	currentSlot := utils.GetCurrentSlot(a.genesisCfg.GenesisTime, a.beaconChainCfg.SecondsPerSlot)
 	if endPeriod > a.beaconChainCfg.SyncCommitteePeriod(currentSlot) {
 		endPeriod = a.beaconChainCfg.SyncCommitteePeriod(currentSlot)
 	}

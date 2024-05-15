@@ -21,10 +21,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 	"sort"
 	"time"
-
-	"github.com/ledgerwatch/erigon-lib/kv/dbutils"
 
 	"github.com/goccy/go-json"
 	lru "github.com/hashicorp/golang-lru/arc/v2"

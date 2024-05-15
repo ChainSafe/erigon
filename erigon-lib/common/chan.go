@@ -16,26 +16,10 @@
 
 package common
 
-import (
-	"errors"
-
-	"golang.org/x/net/context"
-)
+import "errors"
 
 var ErrStopped = errors.New("stopped")
 var ErrUnwind = errors.New("unwound")
-
-// FastContextErr is faster than ctx.Err() because usually it doesn't lock an internal mutex.
-// It locks it only if the context is done and at the first call.
-// See implementation of cancelCtx in context/context.go.
-func FastContextErr(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return nil
-	}
-}
 
 func Stopped(ch <-chan struct{}) error {
 	if ch == nil {

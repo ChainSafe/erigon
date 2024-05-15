@@ -6,15 +6,19 @@ import (
 	"fmt"
 	"math/big"
 
-	hexutil2 "github.com/ledgerwatch/erigon-lib/common/hexutil"
+	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/log/v3"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/chain"
 	"github.com/ledgerwatch/erigon-lib/common"
+	hexutil2 "github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon-lib/kv"
-	"github.com/ledgerwatch/erigon/consensus"
+	"github.com/ledgerwatch/erigon-lib/kv/iter"
+	"github.com/ledgerwatch/erigon-lib/kv/order"
+	"github.com/ledgerwatch/erigon-lib/kv/rawdbv3"
+	"github.com/ledgerwatch/erigon/consensus/ethash"
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -73,7 +77,7 @@ func (api *OtterscanAPIImpl) GetApiLevel() uint8 {
 // TODO: dedup from eth_txs.go#GetTransactionByHash
 func (api *OtterscanAPIImpl) getTransactionByHash(ctx context.Context, tx kv.Tx, hash common.Hash) (types.Transaction, *types.Block, common.Hash, uint64, uint64, error) {
 	// https://infura.io/docs/ethereum/json-rpc/eth-getTransactionByHash
-	blockNum, ok, err := api.txnLookup(ctx, tx, hash)
+	blockNum, ok, err := api.txnLookup(tx, hash)
 	if err != nil {
 		return nil, nil, common.Hash{}, 0, 0, err
 	}
@@ -81,7 +85,7 @@ func (api *OtterscanAPIImpl) getTransactionByHash(ctx context.Context, tx kv.Tx,
 		return nil, nil, common.Hash{}, 0, 0, nil
 	}
 
-	block, err := api.blockByNumberWithSenders(ctx, tx, blockNum)
+	block, err := api.blockByNumberWithSenders(tx, blockNum)
 	if err != nil {
 		return nil, nil, common.Hash{}, 0, 0, err
 	}
@@ -121,7 +125,7 @@ func (api *OtterscanAPIImpl) runTracer(ctx context.Context, tx kv.Tx, hash commo
 		return nil, fmt.Errorf("transaction %#x not found", hash)
 	}
 
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +212,7 @@ func (api *OtterscanAPIImpl) SearchTransactionsBefore(ctx context.Context, addr 
 	}
 	defer callToCursor.Close()
 
-	chainConfig, err := api.chainConfig(ctx, dbtx)
+	chainConfig, err := api.chainConfig(dbtx)
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +268,94 @@ func (api *OtterscanAPIImpl) SearchTransactionsBefore(ctx context.Context, addr 
 	return &TransactionsWithReceipts{txs, receipts, isFirstPage, !hasMore}, nil
 }
 
+func (api *OtterscanAPIImpl) searchTransactionsBeforeV3(tx kv.TemporalTx, ctx context.Context, addr common.Address, fromBlockNum uint64, pageSize uint16) (*TransactionsWithReceipts, error) {
+	chainConfig, err := api.chainConfig(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	isFirstPage := false
+	if fromBlockNum == 0 {
+		isFirstPage = true
+	} else {
+		// Internal search code considers blockNum [including], so adjust the value
+		fromBlockNum--
+	}
+	fromTxNum, err := rawdbv3.TxNums.Max(tx, fromBlockNum)
+	if err != nil {
+		return nil, err
+	}
+	itTo, err := tx.IndexRange(kv.TracesToIdx, addr[:], int(fromTxNum), -1, order.Desc, kv.Unlim)
+	if err != nil {
+		return nil, err
+	}
+	itFrom, err := tx.IndexRange(kv.TracesFromIdx, addr[:], int(fromTxNum), -1, order.Desc, kv.Unlim)
+	if err != nil {
+		return nil, err
+	}
+	txNums := iter.Union[uint64](itFrom, itTo, order.Desc, kv.Unlim)
+	txNumsIter := MapDescendTxNum2BlockNum(tx, txNums)
+
+	exec := txnExecutor(tx, chainConfig, api.engine(), api._blockReader, nil)
+	var blockHash common.Hash
+	var header *types.Header
+	txs := make([]*RPCTransaction, 0, pageSize)
+	receipts := make([]map[string]interface{}, 0, pageSize)
+	resultCount := uint16(0)
+
+	for txNumsIter.HasNext() {
+		txNum, blockNum, txIndex, isFinalTxn, blockNumChanged, err := txNumsIter.Next()
+		if err != nil {
+			return nil, err
+		}
+		if isFinalTxn {
+			continue
+		}
+
+		if blockNumChanged { // things which not changed within 1 block
+			if header, err = api._blockReader.HeaderByNumber(ctx, tx, blockNum); err != nil {
+				return nil, err
+			}
+			if header == nil {
+				log.Warn("[rpc] header is nil", "blockNum", blockNum)
+				continue
+			}
+			blockHash = header.Hash()
+			exec.changeBlock(header)
+		}
+
+		//fmt.Printf("txNum=%d, blockNum=%d, txIndex=%d, maxTxNumInBlock=%d,mixTxNumInBlock=%d\n", txNum, blockNum, txIndex, maxTxNumInBlock, minTxNumInBlock)
+		txn, err := api._txnReader.TxnByIdxInBlock(ctx, tx, blockNum, txIndex)
+		if err != nil {
+			return nil, err
+		}
+		if txn == nil {
+			continue
+		}
+		rawLogs, res, err := exec.execTx(txNum, txIndex, txn)
+		if err != nil {
+			return nil, err
+		}
+		rpcTx := NewRPCTransaction(txn, blockHash, blockNum, uint64(txIndex), header.BaseFee)
+		txs = append(txs, rpcTx)
+		receipt := &types.Receipt{
+			Type: txn.Type(), CumulativeGasUsed: res.UsedGas,
+			TransactionIndex: uint(txIndex),
+			BlockNumber:      header.Number, BlockHash: blockHash, Logs: rawLogs,
+		}
+		mReceipt := ethutils.MarshalReceipt(receipt, txn, chainConfig, header, txn.Hash(), true)
+		mReceipt["timestamp"] = header.Time
+		receipts = append(receipts, mReceipt)
+
+		resultCount++
+		if resultCount >= pageSize {
+			break
+		}
+	}
+	hasMore := txNumsIter.HasNext()
+	return &TransactionsWithReceipts{txs, receipts, isFirstPage, !hasMore}, nil
+}
+
 // Search transactions that touch a certain address.
 //
 // It searches forward a certain block (excluding); the results are sorted descending.
@@ -283,10 +375,6 @@ func (api *OtterscanAPIImpl) SearchTransactionsAfter(ctx context.Context, addr c
 	}
 	defer dbtx.Rollback()
 
-	if api.historyV3(dbtx) {
-		return api.searchTransactionsAfterV3(dbtx.(kv.TemporalTx), ctx, addr, blockNum, pageSize)
-	}
-
 	callFromCursor, err := dbtx.Cursor(kv.CallFromIndex)
 	if err != nil {
 		return nil, err
@@ -299,7 +387,7 @@ func (api *OtterscanAPIImpl) SearchTransactionsAfter(ctx context.Context, addr c
 	}
 	defer callToCursor.Close()
 
-	chainConfig, err := api.chainConfig(ctx, dbtx)
+	chainConfig, err := api.chainConfig(dbtx)
 	if err != nil {
 		return nil, err
 	}
@@ -431,40 +519,29 @@ type internalIssuance struct {
 	Issuance    string `json:"issuance,omitempty"`
 }
 
-func delegateIssuance(tx kv.Tx, block *types.Block, chainConfig *chain.Config, engine consensus.EngineReader) (internalIssuance, error) {
-	// TODO: aura seems to be already broken in the original version of this RPC method
-	rewards, err := engine.CalculateRewards(chainConfig, block.HeaderNoCopy(), block.Uncles(), func(contract common.Address, data []byte) ([]byte, error) {
-		return nil, nil
-	})
-	if err != nil {
-		return internalIssuance{}, err
+func delegateIssuance(tx kv.Tx, block *types.Block, chainConfig *chain.Config) (internalIssuance, error) {
+	if chainConfig.Ethash == nil {
+		// Clique for example has no issuance
+		return internalIssuance{}, nil
 	}
 
-	blockReward := uint256.NewInt(0)
-	uncleReward := uint256.NewInt(0)
-	for _, r := range rewards {
-		if r.Kind == consensus.RewardAuthor {
-			blockReward.Add(blockReward, &r.Amount)
-		}
-		if r.Kind == consensus.RewardUncle {
-			uncleReward.Add(uncleReward, &r.Amount)
-		}
+	minerReward, uncleRewards := ethash.AccumulateRewards(chainConfig, block.Header(), block.Uncles())
+	issuance := minerReward
+	for _, r := range uncleRewards {
+		p := r // avoids warning?
+		issuance.Add(&issuance, &p)
 	}
 
 	var ret internalIssuance
-	ret.BlockReward = hexutil2.EncodeBig(blockReward.ToBig())
-	ret.UncleReward = hexutil2.EncodeBig(uncleReward.ToBig())
-
-	blockReward.Add(blockReward, uncleReward)
-	ret.Issuance = hexutil2.EncodeBig(blockReward.ToBig())
+	ret.BlockReward = hexutil2.EncodeBig(minerReward.ToBig())
+	ret.Issuance = hexutil2.EncodeBig(issuance.ToBig())
+	issuance.Sub(&issuance, &minerReward)
+	ret.UncleReward = hexutil2.EncodeBig(issuance.ToBig())
 	return ret, nil
 }
 
-func delegateBlockFees(ctx context.Context, tx kv.Tx, block *types.Block, senders []common.Address, chainConfig *chain.Config, receipts types.Receipts) (*big.Int, error) {
-	fee := big.NewInt(0)
-	gasUsed := big.NewInt(0)
-
-	totalFees := big.NewInt(0)
+func delegateBlockFees(ctx context.Context, tx kv.Tx, block *types.Block, senders []common.Address, chainConfig *chain.Config, receipts types.Receipts) (uint64, error) {
+	fees := uint64(0)
 	for _, receipt := range receipts {
 		txn := block.Transactions()[receipt.TransactionIndex]
 		effectiveGasPrice := uint64(0)
@@ -475,15 +552,10 @@ func delegateBlockFees(ctx context.Context, tx kv.Tx, block *types.Block, sender
 			gasPrice := new(big.Int).Add(block.BaseFee(), txn.GetEffectiveGasTip(baseFee).ToBig())
 			effectiveGasPrice = gasPrice.Uint64()
 		}
-
-		fee.SetUint64(effectiveGasPrice)
-		gasUsed.SetUint64(receipt.GasUsed)
-		fee.Mul(fee, gasUsed)
-
-		totalFees.Add(totalFees, fee)
+		fees += effectiveGasPrice * receipt.GasUsed
 	}
 
-	return totalFees, nil
+	return fees, nil
 }
 
 func (api *OtterscanAPIImpl) getBlockWithSenders(ctx context.Context, number rpc.BlockNumber, tx kv.Tx) (*types.Block, []common.Address, error) {
@@ -496,14 +568,8 @@ func (api *OtterscanAPIImpl) getBlockWithSenders(ctx context.Context, number rpc
 		return nil, nil, err
 	}
 
-	block, err := api.blockWithSenders(ctx, tx, hash, n)
-	if err != nil {
-		return nil, nil, err
-	}
-	if block == nil {
-		return nil, nil, nil
-	}
-	return block, block.Body().SendersFromTxs(), nil
+	block, senders, err := api._blockReader.BlockWithSenders(ctx, tx, hash, n)
+	return block, senders, err
 }
 
 func (api *OtterscanAPIImpl) GetBlockTransactions(ctx context.Context, number rpc.BlockNumber, pageNumber uint8, pageSize uint8) (map[string]interface{}, error) {
@@ -521,7 +587,7 @@ func (api *OtterscanAPIImpl) GetBlockTransactions(ctx context.Context, number rp
 		return nil, nil
 	}
 
-	chainConfig, err := api.chainConfig(ctx, tx)
+	chainConfig, err := api.chainConfig(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +598,7 @@ func (api *OtterscanAPIImpl) GetBlockTransactions(ctx context.Context, number rp
 	}
 
 	// Receipts
-	receipts, err := api.getReceipts(ctx, tx, b, senders)
+	receipts, err := api.getReceipts(ctx, tx, chainConfig, b, senders)
 	if err != nil {
 		return nil, fmt.Errorf("getReceipts error: %v", err)
 	}
