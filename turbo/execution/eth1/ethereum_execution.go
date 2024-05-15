@@ -58,8 +58,9 @@ type EthereumExecutionModule struct {
 	stateChangeConsumer shards.StateChangeConsumer
 
 	// configuration
-	config  *chain.Config
-	syncCfg ethconfig.Sync
+	config    *chain.Config
+	syncCfg   ethconfig.Sync
+	historyV3 bool
 	// consensus
 	engine consensus.Engine
 
@@ -72,7 +73,7 @@ func NewEthereumExecutionModule(blockReader services.FullBlockReader, db kv.RwDB
 	hook *stages.Hook, accumulator *shards.Accumulator,
 	stateChangeConsumer shards.StateChangeConsumer,
 	logger log.Logger, engine consensus.Engine,
-	syncCfg ethconfig.Sync,
+	historyV3 bool, syncCfg ethconfig.Sync,
 	ctx context.Context,
 ) *EthereumExecutionModule {
 	return &EthereumExecutionModule{
@@ -90,6 +91,7 @@ func NewEthereumExecutionModule(blockReader services.FullBlockReader, db kv.RwDB
 		stateChangeConsumer: stateChangeConsumer,
 		engine:              engine,
 
+		historyV3:    historyV3,
 		syncCfg:      syncCfg,
 		bacgroundCtx: ctx,
 	}

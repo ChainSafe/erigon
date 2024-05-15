@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/recsplit/eliasfano32"
 )
@@ -13,7 +12,7 @@ import (
 type indexSeeker interface {
 	WarmUp(g ArchiveGetter) error
 	Get(g ArchiveGetter, key []byte) (k []byte, found bool, di uint64, err error)
-	//seekInFiles(g ArchiveGetter, key []byte) (indexSeekerIterator, error)
+	//Seek(g ArchiveGetter, key []byte) (indexSeekerIterator, error)
 	Seek(g ArchiveGetter, seek []byte) (k []byte, di uint64, found bool, err error)
 }
 

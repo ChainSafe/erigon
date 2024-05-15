@@ -21,6 +21,7 @@ import (
 	chain2 "github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 
 	"github.com/ledgerwatch/erigon/common/debug"
@@ -433,6 +434,14 @@ func OpcodeTracer(genesis *types.Genesis, blockNum uint64, chaindata string, num
 	}
 	defer historyTx.Rollback()
 
+	var historyV3 bool
+	chainDb.View(context.Background(), func(tx kv.Tx) (err error) {
+		historyV3, err = kvcfg.HistoryV3.Enabled(tx)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 	dirs := datadir2.New(filepath.Dir(chainDb.(*mdbx.MdbxKV).Path()))
 	blockReader := freezeblocks.NewBlockReader(freezeblocks.NewRoSnapshots(ethconfig.BlocksFreezing{Enabled: false}, dirs.Snap, 0, log.New()), nil /* BorSnapshots */)
 
@@ -591,7 +600,7 @@ func OpcodeTracer(genesis *types.Genesis, blockNum uint64, chaindata string, num
 			ot.fsumWriter = bufio.NewWriter(fsum)
 		}
 
-		dbstate, err := rpchelper.CreateHistoryStateReader(historyTx, block.NumberU64(), 0, chainConfig.ChainName)
+		dbstate, err := rpchelper.CreateHistoryStateReader(historyTx, block.NumberU64(), 0, historyV3, chainConfig.ChainName)
 		if err != nil {
 			return err
 		}
@@ -735,7 +744,7 @@ func runBlock(engine consensus.Engine, ibs *state.IntraBlockState, txnWriter sta
 	if !vmConfig.ReadOnly {
 		// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 		tx := block.Transactions()
-		if _, _, _, err := engine.FinalizeAndAssemble(chainConfig, header, ibs, tx, block.Uncles(), receipts, block.Withdrawals(), block.Requests(), nil, nil, nil, logger); err != nil {
+		if _, _, _, err := engine.FinalizeAndAssemble(chainConfig, header, ibs, tx, block.Uncles(), receipts, block.Withdrawals(), nil, nil, nil, logger); err != nil {
 			return nil, fmt.Errorf("finalize of block %d failed: %w", block.NumberU64(), err)
 		}
 

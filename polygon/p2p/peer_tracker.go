@@ -6,7 +6,6 @@ import (
 	"github.com/ledgerwatch/log/v3"
 
 	sentry "github.com/ledgerwatch/erigon-lib/gointerfaces/sentryproto"
-	"github.com/ledgerwatch/erigon/polygon/polygoncommon"
 )
 
 type PeerTracker interface {
@@ -93,7 +92,7 @@ func (pt *peerTracker) updatePeerSyncProgress(peerId *PeerId, update func(psp *p
 	update(peerSyncProgress)
 }
 
-func NewPeerEventObserver(logger log.Logger, peerTracker PeerTracker) polygoncommon.Observer[*sentry.PeerEvent] {
+func NewPeerEventObserver(logger log.Logger, peerTracker PeerTracker) MessageObserver[*sentry.PeerEvent] {
 	return func(message *sentry.PeerEvent) {
 		peerId := PeerIdFromH512(message.PeerId)
 

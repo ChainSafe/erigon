@@ -456,8 +456,8 @@ func (dt *DomainRoTx) newWriter(tmpdir string, discard bool) *domainBufferedWrit
 		aux:       make([]byte, 0, 128),
 		keysTable: dt.d.keysTable,
 		valsTable: dt.d.valsTable,
-		keys:      etl.NewCollector("flush "+dt.d.keysTable, tmpdir, etl.NewSortableBuffer(WALCollectorRAM), dt.d.logger),
-		values:    etl.NewCollector("flush "+dt.d.valsTable, tmpdir, etl.NewSortableBuffer(WALCollectorRAM), dt.d.logger),
+		keys:      etl.NewCollector(dt.d.keysTable, tmpdir, etl.NewSortableBuffer(WALCollectorRAM), dt.d.logger),
+		values:    etl.NewCollector(dt.d.valsTable, tmpdir, etl.NewSortableBuffer(WALCollectorRAM), dt.d.logger),
 
 		h: dt.ht.newWriter(tmpdir, discardHistory),
 	}
@@ -631,7 +631,6 @@ type DomainRoTx struct {
 
 	keyBuf [60]byte // 52b key and 8b for inverted step
 	valBuf [128]byte
-	comBuf []byte
 
 	keysC kv.CursorDupSort
 	valsC kv.Cursor
@@ -819,7 +818,7 @@ func (d *Domain) collate(ctx context.Context, step, txFrom, txTo uint64, roTx kv
 	}()
 
 	coll.valuesPath = d.kvFilePath(step, step+1)
-	if coll.valuesComp, err = seg.NewCompressor(ctx, "collate domain "+d.filenameBase, coll.valuesPath, d.dirs.Tmp, seg.MinPatternScore, d.compressWorkers, log.LvlTrace, d.logger); err != nil {
+	if coll.valuesComp, err = seg.NewCompressor(ctx, "collate values", coll.valuesPath, d.dirs.Tmp, seg.MinPatternScore, d.compressWorkers, log.LvlTrace, d.logger); err != nil {
 		return Collation{}, fmt.Errorf("create %s values compressor: %w", d.filenameBase, err)
 	}
 	comp := NewArchiveWriter(coll.valuesComp, d.compression)
@@ -1006,9 +1005,8 @@ func (d *Domain) buildMapIdx(ctx context.Context, fromStep, toStep uint64, data 
 		TmpDir:     d.dirs.Tmp,
 		IndexFile:  idxPath,
 		Salt:       d.salt,
-		NoFsync:    d.noFsync,
 	}
-	return buildIndex(ctx, data, d.compression, idxPath, false, cfg, ps, d.logger)
+	return buildIndex(ctx, data, d.compression, idxPath, false, cfg, ps, d.logger, d.noFsync)
 }
 
 func (d *Domain) missedBtreeIdxFiles() (l []*filesItem) {
@@ -1102,7 +1100,16 @@ func (d *Domain) BuildMissedIndices(ctx context.Context, g *errgroup.Group, ps *
 	}
 }
 
-func buildIndex(ctx context.Context, d *seg.Decompressor, compressed FileCompression, idxPath string, values bool, cfg recsplit.RecSplitArgs, ps *background.ProgressSet, logger log.Logger) error {
+func buildIndexFilterThenOpen(ctx context.Context, d *seg.Decompressor, compressed FileCompression, idxPath, tmpdir string, salt *uint32, ps *background.ProgressSet, logger log.Logger, noFsync bool) (*ExistenceFilter, error) {
+	if err := buildIdxFilter(ctx, d, compressed, idxPath, salt, ps, logger, noFsync); err != nil {
+		return nil, err
+	}
+	if !dir.FileExist(idxPath) {
+		return nil, nil
+	}
+	return OpenExistenceFilter(idxPath)
+}
+func buildIndex(ctx context.Context, d *seg.Decompressor, compressed FileCompression, idxPath string, values bool, cfg recsplit.RecSplitArgs, ps *background.ProgressSet, logger log.Logger, noFsync bool) error {
 	_, fileName := filepath.Split(idxPath)
 	count := d.Count()
 	if !values {
@@ -1122,10 +1129,13 @@ func buildIndex(ctx context.Context, d *seg.Decompressor, compressed FileCompres
 	}
 	defer rs.Close()
 	rs.LogLvl(log.LvlTrace)
+	if noFsync {
+		rs.DisableFsync()
+	}
 
+	word := make([]byte, 0, 256)
 	var keyPos, valPos uint64
 	for {
-		word := make([]byte, 0, 256)
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -1182,11 +1192,6 @@ func (dt *DomainRoTx) Unwind(ctx context.Context, rwTx kv.RwTx, step, txNumUnwin
 	if err != nil {
 		return fmt.Errorf("historyRange %s: %w", dt.ht.h.filenameBase, err)
 	}
-	sf := time.Now()
-	defer mxUnwindTook.ObserveDuration(sf)
-	mxRunningUnwind.Inc()
-	defer mxRunningUnwind.Dec()
-	defer histRng.Close()
 
 	seen := make(map[string]struct{})
 	restored := dt.NewWriter()
@@ -1199,13 +1204,11 @@ func (dt *DomainRoTx) Unwind(ctx context.Context, rwTx kv.RwTx, step, txNumUnwin
 
 		ic, err := dt.ht.IdxRange(k, int(txNumUnwindTo)-1, 0, order.Desc, -1, rwTx)
 		if err != nil {
-			ic.Close()
 			return err
 		}
 		if ic.HasNext() {
 			nextTxn, err := ic.Next()
 			if err != nil {
-				ic.Close()
 				return err
 			}
 			restored.SetTxNum(nextTxn) // todo what if we actually had to decrease current step to provide correct update?
@@ -1214,10 +1217,12 @@ func (dt *DomainRoTx) Unwind(ctx context.Context, rwTx kv.RwTx, step, txNumUnwin
 		}
 		//fmt.Printf("[%s] unwinding %x ->'%x'\n", dt.d.filenameBase, k, v)
 		if err := restored.addValue(k, nil, v); err != nil {
-			ic.Close()
 			return err
 		}
-		ic.Close()
+		type closable interface {
+			Close()
+		}
+		ic.(closable).Close()
 		seen[string(k)] = struct{}{}
 	}
 
@@ -1355,7 +1360,7 @@ func (dt *DomainRoTx) getFromFiles(filekey []byte) (v []byte, found bool, fileSt
 // GetAsOf does not always require usage of roTx. If it is possible to determine
 // historical value based only on static files, roTx will not be used.
 func (dt *DomainRoTx) GetAsOf(key []byte, txNum uint64, roTx kv.Tx) ([]byte, error) {
-	v, hOk, err := dt.ht.HistorySeek(key, txNum, roTx)
+	v, hOk, err := dt.ht.GetNoStateWithRecent(key, txNum, roTx)
 	if err != nil {
 		return nil, err
 	}
@@ -1441,7 +1446,7 @@ func (dt *DomainRoTx) valsCursor(tx kv.Tx) (c kv.Cursor, err error) {
 	}
 	dt.valsC, err = tx.Cursor(dt.d.valsTable)
 	if err != nil {
-		return nil, fmt.Errorf("valsCursor: %w", err)
+		return nil, err
 	}
 	return dt.valsC, nil
 }
@@ -1452,7 +1457,7 @@ func (dt *DomainRoTx) keysCursor(tx kv.Tx) (c kv.CursorDupSort, err error) {
 	}
 	dt.keysC, err = tx.CursorDupSort(dt.d.keysTable)
 	if err != nil {
-		return nil, fmt.Errorf("keysCursor: %w", err)
+		return nil, err
 	}
 	return dt.keysC, nil
 }
@@ -1523,7 +1528,7 @@ func (dt *DomainRoTx) GetLatest(key1, key2 []byte, roTx kv.Tx) ([]byte, uint64, 
 
 	v, foundStep, found, err = dt.getLatestFromDb(key, roTx)
 	if err != nil {
-		return nil, 0, false, fmt.Errorf("getLatestFromDb: %w", err)
+		return nil, 0, false, err
 	}
 	if found {
 		return v, foundStep, true, nil
@@ -1531,7 +1536,7 @@ func (dt *DomainRoTx) GetLatest(key1, key2 []byte, roTx kv.Tx) ([]byte, uint64, 
 
 	v, foundInFile, _, endTxNum, err := dt.getFromFiles(key)
 	if err != nil {
-		return nil, 0, false, fmt.Errorf("getFromFiles: %w", err)
+		return nil, 0, false, err
 	}
 	return v, endTxNum / dt.d.aggregationStep, foundInFile, nil
 }
@@ -1684,11 +1689,11 @@ func (dt *DomainRoTx) DomainRange(tx kv.Tx, fromKey, toKey []byte, ts uint64, as
 	if !asc {
 		panic("implement me")
 	}
-	//histStateIt, err := tx.aggTx.AccountHistoricalStateRange(asOfTs, fromKey, toKey, limit, tx.MdbxTx)
+	//histStateIt, err := tx.aggCtx.AccountHistoricalStateRange(asOfTs, fromKey, toKey, limit, tx.MdbxTx)
 	//if err != nil {
 	//	return nil, err
 	//}
-	//lastestStateIt, err := tx.aggTx.DomainRangeLatest(tx.MdbxTx, kv.AccountDomain, fromKey, toKey, limit)
+	//lastestStateIt, err := tx.aggCtx.DomainRangeLatest(tx.MdbxTx, kv.AccountDomain, fromKey, toKey, limit)
 	//if err != nil {
 	//	return nil, err
 	//}
@@ -2038,7 +2043,6 @@ func (hi *DomainLatestIterFile) init(dc *DomainRoTx) error {
 	}
 
 	for i, item := range dc.files {
-		// todo release btcursor when iter over/make it truly stateless
 		btCursor, err := dc.statelessBtree(i).Seek(dc.statelessGetter(i), hi.from)
 		if err != nil {
 			return err

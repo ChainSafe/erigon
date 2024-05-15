@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	kv2 "github.com/ledgerwatch/erigon-lib/kv/mdbx"
 
 	"github.com/ledgerwatch/erigon/cmd/utils"
@@ -91,12 +92,25 @@ func openDB(opts kv2.MdbxOpts, applyMigrations bool, logger log.Logger) (kv.RwDB
 	}
 
 	if opts.GetLabel() == kv.ChainDB {
-		_, _, agg := allSnapshots(context.Background(), db, logger)
-		tdb, err := temporal.New(db, agg)
-		if err != nil {
+		var h3 bool
+		var err error
+		if err := db.View(context.Background(), func(tx kv.Tx) error {
+			h3, err = kvcfg.HistoryV3.Enabled(tx)
+			if err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
 			return nil, err
 		}
-		db = tdb
+		if h3 {
+			_, _, agg := allSnapshots(context.Background(), db, logger)
+			tdb, err := temporal.New(db, agg)
+			if err != nil {
+				return nil, err
+			}
+			db = tdb
+		}
 	}
 
 	return db, nil
