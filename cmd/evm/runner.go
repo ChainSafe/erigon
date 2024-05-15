@@ -34,6 +34,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	common2 "github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
+	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"github.com/ledgerwatch/erigon-lib/kv/memdb"
 	"github.com/ledgerwatch/erigon/cmd/utils/flags"
 	"github.com/ledgerwatch/erigon/core/types"
@@ -301,7 +302,11 @@ func runCmd(ctx *cli.Context) error {
 			fmt.Println("Could not commit state: ", err)
 			os.Exit(1)
 		}
-		fmt.Println(string(state.NewDumper(tx, 0, true).DefaultDump()))
+		historyV3, err := kvcfg.HistoryV3.Enabled(tx)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(state.NewDumper(tx, 0, historyV3).DefaultDump()))
 	}
 
 	if memProfilePath := ctx.String(MemProfileFlag.Name); memProfilePath != "" {

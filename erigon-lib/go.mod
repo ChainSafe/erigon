@@ -4,8 +4,8 @@ go 1.21
 
 require (
 	github.com/erigontech/mdbx-go v0.38.0
-	github.com/ledgerwatch/erigon-snapshot v1.3.1-0.20240510125329-7b93b3d7e99f
-	github.com/ledgerwatch/interfaces v0.0.0-20240510032129-13f644ca2307
+	github.com/ledgerwatch/erigon-snapshot v1.3.1-0.20240505022337-08dce201593b
+	github.com/ledgerwatch/interfaces v0.0.0-20240502103437-1e84e26799a6
 	github.com/ledgerwatch/log/v3 v3.9.0
 	github.com/ledgerwatch/secp256k1 v1.0.0
 )
@@ -129,7 +129,7 @@ require (
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
 	github.com/rs/dnscache v0.0.0-20211102005908-e0241e321417 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
-	github.com/showwin/speedtest-go v1.7.5
+	github.com/showwin/speedtest-go v1.6.12
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.8.0 // indirect
@@ -148,7 +148,7 @@ require (
 )
 
 replace (
-	github.com/anacrolix/torrent => github.com/erigontech/torrent v1.54.2-alpha-10
+	github.com/anacrolix/torrent => github.com/erigontech/torrent v1.54.2-alpha-8
 	github.com/holiman/bloomfilter/v2 => github.com/AskAlexSharov/bloomfilter/v2 v2.0.8
 	github.com/tidwall/btree => github.com/AskAlexSharov/btree v1.6.2
 )

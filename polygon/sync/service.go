@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"time"
 
 	lru "github.com/hashicorp/golang-lru/arc/v2"
 	"github.com/ledgerwatch/log/v3"
@@ -10,7 +9,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/direct"
-	"github.com/ledgerwatch/erigon-lib/gointerfaces/executionproto"
+	executionproto "github.com/ledgerwatch/erigon-lib/gointerfaces/executionproto"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/eth/stagedsync"
 	"github.com/ledgerwatch/erigon/p2p/sentry"
@@ -29,14 +28,11 @@ type service struct {
 	p2pService p2p.Service
 	store      Store
 	events     *TipEvents
-
-	heimdallScraper *heimdall.Scraper
 }
 
 func NewService(
 	logger log.Logger,
 	chainConfig *chain.Config,
-	tmpDir string,
 	sentryClient direct.SentryClient,
 	maxPeers int,
 	statusDataProvider *sentry.StatusDataProvider,
@@ -51,12 +47,6 @@ func NewService(
 	p2pService := p2p.NewService(maxPeers, logger, sentryClient, statusDataProvider.GetStatusData)
 	heimdallClient := heimdall.NewHeimdallClient(heimdallUrl, logger)
 	heimdallService := heimdall.NewHeimdall(heimdallClient, logger)
-	heimdallScraper := heimdall.NewScraperTODO(
-		heimdallClient,
-		1*time.Second,
-		tmpDir,
-		logger,
-	)
 	blockDownloader := NewBlockDownloader(
 		logger,
 		p2pService,
@@ -105,8 +95,6 @@ func NewService(
 		p2pService: p2pService,
 		store:      store,
 		events:     events,
-
-		heimdallScraper: heimdallScraper,
 	}
 }
 
@@ -130,14 +118,6 @@ func (s *service) Run(ctx context.Context) error {
 
 	go func() {
 		err := s.events.Run(ctx)
-		if (err != nil) && (ctx.Err() == nil) {
-			serviceErr = err
-			cancel()
-		}
-	}()
-
-	go func() {
-		err := s.heimdallScraper.Run(ctx)
 		if (err != nil) && (ctx.Err() == nil) {
 			serviceErr = err
 			cancel()

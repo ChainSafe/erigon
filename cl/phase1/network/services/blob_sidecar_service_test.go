@@ -65,24 +65,20 @@ func TestBlobServiceUnsynced(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	blobService, _, _, _ := setupBlobSidecarService(t, ctrl, true)
+	blobService, _, _, _ := setupBlobSidecarService(t, ctrl, false)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, nil, &cltypes.BlobSidecar{}))
+	require.Error(t, blobService.ProcessMessage(context.Background(), nil, &cltypes.BlobSidecar{}))
 }
 
 func TestBlobServiceInvalidIndex(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	blobService, syncedData, _, _ := setupBlobSidecarService(t, ctrl, true)
+	blobService, syncedData, _, _ := setupBlobSidecarService(t, ctrl, false)
 	stateObj, _, _ := getObjectsForBlobSidecarServiceTests(t)
 	syncedData.OnHeadState(stateObj)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, nil, &cltypes.BlobSidecar{
+	require.Error(t, blobService.ProcessMessage(context.Background(), nil, &cltypes.BlobSidecar{
 		Index: 99999,
 	}))
 }
@@ -91,14 +87,12 @@ func TestBlobServiceInvalidSubnet(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	blobService, syncedData, _, _ := setupBlobSidecarService(t, ctrl, true)
+	blobService, syncedData, _, _ := setupBlobSidecarService(t, ctrl, false)
 	stateObj, _, _ := getObjectsForBlobSidecarServiceTests(t)
 	syncedData.OnHeadState(stateObj)
 	sn := uint64(99999)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, &sn, &cltypes.BlobSidecar{
+	require.Error(t, blobService.ProcessMessage(context.Background(), &sn, &cltypes.BlobSidecar{
 		Index: 0,
 	}))
 }
@@ -115,9 +109,7 @@ func TestBlobServiceBadTimings(t *testing.T) {
 	ethClock.EXPECT().GetCurrentSlot().Return(uint64(0)).AnyTimes()
 	ethClock.EXPECT().IsSlotCurrentSlotWithMaximumClockDisparity(gomock.Any()).Return(false).AnyTimes()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, &sn, blobSidecar))
+	require.Error(t, blobService.ProcessMessage(context.Background(), &sn, blobSidecar))
 }
 
 func TestBlobServiceAlreadyHave(t *testing.T) {
@@ -136,9 +128,7 @@ func TestBlobServiceAlreadyHave(t *testing.T) {
 	ethClock.EXPECT().GetCurrentSlot().Return(uint64(0)).AnyTimes()
 	ethClock.EXPECT().IsSlotCurrentSlotWithMaximumClockDisparity(gomock.Any()).Return(true).AnyTimes()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, &sn, blobSidecar))
+	require.Error(t, blobService.ProcessMessage(context.Background(), &sn, blobSidecar))
 }
 
 func TestBlobServiceDontHaveParentRoot(t *testing.T) {
@@ -155,9 +145,7 @@ func TestBlobServiceDontHaveParentRoot(t *testing.T) {
 	ethClock.EXPECT().GetCurrentSlot().Return(uint64(0)).AnyTimes()
 	ethClock.EXPECT().IsSlotCurrentSlotWithMaximumClockDisparity(gomock.Any()).Return(true).AnyTimes()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, &sn, blobSidecar))
+	require.Error(t, blobService.ProcessMessage(context.Background(), &sn, blobSidecar))
 }
 
 func TestBlobServiceInvalidSidecarSlot(t *testing.T) {
@@ -174,9 +162,7 @@ func TestBlobServiceInvalidSidecarSlot(t *testing.T) {
 	ethClock.EXPECT().GetCurrentSlot().Return(uint64(0)).AnyTimes()
 	ethClock.EXPECT().IsSlotCurrentSlotWithMaximumClockDisparity(gomock.Any()).Return(true).AnyTimes()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.Error(t, blobService.ProcessMessage(ctx, &sn, blobSidecar))
+	require.Error(t, blobService.ProcessMessage(context.Background(), &sn, blobSidecar))
 }
 
 func TestBlobServiceSuccess(t *testing.T) {

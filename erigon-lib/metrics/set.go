@@ -78,8 +78,8 @@ func (s *Set) Collect(ch chan<- prometheus.Metric) {
 //   - foo{bar="baz",aaa="b"}
 //
 // The returned histogram is safe to use from concurrent goroutines.
-func (s *Set) NewHistogram(name string, buckets []float64, help ...string) (prometheus.Histogram, error) {
-	h, err := newHistogram(name, buckets, help...)
+func (s *Set) NewHistogram(name string, help ...string) (prometheus.Histogram, error) {
+	h, err := newHistogram(name, help...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (s *Set) NewHistogram(name string, buckets []float64, help ...string) (prom
 	return h, nil
 }
 
-func newHistogram(name string, buckets []float64, help ...string) (prometheus.Histogram, error) {
+func newHistogram(name string, help ...string) (prometheus.Histogram, error) {
 	name, labels, err := parseMetric(name)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,6 @@ func newHistogram(name string, buckets []float64, help ...string) (prometheus.Hi
 	return prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:        name,
 		ConstLabels: labels,
-		Buckets:     buckets,
 		Help:        strings.Join(help, " "),
 	}), nil
 }
@@ -120,7 +119,7 @@ func (s *Set) GetOrCreateHistogram(name string, help ...string) (prometheus.Hist
 	nm := s.m[name]
 	s.mu.Unlock()
 	if nm == nil {
-		metric, err := newHistogram(name, nil, help...)
+		metric, err := newHistogram(name, help...)
 		if err != nil {
 			return nil, fmt.Errorf("invalid metric name %q: %w", name, err)
 		}
