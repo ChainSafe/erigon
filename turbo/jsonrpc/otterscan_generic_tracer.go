@@ -6,18 +6,20 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	"github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/core"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/turbo/shards"
 )
 
 type GenericTracer interface {
-	vm.EVMLogger
+	Tracer() *tracers.Tracer
 	SetTransaction(tx types.Transaction)
 	Found() bool
 }
@@ -62,7 +64,13 @@ func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, bloc
 	noop := state.NewNoopWriter()
 	cachedWriter := state.NewCachedWriter(noop, stateCache)
 
+	var tracingHooks *tracing.Hooks
+	if tracer != nil && tracer.Tracer() != nil {
+		tracingHooks = tracer.Tracer().Hooks
+	}
+
 	ibs := state.New(cachedReader)
+	ibs.SetLogger(tracer.Tracer().Hooks)
 
 	getHeader := func(hash common.Hash, number uint64) *types.Header {
 		h, e := api._blockReader.Header(ctx, dbtx, hash, number)
@@ -97,10 +105,21 @@ func (api *OtterscanAPIImpl) genericTracer(dbtx kv.Tx, ctx context.Context, bloc
 		BlockContext := core.NewEVMBlockContext(header, core.GetHashFn(header, getHeader), engine, nil)
 		TxContext := core.NewEVMTxContext(msg)
 
-		vmenv := vm.NewEVM(BlockContext, TxContext, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracer})
-		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.GetGas()).AddBlobGas(tx.GetBlobGas()), true /* refunds */, false /* gasBailout */); err != nil {
+		vmenv := vm.NewEVM(BlockContext, TxContext, ibs, chainConfig, vm.Config{Debug: true, Tracer: tracingHooks})
+		if tracingHooks != nil && tracingHooks.OnTxStart != nil {
+			tracingHooks.OnTxStart(vmenv.GetVMContext(), tx, msg.From())
+		}
+		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.GetGas()).AddBlobGas(tx.GetBlobGas()), true /* refunds */, false /* gasBailout */)
+		if err != nil {
+			if tracingHooks != nil && tracingHooks.OnTxEnd != nil {
+				tracingHooks.OnTxEnd(nil, err)
+			}
 			return err
 		}
+		if tracingHooks != nil && tracingHooks.OnTxEnd != nil {
+			tracingHooks.OnTxEnd(&types.Receipt{GasUsed: res.UsedGas}, nil)
+		}
+
 		_ = ibs.FinalizeTx(rules, cachedWriter)
 
 		if tracer.Found() {

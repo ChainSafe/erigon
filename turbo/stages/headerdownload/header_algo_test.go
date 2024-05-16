@@ -32,7 +32,7 @@ func TestSideChainInsert(t *testing.T) {
 	}
 	m := mock.MockWithGenesis(t, gspec, key, false)
 	db := m.DB
-	_, genesis, err := core.CommitGenesisBlock(db, gspec, "", m.Log)
+	_, genesis, err := core.CommitGenesisBlock(db, gspec, "", m.Log, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

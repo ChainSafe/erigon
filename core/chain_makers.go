@@ -368,7 +368,7 @@ func GenerateChain(config *chain.Config, parent *types.Block, engine consensus.E
 			}
 		}
 		if b.engine != nil {
-			InitializeBlockExecution(b.engine, nil, b.header, config, ibs, logger)
+			InitializeBlockExecution(b.engine, nil, b.header, config, ibs, logger, nil)
 		}
 		// Execute any user modifications to the block
 		if gen != nil {
@@ -642,7 +642,13 @@ func (cr *FakeChainReader) Config() *chain.Config {
 	return cr.Cfg
 }
 
-func (cr *FakeChainReader) CurrentHeader() *types.Header                               { return cr.current.Header() }
+func (cr *FakeChainReader) CurrentHeader() *types.Header { return cr.current.Header() }
+func (cr *FakeChainReader) CurrentFinalizedHeader() *types.Header {
+	return nil
+}
+func (cr *FakeChainReader) CurrentSafeHeader() *types.Header {
+	return nil
+}
 func (cr *FakeChainReader) GetHeaderByNumber(number uint64) *types.Header              { return nil }
 func (cr *FakeChainReader) GetHeaderByHash(hash libcommon.Hash) *types.Header          { return nil }
 func (cr *FakeChainReader) GetHeader(hash libcommon.Hash, number uint64) *types.Header { return nil }

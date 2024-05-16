@@ -22,6 +22,7 @@ import (
 
 	"github.com/ledgerwatch/erigon/consensus"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/core/vm/evmtypes"
@@ -35,12 +36,36 @@ import (
 func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *GasPool, ibs *state.IntraBlockState,
 	stateWriter state.StateWriter, header *types.Header, tx types.Transaction, usedGas, usedBlobGas *uint64,
 	evm *vm.EVM, cfg vm.Config) (*types.Receipt, []byte, error) {
+	var (
+		receipt *types.Receipt
+		err     error
+	)
+
 	rules := evm.ChainRules()
 	msg, err := tx.AsMessage(*types.MakeSigner(config, header.Number.Uint64(), header.Time), header.BaseFee, rules)
 	if err != nil {
 		return nil, nil, err
 	}
 	msg.SetCheckNonce(!cfg.StatelessExec)
+
+	if evm.Config().Tracer != nil {
+		if evm.Config().Tracer != nil && evm.Config().Tracer.OnTxStart != nil {
+			evm.Config().Tracer.OnTxStart(&tracing.VMContext{
+				ChainConfig:     evm.ChainConfig(),
+				IntraBlockState: ibs,
+				BlockNumber:     evm.Context.BlockNumber,
+				Time:            evm.Context.Time,
+				Coinbase:        evm.Context.Coinbase,
+				Random:          evm.Context.PrevRanDao,
+				TxHash:          evm.TxHash,
+			}, tx, msg.From())
+		}
+		if evm.Config().Tracer.OnTxEnd != nil {
+			defer func() {
+				evm.Config().Tracer.OnTxEnd(receipt, err)
+			}()
+		}
+	}
 
 	if msg.FeeCap().IsZero() && engine != nil {
 		// Only zero-gas transactions may be service ones
@@ -73,7 +98,6 @@ func applyTransaction(config *chain.Config, engine consensus.EngineReader, gp *G
 
 	// Set the receipt logs and create the bloom filter.
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	var receipt *types.Receipt
 	if !cfg.NoReceipts {
 		// by the tx.
 		receipt = &types.Receipt{Type: tx.Type(), CumulativeGasUsed: *usedGas}

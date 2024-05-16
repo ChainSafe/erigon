@@ -26,11 +26,13 @@ import (
 	"github.com/ledgerwatch/erigon/consensus/misc"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/rawdb/blockio"
+	"github.com/ledgerwatch/erigon/core/tracing"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/ethconfig"
 	"github.com/ledgerwatch/erigon/eth/stagedsync"
 	"github.com/ledgerwatch/erigon/eth/stagedsync/stages"
+	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/erigon/p2p"
 	"github.com/ledgerwatch/erigon/p2p/sentry/sentry_multi_client"
 	"github.com/ledgerwatch/erigon/polygon/bor"
@@ -460,7 +462,12 @@ func NewDefaultStages(ctx context.Context,
 	recents *lru.ARCCache[libcommon.Hash, *bor.Snapshot],
 	signatures *lru.ARCCache[libcommon.Hash, libcommon.Address],
 	logger log.Logger,
+	tracer *tracers.Tracer,
 ) []*stagedsync.Stage {
+	var tracingHooks *tracing.Hooks
+	if tracer != nil {
+		tracingHooks = tracer.Hooks
+	}
 	dirs := cfg.Dirs
 	blockWriter := blockio.NewBlockWriter(cfg.HistoryV3)
 
@@ -510,7 +517,7 @@ func NewDefaultStages(ctx context.Context,
 			nil,
 			controlServer.ChainConfig,
 			controlServer.Engine,
-			&vm.Config{},
+			&vm.Config{Tracer: tracingHooks},
 			notifications.Accumulator,
 			cfg.StateStream,
 			/*stateStream=*/ false,
@@ -546,8 +553,13 @@ func NewPipelineStages(ctx context.Context,
 	silkworm *silkworm.Silkworm,
 	forkValidator *engine_helpers.ForkValidator,
 	logger log.Logger,
+	tracer *tracers.Tracer,
 	checkStateRoot bool,
 ) []*stagedsync.Stage {
+	var tracingHooks *tracing.Hooks
+	if tracer != nil {
+		tracingHooks = tracer.Hooks
+	}
 	dirs := cfg.Dirs
 	blockWriter := blockio.NewBlockWriter(cfg.HistoryV3)
 
@@ -589,7 +601,7 @@ func NewPipelineStages(ctx context.Context,
 				nil,
 				controlServer.ChainConfig,
 				controlServer.Engine,
-				&vm.Config{},
+				&vm.Config{Tracer: tracingHooks},
 				notifications.Accumulator,
 				cfg.StateStream,
 				/*stateStream=*/ false,
@@ -625,7 +637,7 @@ func NewPipelineStages(ctx context.Context,
 			nil,
 			controlServer.ChainConfig,
 			controlServer.Engine,
-			&vm.Config{},
+			&vm.Config{Tracer: tracingHooks},
 			notifications.Accumulator,
 			cfg.StateStream,
 			/*stateStream=*/ false,
@@ -651,7 +663,11 @@ func NewPipelineStages(ctx context.Context,
 
 func NewInMemoryExecution(ctx context.Context, db kv.RwDB, cfg *ethconfig.Config, controlServer *sentry_multi_client.MultiClient,
 	dirs datadir.Dirs, notifications *shards.Notifications, blockReader services.FullBlockReader, blockWriter *blockio.BlockWriter, agg *state.Aggregator,
-	silkworm *silkworm.Silkworm, logger log.Logger) *stagedsync.Sync {
+	silkworm *silkworm.Silkworm, logger log.Logger, tracer *tracers.Tracer) *stagedsync.Sync {
+	var tracingHooks *tracing.Hooks
+	if tracer != nil {
+		tracingHooks = tracer.Hooks
+	}
 	return stagedsync.New(
 		cfg.Sync,
 		stagedsync.StateStages(ctx,
@@ -666,7 +682,7 @@ func NewInMemoryExecution(ctx context.Context, db kv.RwDB, cfg *ethconfig.Config
 				nil,
 				controlServer.ChainConfig,
 				controlServer.Engine,
-				&vm.Config{},
+				&vm.Config{Tracer: tracingHooks},
 				notifications.Accumulator,
 				cfg.StateStream,
 				true,
