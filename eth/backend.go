@@ -97,6 +97,7 @@ import (
 	"github.com/erigontech/erigon/core/rawdb"
 	"github.com/erigontech/erigon/core/rawdb/blockio"
 	snaptype2 "github.com/erigontech/erigon/core/snaptype"
+	"github.com/erigontech/erigon/core/tracing"
 	"github.com/erigontech/erigon/core/types"
 	"github.com/erigontech/erigon/core/vm"
 	"github.com/erigontech/erigon/crypto"
@@ -294,20 +295,24 @@ func New(ctx context.Context, stack *node.Node, config *ethconfig.Config, logger
 		},
 	}
 
-	if tracer.Hooks != nil && tracer.Hooks.OnBlockchainInit != nil {
-		tracer.Hooks.OnBlockchainInit(config.Genesis.Config)
-	}
+	var tracingHook *tracing.Hooks
 
 	var chainConfig *chain.Config
 	var genesis *types.Block
 	if err := backend.chainDB.Update(context.Background(), func(tx kv.RwTx) error {
 
-		if config.Genesis == nil {
-			genesisConfig, err := rawdb.ReadGenesis(tx)
-			if err != nil {
-				return err
-			}
+		genesisConfig, err := rawdb.ReadGenesis(tx)
+		if err != nil {
+			return err
+		}
+
+		if genesisConfig != nil {
 			config.Genesis = genesisConfig
+		}
+
+		if tracer != nil && tracer.Hooks != nil && tracer.Hooks.OnBlockchainInit != nil {
+			tracer.Hooks.OnBlockchainInit(config.Genesis.Config)
+			tracingHook = tracer.Hooks
 		}
 
 		h, err := rawdb.ReadCanonicalHash(tx, 0)
@@ -319,7 +324,7 @@ func New(ctx context.Context, stack *node.Node, config *ethconfig.Config, logger
 			genesisSpec = nil
 		}
 		var genesisErr error
-		chainConfig, genesis, genesisErr = core.WriteGenesisBlock(tx, genesisSpec, config.OverridePragueTime, tmpdir, logger, tracer.Hooks)
+		chainConfig, genesis, genesisErr = core.WriteGenesisBlock(tx, genesisSpec, config.OverridePragueTime, tmpdir, logger, tracingHook)
 		if _, ok := genesisErr.(*chain.ConfigCompatError); genesisErr != nil && !ok {
 			return genesisErr
 		}
