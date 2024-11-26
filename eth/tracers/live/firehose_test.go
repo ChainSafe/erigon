@@ -448,7 +448,7 @@ func blockEvent(height uint64) tracing.BlockEvent {
 	return tracing.BlockEvent{
 		Block: types.NewBlock(&types.Header{
 			Number: b(int64(height)),
-		}, nil, nil, nil, nil, nil),
+		}, nil, nil, nil, nil),
 		TD: b(1),
 	}
 }

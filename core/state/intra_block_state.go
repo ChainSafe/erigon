@@ -641,8 +641,8 @@ func (sdb *IntraBlockState) createObject(addr libcommon.Address, previous *state
 		sdb.journal.append(resetObjectChange{account: &addr, prev: previous})
 	}
 
-	if sdb.logger != nil && sdb.logger.OnNewAccount != nil {
-		sdb.logger.OnNewAccount(addr, previous != nil)
+	if sdb.tracingHooks != nil && sdb.tracingHooks.OnNewAccount != nil {
+		sdb.tracingHooks.OnNewAccount(addr, previous != nil)
 	}
 
 	newobj.newlyCreated = true

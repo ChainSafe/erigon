@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/erigontech/erigon-lib/common"
+	"github.com/erigontech/erigon-lib/common/datadir"
 	"github.com/erigontech/erigon-lib/log/v3"
 	"github.com/erigontech/erigon/core"
 	"github.com/erigontech/erigon/core/state"
@@ -34,10 +35,10 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 	dbTx, err := m.DB.BeginRw(m.Ctx)
 	require.NoError(t, err)
 	defer dbTx.Rollback()
-	stateDB, _ := tests.MakePreState(rules, dbTx, prestate.Genesis.Alloc, uint64(context.BlockNumber), m.HistoryV3)
+	stateDB, _ := tests.MakePreState(rules, dbTx, prestate.Genesis.Alloc, context.BlockNumber)
 
 	var logger = log.New("test")
-	genesisBlock, _, err := core.GenesisToBlock(prestate.Genesis, "", logger, nil)
+	genesisBlock, _, err := core.GenesisToBlock(prestate.Genesis, datadir.New(""), logger)
 	require.NoError(t, err)
 
 	block := types.NewBlock(&types.Header{
@@ -49,10 +50,10 @@ func runPrestateBlock(t *testing.T, prestatePath string, hooks *tracing.Hooks) {
 		GasLimit:              context.GasLimit,
 		BaseFee:               context.BaseFee.ToBig(),
 		ParentBeaconBlockRoot: ptr(common.Hash{}),
-	}, []types.Transaction{tx}, nil, nil, nil, nil)
+	}, []types.Transaction{tx}, nil, nil, nil)
 
-	stateDB.SetLogger(hooks)
-	stateDB.SetTxContext(tx.Hash(), block.Hash(), 0)
+	stateDB.SetHooks(hooks)
+	stateDB.SetTxContext(0)
 
 	hooks.OnBlockchainInit(prestate.Genesis.Config)
 	hooks.OnBlockStart(tracing.BlockEvent{

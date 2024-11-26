@@ -7,8 +7,9 @@ import (
 	"testing"
 
 	"github.com/erigontech/erigon-lib/common"
+	"github.com/erigontech/erigon-lib/common/datadir"
+	"github.com/erigontech/erigon-lib/common/math"
 	"github.com/erigontech/erigon-lib/log/v3"
-	"github.com/erigontech/erigon/common/math"
 	"github.com/erigontech/erigon/consensus"
 	"github.com/erigontech/erigon/consensus/ethash"
 	"github.com/erigontech/erigon/core"
@@ -66,7 +67,7 @@ func (p *prestateData) GetHeader(hash common.Hash, number uint64) (*types.Header
 	}
 
 	if p.genesisBlock == nil {
-		p.genesisBlock, _, err = core.GenesisToBlock(p.Genesis, "", logger, nil)
+		p.genesisBlock, _, err = core.GenesisToBlock(p.Genesis, datadir.New(""), logger)
 		if err != nil {
 			return nil, err
 		}

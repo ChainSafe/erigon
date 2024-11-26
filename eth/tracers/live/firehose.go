@@ -22,15 +22,13 @@ import (
 
 	"github.com/erigontech/erigon-lib/chain"
 	libcommon "github.com/erigontech/erigon-lib/common"
+	"github.com/erigontech/erigon-lib/common/math"
+	"github.com/erigontech/erigon-lib/crypto"
 	"github.com/erigontech/erigon-lib/log/v3"
-	types2 "github.com/erigontech/erigon-lib/types"
-
 	"github.com/erigontech/erigon/common"
-	"github.com/erigontech/erigon/common/math"
 	"github.com/erigontech/erigon/core/tracing"
 	"github.com/erigontech/erigon/core/types"
 	"github.com/erigontech/erigon/core/vm"
-	"github.com/erigontech/erigon/crypto"
 	"github.com/erigontech/erigon/eth/tracers"
 	"github.com/erigontech/erigon/params"
 	pbeth "github.com/erigontech/erigon/pb/sf/ethereum/type/v2"
@@ -1435,7 +1433,7 @@ func (f *Firehose) panicInvalidState(msg string, callerSkip int) string {
 	}
 
 	if f.transaction != nil {
-		msg += fmt.Sprintf(" in transaction %s", hex.EncodeToString(f.transaction.Hash))
+		msg += " in transaction " + hex.EncodeToString(f.transaction.Hash)
 	}
 
 	panic(fmt.Errorf("%s (caller=%s, init=%t, inBlock=%t, inTransaction=%t, inCall=%t)", msg, caller, f.chainConfig != nil, f.block != nil, f.transaction != nil, f.callStack.HasActiveCall()))
@@ -1681,7 +1679,7 @@ func newTxReceiptFromChain(receipt *types.Receipt, txType pbeth.TransactionTrace
 	return out
 }
 
-func newAccessListFromChain(accessList types2.AccessList) (out []*pbeth.AccessTuple) {
+func newAccessListFromChain(accessList types.AccessList) (out []*pbeth.AccessTuple) {
 	if len(accessList) == 0 {
 		return nil
 	}
@@ -1927,7 +1925,7 @@ func (s *CallStack) NextIndex() uint32 {
 
 func (s *CallStack) Pop() (out *pbeth.Call) {
 	if len(s.stack) == 0 {
-		panic(fmt.Errorf("pop from empty call stack"))
+		panic(errors.New("pop from empty call stack"))
 	}
 
 	out = s.stack[len(s.stack)-1]
@@ -2180,7 +2178,7 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 	if err != nil {
 		if err == types.ErrTxTypeNotSupported {
 			if isKnownFirehoseTxType {
-				return fmt.Errorf("firehose known type but encoding RLP of receipt led to 'types.ErrTxTypeNotSupported'")
+				return errors.New("firehose known type but encoding RLP of receipt led to 'types.ErrTxTypeNotSupported'")
 			}
 
 			// It's not a known type and encoding reported the same, so validation is OK
@@ -2197,7 +2195,7 @@ func validateFirehoseKnownTransactionType(txType byte, isKnownFirehoseTxType boo
 	if err != nil {
 		if err == types.ErrTxTypeNotSupported {
 			if isKnownFirehoseTxType {
-				return fmt.Errorf("firehose known type but decoding of RLP of receipt led to 'types.ErrTxTypeNotSupported'")
+				return errors.New("firehose known type but decoding of RLP of receipt led to 'types.ErrTxTypeNotSupported'")
 			}
 
 			// It's not a known type and decoding reported the same, so validation is OK
@@ -2235,7 +2233,7 @@ func validateAddressField(into *validationResult, field string, a, b libcommon.A
 }
 
 func validateBigIntField(into *validationResult, field string, a, b *big.Int) {
-	equal := false
+	var equal bool
 	if a == nil && b == nil {
 		equal = true
 	} else if a == nil || b == nil {
