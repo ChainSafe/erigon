@@ -20,11 +20,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"io"
 	"math"
 	"testing"
 
+	"github.com/erigontech/erigon-lib/kv"
 	"github.com/golang/snappy"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -88,7 +89,7 @@ func TestBlobsByRangeHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	peersPool := peers.NewPool()
-	blobDb := memdb.NewTestDB(t)
+	blobDb := memdb.NewTestDB(t, kv.ChainDB)
 	_, indiciesDB := setupStore(t)
 	store := tests.NewMockBlockReader()
 
@@ -166,7 +167,7 @@ func TestBlobsByRangeHandler(t *testing.T) {
 		// Fork digests
 		respForkDigest := binary.BigEndian.Uint32(forkDigest)
 		if respForkDigest == 0 {
-			require.NoError(t, fmt.Errorf("null fork digest"))
+			require.NoError(t, errors.New("null fork digest"))
 		}
 		version, err := ethClock.StateVersionByForkDigest(utils.Uint32ToBytes4(respForkDigest))
 		if err != nil {
@@ -209,7 +210,7 @@ func TestBlobsByIdentifiersHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	peersPool := peers.NewPool()
-	blobDb := memdb.NewTestDB(t)
+	blobDb := memdb.NewTestDB(t, kv.ChainDB)
 	_, indiciesDB := setupStore(t)
 	store := tests.NewMockBlockReader()
 
@@ -288,7 +289,7 @@ func TestBlobsByIdentifiersHandler(t *testing.T) {
 		// Fork digests
 		respForkDigest := binary.BigEndian.Uint32(forkDigest)
 		if respForkDigest == 0 {
-			require.NoError(t, fmt.Errorf("null fork digest"))
+			require.NoError(t, errors.New("null fork digest"))
 		}
 		version, err := ethClock.StateVersionByForkDigest(utils.Uint32ToBytes4(respForkDigest))
 		if err != nil {

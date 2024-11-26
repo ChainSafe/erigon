@@ -21,14 +21,13 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/c2h5oh/datasize"
-	"github.com/erigontech/mdbx-go/mdbx"
-	"golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
@@ -41,25 +40,23 @@ import (
 
 func OpenPair(from, to string, label kv.Label, targetPageSize datasize.ByteSize, logger log.Logger) (kv.RoDB, kv.RwDB) {
 	const ThreadsHardLimit = 9_000
-	src := mdbx2.NewMDBX(logger).Path(from).
-		Label(label).
+	src := mdbx2.New(label, logger).Path(from).
 		RoTxsLimiter(semaphore.NewWeighted(ThreadsHardLimit)).
 		WithTableCfg(func(_ kv.TableCfg) kv.TableCfg { return kv.TablesCfgByLabel(label) }).
-		Flags(func(flags uint) uint { return flags | mdbx.Accede }).
+		Accede(true).
 		MustOpen()
 	if targetPageSize <= 0 {
-		targetPageSize = datasize.ByteSize(src.PageSize())
+		targetPageSize = src.PageSize()
 	}
 	info, err := src.(*mdbx2.MdbxKV).Env().Info(nil)
 	if err != nil {
 		panic(err)
 	}
-	dst := mdbx2.NewMDBX(logger).Path(to).
-		Label(label).
-		PageSize(targetPageSize.Bytes()).
+	dst := mdbx2.New(label, logger).Path(to).
+		PageSize(targetPageSize).
 		MapSize(datasize.ByteSize(info.Geo.Upper)).
 		GrowthStep(4 * datasize.GB).
-		Flags(func(flags uint) uint { return flags | mdbx.WriteMap }).
+		WriteMap(true).
 		WithTableCfg(func(_ kv.TableCfg) kv.TableCfg { return kv.TablesCfgByLabel(label) }).
 		MustOpen()
 	return src, dst
@@ -157,7 +154,8 @@ func backupTable(ctx context.Context, src kv.RoDB, srcTx kv.Tx, dst kv.RwDB, tab
 			case <-logEvery.C:
 				var m runtime.MemStats
 				dbg.ReadMemStats(&m)
-				logger.Info("Progress", "table", table, "progress", fmt.Sprintf("%.1fm/%.1fm", float64(i)/1_000_000, float64(total)/1_000_000), "key", hex.EncodeToString(k),
+				logger.Info("Progress", "table", table, "progress",
+					fmt.Sprintf("%s/%s", common2.PrettyCounter(i), common2.PrettyCounter(total)), "key", hex.EncodeToString(k),
 					"alloc", common2.ByteCount(m.Alloc), "sys", common2.ByteCount(m.Sys))
 			default:
 			}

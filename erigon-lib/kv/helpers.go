@@ -18,18 +18,22 @@ package kv
 
 import (
 	"context"
-	"fmt"
+	"encoding/binary"
+	"errors"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/c2h5oh/datasize"
 	"github.com/erigontech/mdbx-go/mdbx"
+
+	"github.com/erigontech/erigon-lib/common/hexutility"
 
 	"github.com/erigontech/erigon-lib/common"
 )
 
-func DefaultPageSize() uint64 {
+func DefaultPageSize() datasize.ByteSize {
 	osPageSize := os.Getpagesize()
 	if osPageSize < 4096 { // reduce further may lead to errors (because some data is just big)
 		osPageSize = 4096
@@ -37,7 +41,7 @@ func DefaultPageSize() uint64 {
 		osPageSize = mdbx.MaxPageSize
 	}
 	osPageSize = osPageSize / 4096 * 4096 // ensure it's rounded
-	return uint64(osPageSize)
+	return datasize.ByteSize(osPageSize)
 }
 
 // BigChunks - read `table` by big chunks - restart read transaction after each 1 minutes
@@ -104,7 +108,7 @@ func bytes2bool(in []byte) bool {
 	return in[0] == 1
 }
 
-var ErrChanged = fmt.Errorf("key must not change")
+var ErrChanged = errors.New("key must not change")
 
 // EnsureNotChangedBool - used to store immutable config flags in db. protects from human mistakes
 func EnsureNotChangedBool(tx GetPut, bucket string, k []byte, value bool) (ok, enabled bool, err error) {
@@ -221,4 +225,17 @@ func NextSubtree(in []byte) ([]byte, bool) {
 		r = r[:i] // make it shorter, because in tries after 11ff goes 12, but not 1200
 	}
 	return nil, false
+}
+
+func IncrementKey(tx RwTx, table string, k []byte) error {
+	v, err := tx.GetOne(table, k)
+	if err != nil {
+		return err
+	}
+	var version uint64
+	if len(v) == 8 {
+		version = binary.BigEndian.Uint64(v)
+	}
+	version++
+	return tx.Put(table, k, hexutility.EncodeTs(version))
 }

@@ -38,7 +38,10 @@ func TestBucketCRUD(t *testing.T) {
 	db, tx := memdb.NewTestTx(t)
 
 	normalBucket := kv.ChaindataTables[15]
-	deprecatedBucket := kv.ChaindataDeprecatedTables[0]
+	deprecatedBucket := "none"
+	if len(kv.ChaindataDeprecatedTables) > 0 {
+		deprecatedBucket = kv.ChaindataDeprecatedTables[0]
+	}
 	migrator := tx
 
 	// check thad buckets have unique DBI's
@@ -63,8 +66,10 @@ func TestBucketCRUD(t *testing.T) {
 	require.NoError(migrator.CreateBucket(deprecatedBucket))
 	require.True(migrator.ExistsBucket(deprecatedBucket))
 
-	require.NoError(migrator.DropBucket(deprecatedBucket))
-	require.False(migrator.ExistsBucket(deprecatedBucket))
+	if deprecatedBucket != "none" {
+		require.NoError(migrator.DropBucket(deprecatedBucket))
+		require.False(migrator.ExistsBucket(deprecatedBucket))
+	}
 
 	require.NoError(migrator.CreateBucket(deprecatedBucket))
 	require.True(migrator.ExistsBucket(deprecatedBucket))
@@ -96,7 +101,7 @@ func TestBucketCRUD(t *testing.T) {
 func TestReadOnlyMode(t *testing.T) {
 	path := t.TempDir()
 	logger := log.New()
-	db1 := mdbx.NewMDBX(logger).Path(path).MapSize(16 * datasize.MB).WithTableCfg(func(defaultBuckets kv.TableCfg) kv.TableCfg {
+	db1 := mdbx.New(kv.ChainDB, logger).Path(path).MapSize(16 * datasize.MB).WithTableCfg(func(defaultBuckets kv.TableCfg) kv.TableCfg {
 		return kv.TableCfg{
 			kv.Headers: kv.TableCfgItem{},
 		}
@@ -104,7 +109,7 @@ func TestReadOnlyMode(t *testing.T) {
 	db1.Close()
 	time.Sleep(10 * time.Millisecond) // win sometime need time to close file
 
-	db2 := mdbx.NewMDBX(logger).Readonly().Path(path).MapSize(16 * datasize.MB).WithTableCfg(func(defaultBuckets kv.TableCfg) kv.TableCfg {
+	db2 := mdbx.New(kv.ChainDB, logger).Readonly(true).Path(path).MapSize(16 * datasize.MB).WithTableCfg(func(defaultBuckets kv.TableCfg) kv.TableCfg {
 		return kv.TableCfg{
 			kv.Headers: kv.TableCfgItem{},
 		}
