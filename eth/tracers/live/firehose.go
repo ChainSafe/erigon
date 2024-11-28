@@ -304,7 +304,7 @@ func (f *Firehose) OnBlockchainInit(chainConfig *chain.Config) {
 	f.chainConfig = chainConfig
 
 	if wasNeverSent := f.initSent.CompareAndSwap(false, true); wasNeverSent {
-		f.printToFirehose("INIT", FirehoseProtocolVersion, "geth", params.Version)
+		f.printToFirehose("INIT", FirehoseProtocolVersion, "erigon", params.Version)
 	} else {
 		f.panicInvalidState("The OnBlockchainInit callback was called more than once", 0)
 	}
@@ -340,7 +340,12 @@ func chainNeedsLegacyBackwardCompatibility(id *big.Int) bool {
 
 func (f *Firehose) OnBlockStart(event tracing.BlockEvent) {
 	b := event.Block
-	firehoseInfo("block start (number=%d hash=%s)", b.NumberU64(), b.Hash())
+	firehoseInfo("block start (number=%d hash=%s td=%v)", b.NumberU64(), b.Hash(), event.TD)
+
+	td := event.TD
+	if td == nil {
+		td = big.NewInt(0)
+	}
 
 	f.ensureBlockChainInit()
 
@@ -350,7 +355,7 @@ func (f *Firehose) OnBlockStart(event tracing.BlockEvent) {
 	f.block = &pbeth.Block{
 		Hash:   b.Hash().Bytes(),
 		Number: b.Number().Uint64(),
-		Header: newBlockHeaderFromChainHeader(b.Header(), firehoseBigIntFromNative(new(big.Int).Add(event.TD, b.Difficulty()))),
+		Header: newBlockHeaderFromChainHeader(b.Header(), firehoseBigIntFromNative(new(big.Int).Add(td, b.Difficulty()))),
 		Size:   uint64(b.Size()),
 		// Known Firehose issue: If you fix all known Firehose issue for a new chain, don't forget to bump `Ver` to `4`!
 		Ver: 4,
