@@ -21,18 +21,18 @@ import (
 	"time"
 
 	"github.com/erigontech/erigon-lib/chain"
+	"github.com/erigontech/erigon-lib/common"
 	libcommon "github.com/erigontech/erigon-lib/common"
 	"github.com/erigontech/erigon-lib/common/math"
 	"github.com/erigontech/erigon-lib/crypto"
 	"github.com/erigontech/erigon-lib/log/v3"
-	"github.com/erigontech/erigon/common"
+	"github.com/erigontech/erigon-lib/rlp"
 	"github.com/erigontech/erigon/core/tracing"
 	"github.com/erigontech/erigon/core/types"
 	"github.com/erigontech/erigon/core/vm"
 	"github.com/erigontech/erigon/eth/tracers"
 	"github.com/erigontech/erigon/params"
 	pbeth "github.com/erigontech/erigon/pb/sf/ethereum/type/v2"
-	"github.com/erigontech/erigon/rlp"
 
 	"github.com/holiman/uint256"
 	"golang.org/x/exp/maps"
@@ -522,9 +522,10 @@ func (f *Firehose) OnTxStart(evm *tracing.VMContext, tx types.Transaction, from 
 	f.ensureInBlockAndNotInTrxAndNotInCall()
 
 	f.evm = evm
+	nounce, _ := evm.IntraBlockState.GetNonce(from)
 	var to libcommon.Address
 	if tx.GetTo() == nil {
-		to = crypto.CreateAddress(from, evm.IntraBlockState.GetNonce(from))
+		to = crypto.CreateAddress(from, nounce)
 	} else {
 		to = *tx.GetTo()
 	}
@@ -968,7 +969,8 @@ func (f *Firehose) getExecutedCode(evm *tracing.VMContext, call *pbeth.Call, cod
 	precompile := f.blockIsPrecompiledAddr(libcommon.BytesToAddress(call.Address))
 
 	if evm != nil && call.CallType == pbeth.CallType_CALL {
-		if !evm.IntraBlockState.Exist(libcommon.BytesToAddress(call.Address)) &&
+		exists, _ := evm.IntraBlockState.Exist(libcommon.BytesToAddress(call.Address))
+		if !exists &&
 			!precompile && f.blockRules.IsSpuriousDragon &&
 			(call.Value == nil || call.Value.Native().Sign() == 0) {
 			firehoseTrace("executed code IsSpuriousDragon callTyp=%s inputLength=%d", call.CallType.String(), len(call.Input) > 0)
